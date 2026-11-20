@@ -64,6 +64,16 @@ const CANONICAL_BACKGROUNDS: Array<{ key: string; label: string }> = [
   { key: 'totem', label: 'Totem' },
 ];
 
+const TRIBE_DISCOURAGED_BACKGROUNDS: Partial<Record<GarouTribe, readonly string[]>> = {
+  bone_gnawers: ['resources'],
+  get_of_fenris: ['contacts'],
+  glass_walkers: ['mentor'],
+  shadow_lords: ['allies', 'mentor'],
+  silent_striders: ['resources'],
+  stargazers: ['allies', 'fetish', 'resources'],
+  wendigo: ['contacts', 'resources'],
+};
+
 const PRESET_MERITS_FLAWS: MeritOrFlawChoice[] = [
   { id: 'merit-acute-senses', name: 'Acute Senses', kind: 'merit', pointValue: 1 },
   { id: 'merit-code-of-honor', name: 'Code of Honor', kind: 'merit', pointValue: 2 },
@@ -78,28 +88,28 @@ const PRESET_MERITS_FLAWS: MeritOrFlawChoice[] = [
 ];
 
 const FALLBACK_LEVEL_1_GIFTS: CompendiumGiftRow[] = [
-  { id: '10000000-0000-4000-8000-000000000101', name: 'Master of Fire', level: 1, sources: ['homid'], system_summary: 'Spend 1 Gnosis and roll Charisma + Survival (Diff 6) to soften fire harm.' },
-  { id: '10000000-0000-4000-8000-000000000102', name: 'Persuasion', level: 1, sources: ['homid', 'fianna', 'glass_walkers'], system_summary: 'Roll Charisma + Subterfuge (Diff 7) for -1 Social difficulty.' },
+  { id: '10000000-0000-4000-8000-000000000101', name: 'Master of Fire', level: 1, sources: ['homid', 'get_of_fenris'], system_summary: 'Spend 1 Gnosis: fire damage heals as Bashing rather than Aggravated for the scene (W20 p. 152).' },
+  { id: '10000000-0000-4000-8000-000000000102', name: 'Persuasion', level: 1, sources: ['homid', 'philodox', 'fianna', 'glass_walkers'], system_summary: 'Roll Charisma + Subterfuge (Diff 7) for -1 Social difficulty.' },
   { id: '10000000-0000-4000-8000-000000000103', name: 'Smell of Man', level: 1, sources: ['homid'], system_summary: 'Normal animals hesitate or flee from the Garou.' },
   { id: '10000000-0000-4000-8000-000000000104', name: 'Create Element', level: 1, sources: ['metis'], system_summary: 'Spend 1 Gnosis and roll Gnosis (Diff 6) to conjure elemental matter.' },
   { id: '10000000-0000-4000-8000-000000000105', name: 'Primal Anger', level: 1, sources: ['metis'], system_summary: 'Store up to +2 temporary Rage above permanent rating for a scene.' },
-  { id: '10000000-0000-4000-8000-000000000106', name: 'Sense Wyrm', level: 1, sources: ['metis', 'theurge', 'black_furies', 'silent_striders', 'silver_fangs'], system_summary: 'Roll Perception + Occult (Diff 6) to detect Wyrm taint.' },
-  { id: '10000000-0000-4000-8000-000000000107', name: "Hare's Leap", level: 1, sources: ['lupus'], system_summary: 'Roll Strength + Athletics (Diff 7) to double jumping distances.' },
-  { id: '10000000-0000-4000-8000-000000000108', name: 'Heightened Senses', level: 1, sources: ['lupus', 'black_furies'], system_summary: 'Spend 1 Gnosis for -2 Perception difficulty for the scene.' },
-  { id: '10000000-0000-4000-8000-000000000109', name: 'Sense Prey', level: 1, sources: ['lupus'], system_summary: 'Roll Perception + Enigmas (Diff 6) to pinpoint hunted quarry.' },
+  { id: '10000000-0000-4000-8000-000000000106', name: 'Sense Wyrm', level: 1, sources: ['metis', 'theurge', 'black_furies', 'silent_striders', 'silver_fangs', 'stargazers', 'uktena'], system_summary: 'Roll Perception + Occult (Diff 6) to detect Wyrm taint.' },
+  { id: '10000000-0000-4000-8000-000000000107', name: "Hare's Leap", level: 1, sources: ['lupus', 'fianna'], system_summary: 'Roll Strength + Athletics (Diff 7) to double jumping distances.' },
+  { id: '10000000-0000-4000-8000-000000000108', name: 'Heightened Senses', level: 1, sources: ['lupus', 'galliard', 'black_furies'], system_summary: 'Spend 1 Gnosis for -2 Perception difficulty for the scene.' },
+  { id: '10000000-0000-4000-8000-000000000109', name: 'Sense Prey', level: 1, sources: ['lupus'], system_summary: 'Roll Perception + Primal-Urge (Diff 6) to pinpoint hunted quarry (W20 p. 159).' },
   { id: '10000000-0000-4000-8000-000000000110', name: 'Blur of the Milky Eye', level: 1, sources: ['ragabash'], system_summary: 'Roll Manipulation + Stealth (Diff 8) to go unnoticed.' },
   { id: '10000000-0000-4000-8000-000000000111', name: 'Open Seal', level: 1, sources: ['ragabash'], system_summary: 'Spend 1 Gnosis and roll Gnosis (Diff 7) to unlock sealed doors.' },
   { id: '10000000-0000-4000-8000-000000000112', name: 'Scent of Running Water', level: 1, sources: ['ragabash', 'red_talons'], system_summary: 'Masks scent trail (+2 tracking difficulty).' },
-  { id: '10000000-0000-4000-8000-000000000113', name: "Mother's Touch", level: 1, sources: ['theurge'], system_summary: 'Spend 1 Gnosis and roll Intelligence + Empathy to heal wounds.' },
-  { id: '10000000-0000-4000-8000-000000000114', name: 'Spirit Speech', level: 1, sources: ['theurge'], system_summary: 'Understand and speak the high speech of spirits.' },
-  { id: '10000000-0000-4000-8000-000000000115', name: 'Resist Pain', level: 1, sources: ['philodox', 'get_of_fenris', 'wendigo'], system_summary: 'Spend 1 Willpower to ignore wound penalties for the scene.' },
+  { id: '10000000-0000-4000-8000-000000000113', name: "Mother's Touch", level: 1, sources: ['theurge', 'children_of_gaia'], system_summary: 'Spend 1 Gnosis and roll Intelligence + Empathy to heal wounds.' },
+  { id: '10000000-0000-4000-8000-000000000114', name: 'Spirit Speech', level: 1, sources: ['theurge', 'uktena'], system_summary: 'Understand and speak the high speech of spirits.' },
+  { id: '10000000-0000-4000-8000-000000000115', name: 'Resist Pain', level: 1, sources: ['philodox', 'children_of_gaia', 'get_of_fenris', 'wendigo'], system_summary: 'Spend 1 Willpower to ignore wound penalties for the scene.' },
   { id: '10000000-0000-4000-8000-000000000116', name: 'Truth of Gaia', level: 1, sources: ['philodox'], system_summary: 'Roll Intelligence + Empathy to detect deliberate lies.' },
   { id: '10000000-0000-4000-8000-000000000117', name: 'Beast Speech', level: 1, sources: ['galliard', 'red_talons'], system_summary: 'Communicate natively with mundane animals.' },
   { id: '10000000-0000-4000-8000-000000000118', name: 'Call of the Wyld', level: 1, sources: ['galliard'], system_summary: 'Roll Stamina + Expression (Diff 6) to project a distant howl.' },
   { id: '10000000-0000-4000-8000-000000000119', name: 'Mindspeak', level: 1, sources: ['galliard'], system_summary: 'Spend 1 Gnosis and roll Manipulation + Expression for telepathy.' },
   { id: '10000000-0000-4000-8000-000000000120', name: 'Razor Claws', level: 1, sources: ['ahroun', 'get_of_fenris'], system_summary: 'Spend 1 Rage for +2 Claw damage dice in Crinos/Hispo/Lupus.' },
-  { id: '10000000-0000-4000-8000-000000000121', name: 'Inspiration', level: 1, sources: ['ahroun'], system_summary: 'Spend 1 Gnosis to bolster packmate resolve and initiative.' },
-  { id: '10000000-0000-4000-8000-000000000122', name: 'Falling Touch', level: 1, sources: ['ahroun'], system_summary: 'Roll Dexterity + Medicine (Diff target Stamina + 3) to knock prone.' },
+  { id: '10000000-0000-4000-8000-000000000121', name: 'Inspiration', level: 1, sources: ['ahroun', 'silver_fangs'], system_summary: 'Spend 1 Gnosis to bolster packmate resolve and initiative.' },
+  { id: '10000000-0000-4000-8000-000000000122', name: 'Falling Touch', level: 1, sources: ['ahroun', 'stargazers'], system_summary: 'Roll Dexterity + Medicine (Diff target Stamina + 3) to knock prone.' },
   { id: '10000000-0000-4000-8000-000000000123', name: 'Breath of the Wyld', level: 1, sources: ['black_furies'], system_summary: 'Spend 1 Gnosis and roll Charisma + Empathy to revitalize an ally.' },
   { id: '10000000-0000-4000-8000-000000000124', name: 'Cooking', level: 1, sources: ['bone_gnawers'], system_summary: 'Spend 1 Gnosis and roll Intelligence + Survival to turn scrap into food.' },
   { id: '10000000-0000-4000-8000-000000000125', name: 'Resist Toxin', level: 1, sources: ['bone_gnawers', 'fianna'], system_summary: 'Roll Stamina + Survival (Diff 6) to neutralize poisons.' },
@@ -1039,12 +1049,15 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                     const total = prio + free;
                     const isForbidden =
                       ((draft.tribe === 'bone_gnawers' || draft.tribe === 'glass_walkers') &&
-                        bg.key === 'pure_breed') ||
+                        (bg.key === 'pure_breed' || bg.key === 'ancestors')) ||
                       (draft.tribe === 'red_talons' &&
                         ['resources', 'allies', 'contacts'].includes(bg.key)) ||
                       (draft.tribe === 'silent_striders' && bg.key === 'ancestors');
                     const isRequiredMin3 =
                       draft.tribe === 'silver_fangs' && bg.key === 'pure_breed';
+                    const isDiscouraged =
+                      !isForbidden &&
+                      (TRIBE_DISCOURAGED_BACKGROUNDS[draft.tribe] ?? []).includes(bg.key);
 
                     return (
                       <div
@@ -1052,7 +1065,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         className={`flex items-center justify-between rounded border px-2 py-1.5 ${
                           isForbidden
                             ? 'border-red-900/50 bg-red-950/20'
-                            : isRequiredMin3
+                            : isRequiredMin3 || isDiscouraged
                               ? 'border-amber-700/60 bg-amber-950/20'
                               : 'border-zinc-800 bg-zinc-950/80'
                         }`}
@@ -1064,6 +1077,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           )}
                           {isRequiredMin3 && (
                             <div className="text-[9px] text-amber-300">Silver Fangs min 3</div>
+                          )}
+                          {isDiscouraged && (
+                            <div className="text-[9px] text-amber-400">Tribe Discouraged</div>
                           )}
                         </div>
 
