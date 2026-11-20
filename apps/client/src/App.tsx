@@ -112,9 +112,9 @@ export const App: React.FC = () => {
   }, [session?.userId]);
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100">
+    <div className="relative h-screen w-screen overflow-hidden bg-[#070609] text-stone-100">
       {refreshWarning && (
-        <div className="fixed top-2 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-amber-500/60 bg-amber-950/95 px-3 py-1.5 text-xs text-amber-200 shadow-lg">
+        <div className="w20-obsidian-panel fixed top-2 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 !border-amber-500/60 rounded-xl px-3 py-1.5 text-xs text-amber-200">
           <span>Session refresh warning: {refreshWarning}</span>
           <button
             type="button"
@@ -127,36 +127,36 @@ export const App: React.FC = () => {
       )}
 
       {bootState === 'loading' ? (
-        <div className="flex h-full w-full items-center justify-center bg-zinc-950 p-6">
-          <div className="flex max-w-md flex-col items-center rounded-2xl border border-zinc-800 bg-zinc-900/70 p-8 text-center shadow-2xl">
+        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(ellipse_at_center,_rgba(127,29,29,0.2)_0%,_#070609_70%)] p-6">
+          <div className="w20-obsidian-panel flex max-w-md flex-col items-center rounded-2xl p-8 text-center">
             <Loader2 className="h-10 w-10 animate-spin text-red-500" />
-            <h1 className="mt-4 text-lg font-extrabold tracking-wider uppercase text-zinc-100">
+            <h1 className="font-display mt-4 text-lg font-extrabold tracking-widest uppercase text-amber-100">
               Joining W20 Dice Table
             </h1>
-            <p className="mt-2 text-xs text-zinc-400">
+            <p className="mt-2 text-xs text-stone-400">
               Completing Discord Activity OAuth2 &amp; voice channel handshake...
             </p>
           </div>
         </div>
       ) : bootState === 'error' || !session ? (
-        <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-zinc-950 p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-red-900/70 bg-zinc-900/90 p-6 shadow-2xl">
+        <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-[radial-gradient(ellipse_at_center,_rgba(127,29,29,0.2)_0%,_#070609_70%)] p-4">
+          <div className="w20-obsidian-panel w-full max-w-lg rounded-2xl !border-red-800/70 p-6">
             <div className="flex items-start gap-3">
-              <div className="rounded-lg bg-red-950/90 p-2.5 text-red-400">
+              <div className="rounded-lg border border-red-800/70 bg-red-950/90 p-2.5 text-red-400">
                 <AlertTriangle className="h-6 w-6" />
               </div>
               <div>
-                <h1 className="text-base font-extrabold tracking-wide uppercase text-red-200">
+                <h1 className="font-display text-base font-extrabold tracking-wider uppercase text-red-200">
                   Discord Activity Connection Required
                 </h1>
-                <p className="mt-1 text-xs text-zinc-300">
+                <p className="mt-1 text-xs text-stone-300">
                   {bootError ?? 'Unable to establish an authenticated Discord Activity session.'}
                 </p>
               </div>
             </div>
 
-            <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/90 p-4 text-xs text-zinc-400">
-              <p className="font-bold uppercase tracking-wider text-zinc-300">
+            <div className="mt-4 rounded-xl border border-amber-500/20 bg-zinc-950/90 p-4 text-xs text-stone-400">
+              <p className="font-display font-bold uppercase tracking-wider text-amber-200/90">
                 Launch Checklist
               </p>
               <ul className="mt-2 list-disc space-y-1.5 pl-4">
@@ -166,7 +166,7 @@ export const App: React.FC = () => {
                 </li>
                 <li>
                   Ensure <code className="text-amber-300">VITE_DISCORD_CLIENT_ID</code> and Discord
-                  URL Mappings point <code className="text-zinc-200">/</code> to the Worker host.
+                  URL Mappings point <code className="text-stone-200">/</code> to the Worker host.
                 </li>
               </ul>
             </div>
@@ -174,7 +174,7 @@ export const App: React.FC = () => {
             <button
               type="button"
               onClick={() => void runBootstrap()}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-red-700 py-2.5 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-red-600"
+              className="w20-crimson-seal font-display mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-bold uppercase tracking-widest text-amber-50"
             >
               <RefreshCw className="h-4 w-4" />
               Retry Discord Handshake
