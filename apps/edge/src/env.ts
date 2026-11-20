@@ -1,4 +1,14 @@
-export interface WorkerEnv extends Env {
+export interface WorkerEnv
+  extends Omit<
+    Env,
+    | 'DISCORD_APPLICATION_ID'
+    | 'DISCORD_CLIENT_SECRET'
+    | 'DISCORD_PUBLIC_KEY'
+    | 'SUPABASE_URL'
+    | 'SUPABASE_PUBLISHABLE_KEY'
+    | 'SUPABASE_SERVICE_ROLE_KEY'
+    | 'SUPABASE_JWT_SECRET'
+  > {
   DISCORD_APPLICATION_ID: string;
   DISCORD_CLIENT_SECRET: string;
   DISCORD_PUBLIC_KEY: string;

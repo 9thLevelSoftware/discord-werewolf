@@ -3,6 +3,7 @@ import type { W20CharacterCreationDraft, W20CharacterState } from '@w20-vtt/core
 import { discordIdToUuidV5, mintAuthTokensForIdentity } from '../discordOAuth';
 import type { GameRoomDO } from '../GameRoomDO';
 import worker from '../index';
+import { SupabaseRestClient } from '../supabaseRest';
 import { createMockEnv } from './shims/cfTestHarness';
 
 const EXECUTION_CTX = {
@@ -673,5 +674,39 @@ describe('Worker REST router, character creation validation, XP economy, and R2 
     );
     expect(spaRes.status).toBe(200);
     expect(await spaRes.text()).toContain('spa');
+  });
+
+  it('omits Bearer Authorization header for sb_secret_ keys while keeping it for legacy JWT service_role keys', async () => {
+    const capturedHeaders: Array<{ apikey: string | null; authorization: string | null }> = [];
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      const headers = new Headers(init?.headers);
+      capturedHeaders.push({
+        apikey: headers.get('apikey'),
+        authorization: headers.get('Authorization'),
+      });
+      return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    const modernClient = new SupabaseRestClient({
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_test_key_value',
+    });
+    await modernClient.listCampaignsByGuild('guild-1');
+
+    const legacyClient = new SupabaseRestClient({
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.legacy',
+    });
+    await legacyClient.listCampaignsByGuild('guild-1');
+
+    expect(capturedHeaders[0]).toEqual({
+      apikey: 'sb_secret_test_key_value',
+      authorization: null,
+    });
+    expect(capturedHeaders[1]).toEqual({
+      apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.legacy',
+      authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.legacy',
+    });
   });
 });

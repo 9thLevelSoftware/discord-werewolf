@@ -11,3 +11,4 @@ werewolf.pdf
 *.tsbuildinfo
 coverage
 .DS_Store
+supabase/.temp

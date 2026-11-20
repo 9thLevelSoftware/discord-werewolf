@@ -4,6 +4,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-20",
   "upload_source_maps": true,
+  "placement": {
+    "mode": "smart"
+  },
+  "vars": {
+    "SUPABASE_URL": "https://cwmmaqlcqfrbawhmzrfb.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable__6wVzKZrsLmypOPgGw87Hw_NYD0Jj0y"
+  },
   "exports": {
     "GameRoomDO": {
       "type": "durable-object",

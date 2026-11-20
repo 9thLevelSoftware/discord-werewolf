@@ -345,7 +345,9 @@ export class SupabaseRestClient {
 
     const headers = new Headers(init.headers);
     headers.set('apikey', this.serviceRoleKey);
-    headers.set('Authorization', `Bearer ${this.serviceRoleKey}`);
+    if (!this.serviceRoleKey.startsWith('sb_secret_')) {
+      headers.set('Authorization', `Bearer ${this.serviceRoleKey}`);
+    }
     headers.set('Accept', 'application/json');
     if (init.body && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
