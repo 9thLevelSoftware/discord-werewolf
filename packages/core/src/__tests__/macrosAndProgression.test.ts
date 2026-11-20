@@ -316,6 +316,35 @@ describe('W20 Gift/Fetish Macros, Character Creation & XP Calculator', () => {
     expect(lsfRes.isValid).toBe(false);
     expect(lsfRes.errors.some((e) => e.field === 'abilities.computer')).toBe(true);
     expect(lsfRes.errors.some((e) => e.field === 'backgrounds.pure_breed')).toBe(true);
+
+    // Bone Gnawers & Glass Walkers cannot take Ancestors; discouraged tribe backgrounds emit warnings
+    const boneGnawer = makeValidCreationDraft({
+      tribe: 'bone_gnawers',
+      priorityBackgroundDots: { ancestors: 2, resources: 3 },
+    });
+    const bgRes = validateW20CharacterCreation(boneGnawer);
+    expect(bgRes.isValid).toBe(false);
+    expect(bgRes.errors.some((e) => e.field === 'backgrounds.ancestors')).toBe(true);
+    expect(bgRes.warnings.some((w) => w.field === 'backgrounds.resources')).toBe(true);
+
+    const glassWalker = makeValidCreationDraft({
+      tribe: 'glass_walkers',
+      priorityBackgroundDots: { ancestors: 1, mentor: 4 },
+    });
+    const gwRes = validateW20CharacterCreation(glassWalker);
+    expect(gwRes.isValid).toBe(false);
+    expect(gwRes.errors.some((e) => e.field === 'backgrounds.ancestors')).toBe(true);
+    expect(gwRes.warnings.some((w) => w.field === 'backgrounds.mentor')).toBe(true);
+
+    const stargazer = makeValidCreationDraft({
+      tribe: 'stargazers',
+      priorityBackgroundDots: { allies: 1, fetish: 2, resources: 2 },
+    });
+    const sgRes = validateW20CharacterCreation(stargazer);
+    expect(sgRes.isValid).toBe(true);
+    expect(sgRes.warnings.some((w) => w.field === 'backgrounds.allies')).toBe(true);
+    expect(sgRes.warnings.some((w) => w.field === 'backgrounds.fetish')).toBe(true);
+    expect(sgRes.warnings.some((w) => w.field === 'backgrounds.resources')).toBe(true);
   });
 
   it('calculates canonical W20 XP costs across all categories', () => {

@@ -13,13 +13,13 @@ INSERT INTO public.compendium_gifts (
 -- ----------------------------------------------------------------------------
 (
   '10000000-0000-4000-8000-000000000101', NULL, 'Master of Fire', 1,
-  ARRAY['homid'], 'charisma', 'survival', 6, 0, 1, 0,
-  'Spend 1 Gnosis and roll Charisma + Survival (Diff 6) to quell or soften fire spirits so flame deals only Bashing damage for the scene.',
-  '{"id":"gift-master-of-fire","name":"Master of Fire","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":1,"willpower":0},"pool":{"kind":"attribute_ability","attribute":"charisma","ability":"survival"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"buff_soak_per_success","maxCap":3,"durationRounds":10}],"summary":"Quell fire spirits so flames deal reduced harm for the scene."}'::jsonb
+  ARRAY['homid','get_of_fenris'], NULL, NULL, 6, 0, 1, 0,
+  'Spend 1 Gnosis: fire damage heals as Bashing rather than Aggravated for the scene (W20 p. 152).',
+  '{"id":"gift-master-of-fire","name":"Master of Fire","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":1,"willpower":0},"pool":{"kind":"no_roll_instant"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"buff_soak_per_success","maxCap":3,"durationRounds":10}],"summary":"Spend 1 Gnosis: fire damage heals as Bashing rather than Aggravated for the scene."}'::jsonb
 ),
 (
   '10000000-0000-4000-8000-000000000102', NULL, 'Persuasion', 1,
-  ARRAY['homid','fianna','glass_walkers'], 'charisma', 'subterfuge', 7, 0, 0, 0,
+  ARRAY['homid','philodox','fianna','glass_walkers'], 'charisma', 'subterfuge', 7, 0, 0, 0,
   'Roll Charisma + Subterfuge (Diff 7) to gain -1 difficulty on Social rolls and sway skeptical listeners.',
   '{"id":"gift-persuasion","name":"Persuasion","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":0,"willpower":0},"pool":{"kind":"attribute_ability","attribute":"charisma","ability":"subterfuge"},"difficulty":{"kind":"static","value":7},"effects":[{"type":"storyteller_secret_whisper","promptTemplate":"Persuasion lowers social resistance by -1 difficulty on success."}],"summary":"Words carry uncanny conviction against humans and spirits alike."}'::jsonb
 ),
@@ -43,27 +43,27 @@ INSERT INTO public.compendium_gifts (
 ),
 (
   '10000000-0000-4000-8000-000000000106', NULL, 'Sense Wyrm', 1,
-  ARRAY['metis','theurge','black_furies','silent_striders','silver_fangs'], 'perception', 'occult', 6, 0, 0, 0,
+  ARRAY['metis','theurge','black_furies','silent_striders','silver_fangs','stargazers','uktena'], 'perception', 'occult', 6, 0, 0, 0,
   'Roll Perception + Occult (Diff 6, or higher if masked) to detect nearby Wyrm taint, Banes, or possessed vessels.',
   '{"id":"gift-sense-wyrm","name":"Sense Wyrm","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":0,"willpower":0},"pool":{"kind":"attribute_ability","attribute":"perception","ability":"occult"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"storyteller_secret_whisper","promptTemplate":"Reveal nearby Wyrm taint intensity and direction."}],"summary":"Smell or sense spiritual corruption of the Wyrm nearby."}'::jsonb
 ),
 (
   '10000000-0000-4000-8000-000000000107', NULL, 'Hare''s Leap', 1,
-  ARRAY['lupus'], 'strength', 'athletics', 7, 0, 0, 0,
+  ARRAY['lupus','fianna'], 'strength', 'athletics', 7, 0, 0, 0,
   'Roll Strength + Athletics (Diff 7) to double normal jumping distances in any form.',
   '{"id":"gift-hares-leap","name":"Hare''s Leap","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":0,"willpower":0},"pool":{"kind":"attribute_ability","attribute":"strength","ability":"athletics"},"difficulty":{"kind":"static","value":7},"effects":[{"type":"storyteller_secret_whisper","promptTemplate":"Leap distance doubled on success."}],"summary":"Spring across gaps and obstacles with supernatural agility."}'::jsonb
 ),
 (
   '10000000-0000-4000-8000-000000000108', NULL, 'Heightened Senses', 1,
-  ARRAY['lupus','black_furies'], NULL, NULL, 6, 0, 1, 0,
+  ARRAY['lupus','galliard','black_furies'], NULL, NULL, 6, 0, 1, 0,
   'Spend 1 Gnosis to sharpen sight, hearing, and scent for the scene (-2 Perception difficulty in Homid/Glabro; acute tracking in wolf forms).',
   '{"id":"gift-heightened-senses","name":"Heightened Senses","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":1,"willpower":0},"pool":{"kind":"no_roll_instant"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"storyteller_secret_whisper","promptTemplate":"Perception difficulty reduced by 2 for the scene."}],"summary":"Gain lupine sensory acuity regardless of current form."}'::jsonb
 ),
 (
   '10000000-0000-4000-8000-000000000109', NULL, 'Sense Prey', 1,
-  ARRAY['lupus'], 'perception', 'enigmas', 6, 0, 0, 0,
-  'Roll Perception + Enigmas (Diff 6) to pinpoint the trail, distance, and condition of hunted quarry.',
-  '{"id":"gift-sense-prey","name":"Sense Prey","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":0,"willpower":0},"pool":{"kind":"attribute_ability","attribute":"perception","ability":"enigmas"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"storyteller_secret_whisper","promptTemplate":"Track quarry direction and distance."}],"summary":"Focus primal instincts to locate a specific target or packmate."}'::jsonb
+  ARRAY['lupus'], 'perception', 'primal_urge', 6, 0, 0, 0,
+  'Roll Perception + Primal-Urge (Diff 6) to pinpoint the trail, distance, and condition of hunted quarry (W20 p. 159).',
+  '{"id":"gift-sense-prey","name":"Sense Prey","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":0,"willpower":0},"pool":{"kind":"attribute_ability","attribute":"perception","ability":"primal_urge"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"storyteller_secret_whisper","promptTemplate":"Track quarry direction and distance."}],"summary":"Focus primal instincts to locate a specific target or packmate."}'::jsonb
 ),
 (
   '10000000-0000-4000-8000-000000000110', NULL, 'Blur of the Milky Eye', 1,
@@ -85,19 +85,19 @@ INSERT INTO public.compendium_gifts (
 ),
 (
   '10000000-0000-4000-8000-000000000113', NULL, 'Mother''s Touch', 1,
-  ARRAY['theurge'], 'intelligence', 'empathy', 6, 0, 1, 0,
+  ARRAY['theurge','children_of_gaia'], 'intelligence', 'empathy', 6, 0, 1, 0,
   'Spend 1 Gnosis and roll Intelligence + Empathy (Diff 6, or higher for Aggravated) to heal 1 health level per success.',
   '{"id":"gift-mothers-touch","name":"Mother''s Touch","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":1,"willpower":0},"pool":{"kind":"attribute_ability","attribute":"intelligence","ability":"empathy"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"heal_wounds","levels":2,"healAggravated":true}],"summary":"Channel Gaia''s mercy to mend Bashing, Lethal, or Aggravated wounds."}'::jsonb
 ),
 (
   '10000000-0000-4000-8000-000000000114', NULL, 'Spirit Speech', 1,
-  ARRAY['theurge'], NULL, NULL, 6, 0, 0, 0,
+  ARRAY['theurge','uktena'], NULL, NULL, 6, 0, 0, 0,
   'Passive: understand and speak the high speech of spirits across the Umbra.',
   '{"id":"gift-spirit-speech","name":"Spirit Speech","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":0,"willpower":0},"pool":{"kind":"no_roll_instant"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"storyteller_secret_whisper","promptTemplate":"Understand and converse fluently with spirits."}],"summary":"Comprehend the native tongue of Umbrood spirits."}'::jsonb
 ),
 (
   '10000000-0000-4000-8000-000000000115', NULL, 'Resist Pain', 1,
-  ARRAY['philodox','get_of_fenris','wendigo'], NULL, NULL, 6, 0, 0, 1,
+  ARRAY['philodox','children_of_gaia','get_of_fenris','wendigo'], NULL, NULL, 6, 0, 0, 1,
   'Spend 1 Willpower to ignore all wound penalties for the remainder of the scene.',
   '{"id":"gift-resist-pain","name":"Resist Pain","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":0,"willpower":1},"pool":{"kind":"no_roll_instant"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"buff_soak_per_success","maxCap":1,"durationRounds":10}],"summary":"Shrug off crippling agony and ignore wound dice penalties."}'::jsonb
 ),
@@ -133,13 +133,13 @@ INSERT INTO public.compendium_gifts (
 ),
 (
   '10000000-0000-4000-8000-000000000121', NULL, 'Inspiration', 1,
-  ARRAY['ahroun'], NULL, NULL, 6, 0, 1, 0,
+  ARRAY['ahroun','silver_fangs'], NULL, NULL, 6, 0, 1, 0,
   'Spend 1 Gnosis to rally packmates within sight, granting each ally 1 automatic Willpower success on their next action or Courage check.',
   '{"id":"gift-inspiration","name":"Inspiration","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":1,"willpower":0},"pool":{"kind":"no_roll_instant"},"difficulty":{"kind":"static","value":6},"effects":[{"type":"buff_initiative_flat","bonus":2,"durationRounds":3}],"summary":"Bolster the pack''s courage and tactical focus in combat."}'::jsonb
 ),
 (
   '10000000-0000-4000-8000-000000000122', NULL, 'Falling Touch', 1,
-  ARRAY['ahroun'], 'dexterity', 'medicine', 6, 0, 0, 0,
+  ARRAY['ahroun','stargazers'], 'dexterity', 'medicine', 6, 0, 0, 0,
   'Roll Dexterity + Medicine (Diff target Stamina + 3) to drop an opponent prone with a single precise strike.',
   '{"id":"gift-falling-touch","name":"Falling Touch","category":"gift","rankOrLevel":1,"costs":{"rage":0,"gnosis":0,"willpower":0},"pool":{"kind":"attribute_ability","attribute":"dexterity","ability":"medicine"},"difficulty":{"kind":"target_trait","trait":"stamina_plus_3"},"effects":[{"type":"weapon_strike","damageBonus":0,"damageType":"bashing","isSilver":false}],"summary":"Strike a nerve cluster to knock an adversary off their feet."}'::jsonb
 ),

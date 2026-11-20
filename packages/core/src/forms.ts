@@ -54,7 +54,7 @@ export const W20_FORM_MATRIX: Record<GarouForm, FormModifierSpec> = {
     overrideAppearanceZero: false,
     shiftDifficulty: 7,
     incitesDelirium: false,
-    perceptionDifficultyMod: 0,
+    perceptionDifficultyMod: -1,
     hasClaws: false,
     hasFangs: true,
     bonusBiteDamageDice: 1, // Canonical W20 +1 die to Bite damage in Hispo

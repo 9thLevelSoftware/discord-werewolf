@@ -8,6 +8,7 @@ import {
   executeActiveCombatSlot,
   executeW20Macro,
   forceStorytellerOverride,
+  getBreedNaturalForm,
   healHealthDamage,
   MOON_BASE_FRENZY_DIFF,
   resolveDefenderReactionAndDamage,
@@ -990,6 +991,33 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         }
         if (char.activeForm === command.targetForm) {
           this.sendRejection(ws, reqId, 'VALIDATION_ERROR', `Already in ${command.targetForm} form.`);
+          return;
+        }
+
+        // Canonical W20: returning to one's natural breed form is automatic, instant, and free (no roll, no Rage).
+        if (command.targetForm === getBreedNaturalForm(char.breed)) {
+          const updated: W20CharacterState = {
+            ...char,
+            activeForm: command.targetForm,
+            stateVersion: char.stateVersion + 1,
+          };
+          this.roomState.characters[char.id] = updated;
+          this.syncTokenForCharacter(updated);
+
+          this.commitAndBroadcast(
+            [
+              {
+                event: { type: 'CHARACTER_PATCHED', characterId: updated.id, character: updated },
+                targetRole: updated.isNpc ? 'storyteller' : null,
+              },
+              {
+                event: { type: 'TOKENS_UPDATED', tokens: [] },
+                rawTokensSnapshot: this.snapshotRawTokens(),
+              },
+            ],
+            reqId,
+          );
+          this.scheduleCharacterFlush([updated]);
           return;
         }
 

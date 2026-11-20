@@ -435,6 +435,33 @@ export function validateW20CharacterCreation(
       message: 'Silent Striders are severed from their ancestor-spirits and cannot take Ancestors.',
     });
   }
+  if (
+    (draft.tribe === 'bone_gnawers' || draft.tribe === 'glass_walkers') &&
+    (finalBackgrounds['ancestors'] ?? 0) > 0
+  ) {
+    errors.push({
+      field: 'backgrounds.ancestors',
+      message: `${draft.tribe.replace(/_/g, ' ')} cannot purchase the Ancestors Background.`,
+    });
+  }
+
+  const discouragedTribeBackgrounds: Partial<Record<typeof draft.tribe, readonly string[]>> = {
+    bone_gnawers: ['resources'],
+    get_of_fenris: ['contacts'],
+    glass_walkers: ['mentor'],
+    shadow_lords: ['allies', 'mentor'],
+    silent_striders: ['resources'],
+    stargazers: ['allies', 'fetish', 'resources'],
+    wendigo: ['contacts', 'resources'],
+  };
+  for (const bg of discouragedTribeBackgrounds[draft.tribe] ?? []) {
+    if ((finalBackgrounds[bg] ?? 0) > 0) {
+      warnings.push({
+        field: `backgrounds.${bg}`,
+        message: `${draft.tribe.replace(/_/g, ' ')} rarely take the ${bg} Background; confirm with Storyteller.`,
+      });
+    }
+  }
 
   // 5. Validate Starting Gifts (1 Breed + 1 Auspice + 1 Tribe, all Level 1)
   const breedGifts = draft.selectedGifts.filter((g) => g.slotSource === 'breed');

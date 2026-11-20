@@ -7,7 +7,7 @@ import {
   SubActionSlot,
 } from './combatTypes';
 import { W20CharacterState } from './types';
-import { computeEffectiveCharacterStats, W20_FORM_MATRIX } from './forms';
+import { computeEffectiveCharacterStats, getBreedNaturalForm, W20_FORM_MATRIX } from './forms';
 import {
   resolveW20DicePool,
   rollCsprngD10,
@@ -648,6 +648,25 @@ export function executeActiveCombatSlot(
       const targetForm = activeSlot.targetForm;
       if (!targetForm) {
         throw new Error('shift_form slot requires a valid targetForm.');
+      }
+      if (targetForm === getBreedNaturalForm(attackerChar.breed)) {
+        const shiftedChar: W20CharacterState = {
+          ...attackerChar,
+          activeForm: targetForm,
+          stateVersion: attackerChar.stateVersion + 1,
+        };
+        return advanceResolutionCursor(
+          {
+            ...combat,
+            combatants: nextCombatants,
+            combatLog: [
+              ...combat.combatLog,
+              `${attacker.name} shifted freely to breed form (${targetForm}).`,
+            ],
+          },
+          { ...characters, [shiftedChar.id]: shiftedChar },
+          []
+        );
       }
       if (options.spendWillpowerOnRoll) {
         if (attackerChar.willpower.temporary < 1) {

@@ -60,7 +60,9 @@ describe('W20 Five-Form Matrix & Derived Stats', () => {
     expect(hispo.effectiveAttributes.dexterity).toBe(4);
     expect(hispo.effectiveAttributes.stamina).toBe(5);
     expect(hispo.effectiveAttributes.appearance).toBe(4);
+    expect(hispo.perceptionDifficultyMod).toBe(-1);
     expect(W20_FORM_MATRIX.hispo.shiftDifficulty).toBe(7);
+    expect(W20_FORM_MATRIX.hispo.perceptionDifficultyMod).toBe(-1);
     expect(hispo.naturalAttacks).toEqual([
       { name: 'Bite', accuracyDiff: 5, damageDicePool: 7, damageType: 'aggravated' }, // Str 5 + 1 + 1 Hispo bonus
     ]);

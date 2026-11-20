@@ -155,18 +155,23 @@ describe('W20 Health Cascading, Regeneration & Frenzy', () => {
       full: 4,
     });
 
-    const garou = makeTestCharacter({ rage: { permanent: 5, temporary: 5 } });
+    const garou = makeTestCharacter({
+      auspice: 'philodox',
+      rage: { permanent: 5, temporary: 5 },
+    });
 
     const calm = resolveFrenzyCheck(garou, 'new', {}, seqRng([8, 8, 8, 5, 4]));
     expect(calm.rollResult.clampedDifficulty).toBe(8);
     expect(calm.rollResult.netSuccesses).toBe(3);
     expect(calm.triggered).toBe(false);
+    expect(calm.thrallOfTheWyrm).toBe(false);
     expect(calm.updatedChar.inFrenzy).toBe(false);
 
     const berserk = resolveFrenzyCheck(garou, 'full', {}, seqRng([4, 5, 6, 9, 2]));
     expect(berserk.rollResult.clampedDifficulty).toBe(4);
     expect(berserk.rollResult.netSuccesses).toBe(4);
     expect(berserk.triggered).toBe(true);
+    expect(berserk.thrallOfTheWyrm).toBe(false);
     expect(berserk.frenzyType).toBe('berserk');
     expect(berserk.updatedChar.inFrenzy).toBe(true);
 
@@ -177,7 +182,54 @@ describe('W20 Health Cascading, Regeneration & Frenzy', () => {
       seqRng([5, 6, 7, 8, 9])
     );
     expect(fox.triggered).toBe(true);
+    expect(fox.thrallOfTheWyrm).toBe(false);
     expect(fox.frenzyType).toBe('fox');
     expect(fox.updatedChar.frenzyType).toBe('fox');
+
+    // Auspice moon match (-1 diff) and Crinos form (-1 diff) are non-cumulative
+    const ahrounHomid = makeTestCharacter({
+      auspice: 'ahroun',
+      activeForm: 'homid',
+      rage: { permanent: 5, temporary: 5 },
+    });
+    const ahrounFull = resolveFrenzyCheck(ahrounHomid, 'full', {}, seqRng([3, 3, 3, 3, 2]));
+    expect(ahrounFull.rollResult.clampedDifficulty).toBe(3);
+    expect(ahrounFull.triggered).toBe(true);
+
+    const ahrounCrinos = { ...ahrounHomid, activeForm: 'crinos' as const };
+    const bothMatch = resolveFrenzyCheck(ahrounCrinos, 'full', {}, seqRng([3, 3, 3, 3, 2]));
+    expect(bothMatch.rollResult.clampedDifficulty).toBe(3); // NOT 2 (non-cumulative)
+
+    const philodoxCrinos = { ...garou, activeForm: 'crinos' as const };
+    const crinosHalf = resolveFrenzyCheck(philodoxCrinos, 'full', {}, seqRng([3, 3, 3, 3, 2]));
+    expect(crinosHalf.rollResult.clampedDifficulty).toBe(3);
+
+    // Higher of permanent or temporary Rage is rolled
+    const enraged = makeTestCharacter({
+      auspice: 'philodox',
+      rage: { permanent: 3, temporary: 6 },
+    });
+    const tempHigher = resolveFrenzyCheck(
+      enraged,
+      'gibbous',
+      { preferredType: 'fox' },
+      seqRng([8, 8, 8, 8, 2, 2])
+    );
+    expect(tempHigher.rollResult.effectivePool).toBe(6);
+    expect(tempHigher.triggered).toBe(true);
+    expect(tempHigher.frenzyType).toBe('fox');
+
+    // 6+ net successes triggers Thrall of the Wyrm and forces 'berserk' even if 'fox' preferred
+    const thrall = resolveFrenzyCheck(
+      enraged,
+      'gibbous',
+      { preferredType: 'fox' },
+      seqRng([8, 8, 8, 8, 8, 8])
+    );
+    expect(thrall.rollResult.netSuccesses).toBe(6);
+    expect(thrall.triggered).toBe(true);
+    expect(thrall.thrallOfTheWyrm).toBe(true);
+    expect(thrall.frenzyType).toBe('berserk');
+    expect(thrall.updatedChar.frenzyType).toBe('berserk');
   });
 });

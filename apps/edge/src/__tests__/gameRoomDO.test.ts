@@ -638,4 +638,63 @@ describe('GameRoomDO authoritative W20 engine & projection security', () => {
       endEv.event.type === 'COMBAT_STATE_UPDATED' && endEv.event.combat === null,
     ).toBe(true);
   });
+
+  it('shifts back to natural breed form instantaneously without roll or Rage spend even at 0 Rage', async () => {
+    mockSupabaseForRoom();
+    const env = createMockEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+
+    const p1Jwt = await mintJwtForUser(PLAYER1_DISCORD_ID, 'PlayerOne', [GUILD_ID], env.SUPABASE_JWT_SECRET);
+    const { ws, events } = await openAndAuthSocket(room, state, p1Jwt, PC1_ID);
+    let currentSeq = events[0]!.seq;
+
+    // Shift to Crinos via roll_primal_urge (byte 7 -> d10 = 8 -> guaranteed success at diff 6)
+    const getRandomSpy = vi.spyOn(crypto, 'getRandomValues').mockImplementation((arr) => {
+      if (arr instanceof Uint8Array) {
+        arr.fill(7);
+      }
+      return arr;
+    });
+    await sendCommand(room, ws, currentSeq, {
+      type: 'CHARACTER_SHIFT_FORM',
+      characterId: PC1_ID,
+      targetForm: 'crinos',
+      method: 'roll_primal_urge',
+    });
+    getRandomSpy.mockRestore();
+
+    let batch = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    currentSeq = batch[batch.length - 1]!.seq;
+    expect(
+      batch.some((e) => e.event.type === 'CHARACTER_PATCHED' && e.event.character.activeForm === 'crinos'),
+    ).toBe(true);
+
+    // Drain temporary Rage to 0 (also sets hasSpentRageThisTurn = true)
+    await sendCommand(room, ws, currentSeq, {
+      type: 'CHARACTER_UPDATE_TRACKER',
+      characterId: PC1_ID,
+      tracker: 'rage',
+      delta: -5,
+    });
+    batch = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    currentSeq = batch[batch.length - 1]!.seq;
+
+    // Revert to natural breed form (Homid) — must succeed free with 0 Rage, even if instant_rage_spend requested
+    await sendCommand(room, ws, currentSeq, {
+      type: 'CHARACTER_SHIFT_FORM',
+      characterId: PC1_ID,
+      targetForm: 'homid',
+      method: 'instant_rage_spend',
+    });
+    batch = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    expect(batch.some((e) => e.event.type === 'COMMAND_REJECTED')).toBe(false);
+    expect(batch.some((e) => e.event.type === 'DICE_ROLLED_3D')).toBe(false);
+    const patched = batch.find(
+      (e): e is ServerEnvelope<Extract<ServerEvent, { type: 'CHARACTER_PATCHED' }>> =>
+        e.event.type === 'CHARACTER_PATCHED',
+    );
+    expect(patched?.event.character.activeForm).toBe('homid');
+    expect(patched?.event.character.rage.temporary).toBe(0);
+  });
 });

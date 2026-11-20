@@ -1,4 +1,4 @@
-import { DamageType, MoonPhase, W20CharacterState } from './types';
+import { Auspice, DamageType, MoonPhase, W20CharacterState } from './types';
 import { computeEffectiveCharacterStats, getBreedNaturalForm } from './forms';
 import { resolveW20DicePool, rollCsprngD10, W20RollResult } from './diceResolver';
 
@@ -172,16 +172,27 @@ export function resolveCombatRegeneration(
   };
 }
 
+export const AUSPICE_MOON_PHASE: Record<Auspice, MoonPhase> = {
+  ragabash: 'new',
+  theurge: 'crescent',
+  philodox: 'half',
+  galliard: 'gibbous',
+  ahroun: 'full',
+};
+
 export interface FrenzyCheckResult {
   updatedChar: W20CharacterState;
   rollResult: W20RollResult;
   triggered: boolean;
   frenzyType: 'berserk' | 'fox' | null;
+  thrallOfTheWyrm: boolean;
 }
 
 /**
- * Resolves a W20 Frenzy check (Rage roll vs Moon Phase difficulty).
- * 4+ net successes triggers Frenzy (default 'berserk', or 'fox' if specified).
+ * Resolves a W20 Frenzy check (higher of permanent or temporary Rage vs Moon Phase difficulty).
+ * Auspice moon phase match OR Crinos form applies a non-cumulative -1 difficulty modifier.
+ * 4+ net successes triggers Frenzy (default 'berserk', or 'fox' if specified);
+ * 6+ net successes triggers Thrall of the Wyrm and forces 'berserk'.
  */
 export function resolveFrenzyCheck(
   char: W20CharacterState,
@@ -193,19 +204,27 @@ export function resolveFrenzyCheck(
   rngD10: () => number = rollCsprngD10
 ): FrenzyCheckResult {
   const baseDifficulty = MOON_BASE_FRENZY_DIFF[moonPhase];
+  const basePool = Math.max(char.rage.permanent, char.rage.temporary);
+  const auspiciousOrCrinosMod =
+    moonPhase === AUSPICE_MOON_PHASE[char.auspice] || char.activeForm === 'crinos' ? -1 : 0;
   const rollResult = resolveW20DicePool(
     {
       label: `${char.name}: Frenzy Check (${moonPhase} moon)`,
-      basePool: char.rage.permanent,
+      basePool,
       applyWoundPenalty: false,
       baseDifficulty,
-      difficultyModifier: options.difficultyMod ?? 0,
+      difficultyModifier: (options.difficultyMod ?? 0) + auspiciousOrCrinosMod,
     },
     rngD10
   );
 
   const triggered = rollResult.netSuccesses >= 4;
-  const frenzyType = triggered ? (options.preferredType ?? 'berserk') : null;
+  const thrallOfTheWyrm = rollResult.netSuccesses >= 6;
+  const frenzyType = triggered
+    ? thrallOfTheWyrm
+      ? 'berserk'
+      : (options.preferredType ?? 'berserk')
+    : null;
 
   if (!triggered) {
     return {
@@ -213,6 +232,7 @@ export function resolveFrenzyCheck(
       rollResult,
       triggered: false,
       frenzyType: null,
+      thrallOfTheWyrm: false,
     };
   }
 
@@ -226,5 +246,6 @@ export function resolveFrenzyCheck(
     rollResult,
     triggered: true,
     frenzyType,
+    thrallOfTheWyrm,
   };
 }

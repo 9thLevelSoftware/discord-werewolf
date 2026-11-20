@@ -4,6 +4,7 @@ import {
   DualTracker,
   GarouForm,
   computeEffectiveCharacterStats,
+  getBreedNaturalForm,
   validateResourceSpend,
   W20_FORM_MATRIX,
 } from '@w20-vtt/core';
@@ -252,8 +253,9 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
           <div className="flex flex-wrap gap-1">
             {ORDERED_FORMS.map((f) => {
               const isCurrent = character.activeForm === f.key;
+              const isBreedForm = f.key === getBreedNaturalForm(character.breed);
               const diff = W20_FORM_MATRIX[f.key].shiftDifficulty;
-              const disabled = isCurrent || (instantRageShift && !canInstantRageShift);
+              const disabled = isCurrent || (!isBreedForm && instantRageShift && !canInstantRageShift);
               return (
                 <button
                   key={f.key}
@@ -261,7 +263,9 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
                   disabled={disabled}
                   onMouseEnter={() => setHoveredForm(f.key)}
                   onMouseLeave={() => setHoveredForm(null)}
-                  onClick={() => shiftCharacterForm(character.id, f.key, instantRageShift)}
+                  onClick={() =>
+                    shiftCharacterForm(character.id, f.key, !isBreedForm && instantRageShift)
+                  }
                   className={`rounded-md border px-2 py-1 text-left transition ${
                     isCurrent
                       ? 'border-red-500/80 bg-red-950/60 text-red-100'
@@ -270,7 +274,13 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
                 >
                   <div className="text-[11px] font-bold">{f.label}</div>
                   <div className="text-[9px] text-zinc-400">
-                    {isCurrent ? 'Active' : instantRageShift ? '1 Rage' : `Diff ${diff}`}
+                    {isCurrent
+                      ? 'Active'
+                      : isBreedForm
+                        ? 'Breed (Free)'
+                        : instantRageShift
+                          ? '1 Rage'
+                          : `Diff ${diff}`}
                   </div>
                 </button>
               );

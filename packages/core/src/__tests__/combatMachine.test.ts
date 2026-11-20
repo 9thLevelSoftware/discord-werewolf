@@ -709,4 +709,61 @@ describe('W20 Reverse Initiative & Combat State Machine', () => {
     expect(r2.characters.target.activeBuffs).toHaveLength(0);
     expect(r2.combat.roundNumber).toBe(2);
   });
+
+  it('shifts back to natural breed form instantaneously with 0 Willpower/Rage and no dice roll', () => {
+    const shifter = makeTestCharacter({
+      id: 'shifter',
+      name: 'Shifter',
+      breed: 'homid',
+      activeForm: 'crinos',
+      baseAttributes: { dexterity: 3, wits: 3, stamina: 4 } as never,
+      abilities: { primal_urge: 2 },
+      rage: { permanent: 4, temporary: 0 },
+      willpower: { permanent: 5, temporary: 3 },
+    });
+    const foe = makeTestCharacter({
+      id: 'foe',
+      name: 'Foe',
+      isNpc: true,
+      baseAttributes: { dexterity: 2, wits: 2 } as never,
+    });
+
+    let state: CombatStepOutcome = {
+      combat: createCombatEncounter('enc-breed-shift', [shifter, foe]),
+      characters: { shifter, foe },
+      emittedRolls: [],
+    };
+    state = declarePreInitiativeResources(state.combat, state.characters, 'shifter', 0, false, false);
+    state = declarePreInitiativeResources(state.combat, state.characters, 'foe', 0, false, false);
+    state = rollRoundInitiative(state.combat, state.characters, seqRng([10, 1]));
+    state = submitReverseDeclaration(state.combat, state.characters, 'foe', {
+      mode: 'single',
+      slots: [{ category: 'move_or_other', label: 'Wait', baseDifficulty: 6 }],
+    });
+    state = submitReverseDeclaration(state.combat, state.characters, 'shifter', {
+      mode: 'single',
+      slots: [
+        {
+          category: 'shift_form',
+          label: 'Revert to Homid',
+          targetForm: 'homid',
+          baseDifficulty: 6,
+        },
+      ],
+    });
+
+    const outcome = executeActiveCombatSlot(
+      state.combat,
+      state.characters,
+      'shifter',
+      { spendWillpowerOnRoll: true },
+      () => {
+        throw new Error('Breed reversion must not roll dice.');
+      }
+    );
+    expect(outcome.characters.shifter.activeForm).toBe('homid');
+    expect(outcome.characters.shifter.willpower.temporary).toBe(3);
+    expect(outcome.characters.shifter.rage.temporary).toBe(0);
+    expect(outcome.emittedRolls).toEqual([]);
+  });
 });
