@@ -14,6 +14,7 @@ import {
   resolveDefenderReactionAndDamage,
   resolveFrenzyCheck,
   resolveW20DicePool,
+  rollCsprngD10,
   rollRoundInitiative,
   submitReverseDeclaration,
   triggerHoldInterrupt,
@@ -28,10 +29,13 @@ import {
   type ClientCommand,
   type ClientEnvelope,
   type CommandRejectionCode,
+  type LightGarouTrackers,
   type ParticipantRole,
+  type RollHistoryEntry,
   type ServerEnvelope,
   type ServerEvent,
   type SocketAttachment,
+  type TableParticipant,
 } from '@w20-vtt/protocol';
 import { verifySessionJwt } from './discordOAuth';
 import type { WorkerEnv } from './env';
@@ -266,6 +270,16 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return;
     }
 
+    if (envelope.command.type === 'UPDATE_LIGHT_TRACKERS') {
+      this.handleUpdateLightTrackers(ws, attachment, envelope.command, envelope.reqId);
+      return;
+    }
+
+    if (envelope.command.type === 'ROLL_TABLE_POOL') {
+      this.handleRollTablePool(attachment, envelope.command, envelope.reqId);
+      return;
+    }
+
     if (!this.isExpectedSeqAcceptable(envelope.expectedSeq, attachment)) {
       this.sendRejection(
         ws,
@@ -280,11 +294,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    this.broadcastVoiceSpeakersExcluding(ws);
+    this.handleSocketDisconnect(ws);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    this.broadcastVoiceSpeakersExcluding(ws);
+    this.handleSocketDisconnect(ws);
   }
 
   /**
@@ -479,7 +493,224 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     );
   }
 
-  private sendEphemeralBroadcast(event: ServerEvent, replyToReqId?: string): void {
+  private upsertTableParticipant(
+    discordUserId: string,
+    displayName: string,
+    avatarUrl: string | null,
+    isConnected = true,
+  ): TableParticipant {
+    this.roomState.tableParticipants ??= {};
+    const existing = this.roomState.tableParticipants[discordUserId];
+    const next: TableParticipant = {
+      discordUserId,
+      displayName: displayName || existing?.displayName || 'Garou',
+      avatarUrl: avatarUrl ?? existing?.avatarUrl ?? null,
+      isConnected,
+      trackers: existing?.trackers ?? {
+        rage: 3,
+        gnosis: 3,
+        willpower: 5,
+        woundPenalty: 0,
+      },
+    };
+    this.roomState.tableParticipants[discordUserId] = next;
+    return next;
+  }
+
+  private handleSocketDisconnect(closingWs: WebSocket): void {
+    this.broadcastVoiceSpeakersExcluding(closingWs);
+    const att = this.getAttachment(closingWs);
+    if (!att.authenticated || !att.discordUserId) {
+      return;
+    }
+
+    // Mark the closing socket unauthenticated so multi-tab disconnect checks ignore already-closed sockets
+    closingWs.serializeAttachment({
+      ...att,
+      authenticated: false,
+      isSpeaking: false,
+    });
+
+    if (!this.roomState.tableParticipants) {
+      return;
+    }
+
+    const participant = this.roomState.tableParticipants[att.discordUserId];
+    if (!participant) {
+      return;
+    }
+
+    const stillConnectedElsewhere = this.ctx.getWebSockets().some((sock) => {
+      if (sock === closingWs) return false;
+      const otherAtt = this.getAttachment(sock);
+      return otherAtt.authenticated && otherAtt.discordUserId === att.discordUserId;
+    });
+
+    if (!stillConnectedElsewhere && participant.isConnected) {
+      participant.isConnected = false;
+      this.persistStateSnapshot();
+      this.sendEphemeralBroadcast(
+        {
+          type: 'PARTICIPANTS_UPDATED',
+          participants: Object.values(this.roomState.tableParticipants),
+        },
+        undefined,
+        closingWs,
+      );
+    }
+  }
+
+  private handleUpdateLightTrackers(
+    _ws: WebSocket,
+    attachment: InternalSocketAttachment,
+    command: Extract<ClientCommand, { type: 'UPDATE_LIGHT_TRACKERS' }>,
+    reqId: string,
+  ): void {
+    const participant = this.upsertTableParticipant(
+      attachment.discordUserId,
+      attachment.displayName,
+      null,
+      true,
+    );
+    const nextTrackers: LightGarouTrackers = {
+      rage:
+        typeof command.trackers.rage === 'number'
+          ? Math.max(0, Math.min(10, command.trackers.rage))
+          : participant.trackers.rage,
+      gnosis:
+        typeof command.trackers.gnosis === 'number'
+          ? Math.max(0, Math.min(10, command.trackers.gnosis))
+          : participant.trackers.gnosis,
+      willpower:
+        typeof command.trackers.willpower === 'number'
+          ? Math.max(0, Math.min(10, command.trackers.willpower))
+          : participant.trackers.willpower,
+      woundPenalty:
+        command.trackers.woundPenalty !== undefined
+          ? command.trackers.woundPenalty
+          : participant.trackers.woundPenalty,
+    };
+    participant.trackers = nextTrackers;
+    this.persistStateSnapshot();
+    this.sendEphemeralBroadcast(
+      {
+        type: 'PARTICIPANTS_UPDATED',
+        participants: Object.values(this.roomState.tableParticipants ?? {}),
+      },
+      reqId,
+    );
+  }
+
+  private handleRollTablePool(
+    attachment: InternalSocketAttachment,
+    command: Extract<ClientCommand, { type: 'ROLL_TABLE_POOL' }>,
+    reqId: string,
+  ): void {
+    const participant = this.upsertTableParticipant(
+      attachment.discordUserId,
+      attachment.displayName,
+      null,
+      true,
+    );
+
+    const woundPenalty = command.applyWoundPenalty ? participant.trackers.woundPenalty : 0;
+    const cleanLabel = command.label?.trim() || 'W20 Dice Pool';
+    const supplied = command.physicalDiceValues ?? [];
+    let idx = 0;
+    const rng = () => {
+      if (idx < supplied.length) {
+        const val = supplied[idx]!;
+        idx += 1;
+        return val;
+      }
+      return rollCsprngD10();
+    };
+
+    const roll = resolveW20DicePool(
+      {
+        label: cleanLabel,
+        basePool: command.pool,
+        woundPenalty,
+        applyWoundPenalty: command.applyWoundPenalty,
+        baseDifficulty: command.difficulty,
+        hasApplicableSpecialty: command.hasSpecialty,
+        spendWillpower: command.spendWillpower,
+        specialtyMode: 'w20_double',
+      },
+      rng,
+    );
+
+    const rageDiceCount = Math.min(roll.effectivePool, Math.max(0, command.rageDiceCount));
+    let willpowerSpent = false;
+    if (command.spendWillpower && participant.trackers.willpower > 0) {
+      participant.trackers.willpower -= 1;
+      willpowerSpent = true;
+    }
+
+    const isSecretRoll = Boolean(command.isSecretRoll);
+    const historyEntry: RollHistoryEntry = {
+      id: `roll-${this.roomState.seq + 1}-${roll.physicsSeed}`,
+      timestamp: Date.now(),
+      rollerDiscordId: attachment.discordUserId,
+      rollerName: participant.displayName || attachment.displayName,
+      rollerAvatarUrl: participant.avatarUrl,
+      label: cleanLabel,
+      rageDiceCount,
+      isSecretRoll,
+      roll,
+    };
+
+    this.roomState.rollHistory = [historyEntry, ...(this.roomState.rollHistory ?? [])].slice(0, 50);
+
+    this.commitAndBroadcast(
+      [
+        {
+          event: {
+            type: 'DICE_ROLLED_3D',
+            rollerDiscordId: attachment.discordUserId,
+            label: cleanLabel,
+            roll,
+            rollerName: historyEntry.rollerName,
+            rollerAvatarUrl: historyEntry.rollerAvatarUrl,
+            rageDiceCount,
+            ...(command.rollClientId ? { rollClientId: command.rollClientId } : {}),
+            ...(isSecretRoll ? { isSecretStRoll: true } : {}),
+            historyEntry,
+          },
+          targetRole: null,
+          targetDiscordId: isSecretRoll ? attachment.discordUserId : null,
+        },
+      ],
+      reqId,
+    );
+
+    if (willpowerSpent) {
+      this.sendEphemeralBroadcast({
+        type: 'PARTICIPANTS_UPDATED',
+        participants: Object.values(this.roomState.tableParticipants ?? {}),
+      });
+    }
+
+    if (this.roomState.campaignId && !this.roomState.campaignId.startsWith('dice-room-')) {
+      this.scheduleRollAuditAndWebhook({
+        campaignId: this.roomState.campaignId,
+        characterId: null,
+        rollerDiscordId: attachment.discordUserId,
+        rollerName: historyEntry.rollerName,
+        label: cleanLabel,
+        roll,
+        hasSpecialty: command.hasSpecialty,
+        spentWillpower: command.spendWillpower,
+        isSecretStRoll: isSecretRoll,
+      });
+    }
+  }
+
+  private sendEphemeralBroadcast(
+    event: ServerEvent,
+    replyToReqId?: string,
+    excludeWs?: WebSocket,
+  ): void {
     const envelope: ServerEnvelope<ServerEvent> = {
       seq: this.roomState.seq,
       ...(replyToReqId ? { replyToReqId } : {}),
@@ -488,6 +719,9 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     };
     const serialized = JSON.stringify(envelope);
     for (const sock of this.ctx.getWebSockets()) {
+      if (excludeWs && sock === excludeWs) {
+        continue;
+      }
       const att = this.getAttachment(sock);
       if (!att.authenticated) {
         continue;
@@ -543,6 +777,14 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   }
 
   private async ensureRoomHydrated(campaignId: string): Promise<boolean> {
+    if (campaignId.startsWith('dice-room-')) {
+      this.roomState.campaignId = campaignId;
+      this.roomState.tableParticipants ??= {};
+      this.roomState.rollHistory ??= [];
+      this.persistStateSnapshot();
+      return true;
+    }
+
     if (this.roomState.campaignId === campaignId && this.roomState.storytellerDiscordId) {
       return true;
     }
@@ -802,6 +1044,14 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     };
     ws.serializeAttachment(attachment);
 
+    this.upsertTableParticipant(
+      session.discordId,
+      session.globalName || session.username,
+      session.avatarUrl,
+      true,
+    );
+    this.persistStateSnapshot();
+
     // Attempt 100-event ring buffer delta replay when lastSeenSeq is in range
     const lastSeen = command.lastSeenSeq;
     const minBufferedSeq = this.eventRing[0]?.seq ?? this.roomState.seq + 1;
@@ -824,6 +1074,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         }
       }
       if (replayedCount > 0) {
+        this.sendEphemeralBroadcast({
+          type: 'PARTICIPANTS_UPDATED',
+          participants: Object.values(this.roomState.tableParticipants ?? {}),
+        });
         return;
       }
     }
@@ -842,6 +1096,14 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       },
     };
     ws.send(JSON.stringify(snapshotEnvelope));
+    this.sendEphemeralBroadcast(
+      {
+        type: 'PARTICIPANTS_UPDATED',
+        participants: Object.values(this.roomState.tableParticipants ?? {}),
+      },
+      undefined,
+      ws,
+    );
   }
 
   private canControlCharacter(
@@ -945,6 +1207,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       case 'HELLO_AUTH':
       case 'PING':
       case 'VOICE_SPEAKING_STATE':
+      case 'UPDATE_LIGHT_TRACKERS':
+      case 'ROLL_TABLE_POOL':
         return;
 
       case 'TOKEN_MOVE': {

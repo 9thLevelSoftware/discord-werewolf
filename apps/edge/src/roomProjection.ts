@@ -15,10 +15,12 @@ import type {
   PackTotemState,
   ParticipantRole,
   ProjectedMapToken,
+  RollHistoryEntry,
   RoomSnapshotView,
   ServerEnvelope,
   ServerEvent,
   SocketAttachment,
+  TableParticipant,
 } from '@w20-vtt/protocol';
 
 export interface StoredMapToken {
@@ -53,6 +55,8 @@ export interface PersistedRoomState {
   persistedCharacterIds: string[];
   tokens: StoredMapToken[];
   combat: CombatEncounterState | null;
+  tableParticipants?: Record<string, TableParticipant>;
+  rollHistory?: RollHistoryEntry[];
 }
 
 export interface BufferedRoomEvent {
@@ -85,6 +89,8 @@ export function createEmptyRoomState(): PersistedRoomState {
     persistedCharacterIds: [],
     tokens: [],
     combat: null,
+    tableParticipants: {},
+    rollHistory: [],
   };
 }
 
@@ -191,7 +197,7 @@ export function projectCombatForRole(
 
 export function buildProjectedSnapshot(
   state: PersistedRoomState,
-  attachment: Pick<SocketAttachment, 'role' | 'activeCharacterId'>,
+  attachment: Pick<SocketAttachment, 'role' | 'activeCharacterId'> & { discordUserId?: string },
   speakingDiscordIds: string[],
 ): RoomSnapshotView {
   const viewerRealm = resolveViewerRealm(attachment, state.characters);
@@ -213,6 +219,13 @@ export function buildProjectedSnapshot(
     characters: projectCharactersForRole(state.characters, attachment.role),
     tokens: projectTokensForViewer(state.tokens, state.characters, attachment.role, viewerRealm),
     combat: projectCombatForRole(state.combat, attachment.role),
+    participants: Object.values(state.tableParticipants ?? {}),
+    rollHistory: (state.rollHistory ?? []).filter(
+      (entry) =>
+        !entry.isSecretRoll ||
+        attachment.role === 'storyteller' ||
+        entry.rollerDiscordId === attachment.discordUserId,
+    ),
   };
 }
 
@@ -254,7 +267,11 @@ export function projectEnvelopeForAttachment(
   }
 
   if (event.type === 'DICE_ROLLED_3D') {
-    if (event.isSecretStRoll && attachment.role !== 'storyteller') {
+    if (
+      event.isSecretStRoll &&
+      attachment.role !== 'storyteller' &&
+      event.rollerDiscordId !== attachment.discordUserId
+    ) {
       return null;
     }
     return envelope;

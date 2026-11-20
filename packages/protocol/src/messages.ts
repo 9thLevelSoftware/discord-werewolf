@@ -65,6 +65,35 @@ export interface PackTotemState {
   willpowerTemp: number;
 }
 
+export type LightWoundPenalty = 0 | -1 | -2 | -5;
+
+export interface LightGarouTrackers {
+  rage: number;
+  gnosis: number;
+  willpower: number;
+  woundPenalty: LightWoundPenalty;
+}
+
+export interface TableParticipant {
+  discordUserId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  isConnected: boolean;
+  trackers: LightGarouTrackers;
+}
+
+export interface RollHistoryEntry {
+  id: string;
+  timestamp: number;
+  rollerDiscordId: string;
+  rollerName: string;
+  rollerAvatarUrl: string | null;
+  label: string;
+  rageDiceCount: number;
+  isSecretRoll: boolean;
+  roll: W20RollResult;
+}
+
 export type NpcSpawnTemplateId =
   | 'pentex_first_team'
   | 'fomor_berserker'
@@ -126,6 +155,23 @@ export type ClientCommand =
       specialtyId?: string;
       spendWillpower?: boolean;
       isSecretStRoll?: boolean;
+    }
+  | {
+      type: 'ROLL_TABLE_POOL';
+      pool: number;
+      rageDiceCount: number;
+      difficulty: number;
+      hasSpecialty: boolean;
+      spendWillpower: boolean;
+      applyWoundPenalty: boolean;
+      label?: string;
+      isSecretRoll?: boolean;
+      physicalDiceValues?: number[];
+      rollClientId?: string;
+    }
+  | {
+      type: 'UPDATE_LIGHT_TRACKERS';
+      trackers: Partial<LightGarouTrackers>;
     }
   | {
       type: 'CHARACTER_UPDATE_TRACKER';
@@ -318,6 +364,8 @@ export interface RoomSnapshotView {
   characters: Record<string, W20CharacterState>;
   tokens: ProjectedMapToken[];
   combat: CombatEncounterView | null;
+  participants?: TableParticipant[];
+  rollHistory?: RollHistoryEntry[];
 }
 
 export type CommandRejectionCode =
@@ -347,6 +395,15 @@ export type ServerEvent =
       label: string;
       roll: W20RollResult;
       isSecretStRoll?: boolean;
+      rollerName?: string;
+      rollerAvatarUrl?: string | null;
+      rageDiceCount?: number;
+      rollClientId?: string;
+      historyEntry?: RollHistoryEntry;
+    }
+  | {
+      type: 'PARTICIPANTS_UPDATED';
+      participants: TableParticipant[];
     }
   | {
       type: 'COMBAT_STATE_UPDATED';

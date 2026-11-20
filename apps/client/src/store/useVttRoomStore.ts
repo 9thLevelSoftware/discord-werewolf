@@ -21,7 +21,9 @@ import type {
   PackTotemState,
   ParticipantRole,
   ProjectedMapToken,
+  RollHistoryEntry,
   ServerEnvelope,
+  TableParticipant,
   WhisperCardPayload,
 } from '@w20-vtt/protocol';
 import { soundscapeEngine } from '../audio/SyncedSoundscapeEngine';
@@ -38,6 +40,11 @@ export interface Queued3DRoll {
   characterId?: string;
   label: string;
   roll: W20RollResult;
+  rollerName?: string;
+  rollerAvatarUrl?: string | null;
+  rageDiceCount?: number;
+  rollClientId?: string;
+  isSecretRoll?: boolean;
 }
 
 export interface ActiveFogToolState {
@@ -98,6 +105,8 @@ interface VttRoomStoreState {
   combat: CombatEncounterView | null;
   speakingDiscordIds: Set<string>;
   diceQueue: Queued3DRoll[];
+  participants: TableParticipant[];
+  rollHistory: RollHistoryEntry[];
 
   // Store Actions
   connectRoom: (params: ConnectRoomParams) => void;
@@ -213,6 +222,8 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
     combat: null,
     speakingDiscordIds: new Set<string>(),
     diceQueue: [],
+    participants: [],
+    rollHistory: [],
 
     connectRoom: (params) => {
       connectionGeneration += 1;
@@ -250,6 +261,8 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               safetyPauseReason: null,
               frenzyPrompt: null,
               diceQueue: [],
+              participants: [],
+              rollHistory: [],
             }),
       }));
 
@@ -321,6 +334,8 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               optimisticTokenCoords: {},
               combat: snapshot.combat,
               speakingDiscordIds: new Set(snapshot.speakingDiscordIds),
+              participants: snapshot.participants ?? [],
+              rollHistory: snapshot.rollHistory ?? [],
               lastError: null,
             });
             if (snapshot.audioState) {
@@ -345,22 +360,64 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
             break;
           }
 
-          case 'DICE_ROLLED_3D': {
-            set((state) => ({
+          case 'PARTICIPANTS_UPDATED': {
+            set({
               connectionStatus: 'authenticated',
               lastSeq: seq,
               serverClockOffsetMs: offsetMs,
-              diceQueue: [
-                ...state.diceQueue,
-                {
-                  id: `${seq}-${event.roll.physicsSeed}-${state.diceQueue.length}`,
-                  rollerDiscordId: event.rollerDiscordId,
-                  characterId: event.characterId,
-                  label: event.label,
-                  roll: event.roll,
-                },
-              ],
-            }));
+              participants: event.participants,
+            });
+            break;
+          }
+
+          case 'DICE_ROLLED_3D': {
+            set((state) => {
+              const historyEntry: RollHistoryEntry = event.historyEntry ?? {
+                id: `roll-${seq}-${event.roll.physicsSeed}`,
+                timestamp: envelope.serverTime || Date.now(),
+                rollerDiscordId: event.rollerDiscordId,
+                rollerName:
+                  event.rollerName ??
+                  state.participants.find((p) => p.discordUserId === event.rollerDiscordId)
+                    ?.displayName ??
+                  'Player',
+                rollerAvatarUrl:
+                  event.rollerAvatarUrl ??
+                  state.participants.find((p) => p.discordUserId === event.rollerDiscordId)
+                    ?.avatarUrl ??
+                  null,
+                label: event.label,
+                rageDiceCount: event.rageDiceCount ?? 0,
+                isSecretRoll: Boolean(event.isSecretStRoll),
+                roll: event.roll,
+              };
+              const nextHistory = [
+                historyEntry,
+                ...state.rollHistory.filter((item) => item.id !== historyEntry.id),
+              ].slice(0, 50);
+
+              return {
+                connectionStatus: 'authenticated',
+                lastSeq: seq,
+                serverClockOffsetMs: offsetMs,
+                rollHistory: nextHistory,
+                diceQueue: [
+                  ...state.diceQueue,
+                  {
+                    id: `${seq}-${event.roll.physicsSeed}-${state.diceQueue.length}`,
+                    rollerDiscordId: event.rollerDiscordId,
+                    characterId: event.characterId,
+                    label: event.label,
+                    roll: event.roll,
+                    rollerName: historyEntry.rollerName,
+                    rollerAvatarUrl: historyEntry.rollerAvatarUrl,
+                    rageDiceCount: event.rageDiceCount,
+                    rollClientId: event.rollClientId,
+                    isSecretRoll: event.isSecretStRoll,
+                  },
+                ],
+              };
+            });
             break;
           }
 
@@ -589,6 +646,8 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
         safetyPauseReason: null,
         frenzyPrompt: null,
         diceQueue: [],
+        participants: [],
+        rollHistory: [],
       });
     },
 

@@ -697,4 +697,139 @@ describe('GameRoomDO authoritative W20 engine & projection security', () => {
     expect(patched?.event.character.activeForm).toBe('homid');
     expect(patched?.event.character.rage.temporary).toBe(0);
   });
+
+  it('supports zero-Supabase ad-hoc dice-room-* voice tables, physicalDiceValues, light trackers, and secret rolls', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const env = createMockEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+
+    const p1Jwt = await mintJwtForUser(PLAYER1_DISCORD_ID, 'PlayerOne', [GUILD_ID], env.SUPABASE_JWT_SECRET);
+    const p2Jwt = await mintJwtForUser(PLAYER2_DISCORD_ID, 'PlayerTwo', [GUILD_ID], env.SUPABASE_JWT_SECRET);
+
+    const connectVoice = async (jwt: string) => {
+      const res = await room.fetch(
+        new Request('https://vtt.example/ws/room/dice-room-voice-1', {
+          headers: { Upgrade: 'websocket' },
+        }),
+      );
+      expect(res.status).toBe(101);
+      const ws = state.acceptedSockets[state.acceptedSockets.length - 1]!;
+      await sendCommand(room, ws, 0, {
+        type: 'HELLO_AUTH',
+        sessionJwt: jwt,
+        campaignId: 'dice-room-voice-1',
+        characterId: null,
+        lastSeenSeq: null,
+      });
+      return { ws, events: ws.drainJson<ServerEnvelope<ServerEvent>>() };
+    };
+
+    const p1 = await connectVoice(p1Jwt);
+    const p2 = await connectVoice(p2Jwt);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(p1.events[0]?.event.type).toBe('SYNC_SNAPSHOT');
+    const p1PartUpdate = p1.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const joinEv = p1PartUpdate.find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    expect(joinEv?.event.type).toBe('PARTICIPANTS_UPDATED');
+    if (joinEv?.event.type === 'PARTICIPANTS_UPDATED') {
+      expect(joinEv.event.participants).toHaveLength(2);
+      expect(joinEv.event.participants.every((p) => p.isConnected)).toBe(true);
+    }
+
+    // Update P1 light trackers (concurrent/seq-independent)
+    await sendCommand(room, p1.ws, 0, {
+      type: 'UPDATE_LIGHT_TRACKERS',
+      trackers: { rage: 6, woundPenalty: -1 },
+    });
+    const p1AfterTracker = p1.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const p2AfterTracker = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const trEv = p2AfterTracker.find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    expect(p1AfterTracker.some((e) => e.event.type === 'PARTICIPANTS_UPDATED')).toBe(true);
+    expect(trEv?.event.type).toBe('PARTICIPANTS_UPDATED');
+    if (trEv?.event.type === 'PARTICIPANTS_UPDATED') {
+      const p1Info = trEv.event.participants.find((p) => p.discordUserId === PLAYER1_DISCORD_ID);
+      expect(p1Info?.trackers).toEqual({ rage: 6, gnosis: 3, willpower: 5, woundPenalty: -1 });
+    }
+
+    // Public ROLL_TABLE_POOL with woundPenalty (-1 -> 4 dice), physicalDiceValues, Specialty 10, Willpower spend
+    await sendCommand(room, p1.ws, 0, {
+      type: 'ROLL_TABLE_POOL',
+      pool: 5,
+      rageDiceCount: 2,
+      difficulty: 6,
+      hasSpecialty: true,
+      spendWillpower: true,
+      applyWoundPenalty: true,
+      label: 'Crinos Claws',
+      isSecretRoll: false,
+      physicalDiceValues: [10, 7, 5, 1],
+      rollClientId: 'roll-client-1',
+    });
+
+    const p1RollEvents = p1.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const p2RollEvents = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+
+    const p2DiceEv = p2RollEvents.find((e) => e.event.type === 'DICE_ROLLED_3D');
+    expect(p2DiceEv?.event.type).toBe('DICE_ROLLED_3D');
+    if (p2DiceEv?.event.type === 'DICE_ROLLED_3D') {
+      expect(p2DiceEv.event.roll.effectivePool).toBe(4);
+      expect(p2DiceEv.event.roll.dice.map((d) => d.value)).toEqual([10, 7, 5, 1]);
+      // 10(x2) + 7(x1) - 1(cancel) + 1(WP) = 3 net successes
+      expect(p2DiceEv.event.roll.netSuccesses).toBe(3);
+      expect(p2DiceEv.event.rageDiceCount).toBe(2);
+      expect(p2DiceEv.event.rollClientId).toBe('roll-client-1');
+      expect(p2DiceEv.event.historyEntry?.label).toBe('Crinos Claws');
+    }
+
+    // Willpower auto-decremented from 5 to 4
+    const p1TrackersAfterWp = p1RollEvents.find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    expect(p1TrackersAfterWp?.event.type).toBe('PARTICIPANTS_UPDATED');
+    if (p1TrackersAfterWp?.event.type === 'PARTICIPANTS_UPDATED') {
+      const p1Info = p1TrackersAfterWp.event.participants.find(
+        (p) => p.discordUserId === PLAYER1_DISCORD_ID,
+      );
+      expect(p1Info?.trackers.willpower).toBe(4);
+    }
+
+    // Secret roll: ONLY P1 receives it; P2 gets zero events and secret is scrubbed on P2 reconnect
+    await sendCommand(room, p1.ws, 0, {
+      type: 'ROLL_TABLE_POOL',
+      pool: 3,
+      rageDiceCount: 0,
+      difficulty: 6,
+      hasSpecialty: false,
+      spendWillpower: false,
+      applyWoundPenalty: false,
+      label: 'Hidden Wits',
+      isSecretRoll: true,
+      physicalDiceValues: [9, 8, 2],
+      rollClientId: 'roll-secret-1',
+    });
+
+    const p1SecretEvents = p1.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const p2SecretEvents = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    expect(p1SecretEvents.some((e) => e.event.type === 'DICE_ROLLED_3D')).toBe(true);
+    expect(p2SecretEvents).toHaveLength(0);
+
+    const p2Reconnect = await connectVoice(p2Jwt);
+    const p2Snap = p2Reconnect.events[0]!;
+    expect(p2Snap.event.type).toBe('SYNC_SNAPSHOT');
+    if (p2Snap.event.type === 'SYNC_SNAPSHOT') {
+      expect(p2Snap.event.snapshot.rollHistory?.map((h) => h.label)).toEqual(['Crinos Claws']);
+    }
+
+    // Closing both P2 sockets marks P2 disconnected
+    p1.ws.drainJson();
+    await room.webSocketClose(p2.ws as unknown as WebSocket);
+    await room.webSocketClose(p2Reconnect.ws as unknown as WebSocket);
+    const p1AfterClose = p1.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const dcEv = [...p1AfterClose].reverse().find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    expect(dcEv?.event.type).toBe('PARTICIPANTS_UPDATED');
+    if (dcEv?.event.type === 'PARTICIPANTS_UPDATED') {
+      const p2Info = dcEv.event.participants.find((p) => p.discordUserId === PLAYER2_DISCORD_ID);
+      expect(p2Info?.isConnected).toBe(false);
+    }
+  });
 });

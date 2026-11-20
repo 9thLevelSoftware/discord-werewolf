@@ -1,21 +1,41 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { DiscordSessionContext, refreshWorkerTokens } from './discordBootstrap';
+import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import {
+  bootstrapDiscordActivity,
+  type DiscordSessionContext,
+  refreshWorkerTokens,
+} from './discordBootstrap';
 import { soundscapeEngine } from './audio/SyncedSoundscapeEngine';
 import { useVttRoomStore } from './store/useVttRoomStore';
-import { CampaignLobbyGate } from './components/CampaignLobbyGate';
-import { ActivityWorkspace } from './components/ActivityWorkspace';
+import { DiceTableWorkspace } from './components/DiceTableWorkspace';
 
 const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000;
 
 export const App: React.FC = () => {
   const [session, setSession] = useState<DiscordSessionContext | null>(null);
-  const [inRoom, setInRoom] = useState(false);
+  const [bootState, setBootState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [bootError, setBootError] = useState<string | null>(null);
   const [refreshWarning, setRefreshWarning] = useState<string | null>(null);
 
   const sessionRef = useRef<DiscordSessionContext | null>(null);
   sessionRef.current = session;
 
-  // Unlock Web Audio API on the user's very first interaction anywhere in the Activity iframe
+  const runBootstrap = useCallback(async () => {
+    setBootState('loading');
+    setBootError(null);
+    try {
+      const ctx = await bootstrapDiscordActivity((isLocal, speakingUserId, active) => {
+        useVttRoomStore.getState().setLocalVoiceSpeaking(speakingUserId, isLocal, active);
+      });
+      setSession(ctx);
+      setBootState('ready');
+    } catch (err: unknown) {
+      setBootError(err instanceof Error ? err.message : 'Unable to connect to Discord Activity.');
+      setBootState('error');
+    }
+  }, []);
+
+  // Unlock Web Audio API on first gesture and automatically run Discord Activity handshake on mount
   useEffect(() => {
     let unlocked = false;
     const handleFirstGesture = () => {
@@ -29,13 +49,35 @@ export const App: React.FC = () => {
     window.addEventListener('pointerdown', handleFirstGesture, { capture: true, passive: true });
     window.addEventListener('keydown', handleFirstGesture, { capture: true, passive: true });
 
+    void runBootstrap();
+
     return () => {
       window.removeEventListener('pointerdown', handleFirstGesture, true);
       window.removeEventListener('keydown', handleFirstGesture, true);
     };
-  }, []);
+  }, [runBootstrap]);
 
-  // Proactive 45-minute token refresh for both Worker sessionJwt and Supabase JWT
+  // Connect straight to the voice-channel's shared 3D dice room once Discord session is ready
+  useEffect(() => {
+    if (!session) return;
+    const wsProtocol = window.location.protocol === 'http:' ? 'ws:' : 'wss:';
+    const roomSlug = `dice-room-${encodeURIComponent(session.channelId ?? session.guildId ?? 'lobby')}`;
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws/room/${roomSlug}`;
+
+    useVttRoomStore.getState().connectRoom({
+      wsUrl,
+      sessionJwt: session.sessionJwt,
+      localDiscordId: session.userId,
+      campaignId: roomSlug,
+      characterId: null,
+    });
+
+    return () => {
+      useVttRoomStore.getState().disconnectRoom();
+    };
+  }, [session?.userId, session?.channelId, session?.guildId]);
+
+  // Proactive 45-minute token refresh for Worker sessionJwt
   useEffect(() => {
     if (!session?.sessionJwt) return;
 
@@ -69,15 +111,6 @@ export const App: React.FC = () => {
     };
   }, [session?.userId]);
 
-  const getLatestSupabaseJwt = useCallback(async (): Promise<string | null> => {
-    return sessionRef.current?.supabaseJwt ?? null;
-  }, []);
-
-  const handleLeaveRoom = useCallback(() => {
-    useVttRoomStore.getState().disconnectRoom();
-    setInRoom(false);
-  }, []);
-
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100">
       {refreshWarning && (
@@ -93,19 +126,63 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {!inRoom || !session ? (
-        <CampaignLobbyGate
-          session={session}
-          onSessionReady={setSession}
-          onEnterRoom={() => setInRoom(true)}
-          getLatestSupabaseJwt={getLatestSupabaseJwt}
-        />
+      {bootState === 'loading' ? (
+        <div className="flex h-full w-full items-center justify-center bg-zinc-950 p-6">
+          <div className="flex max-w-md flex-col items-center rounded-2xl border border-zinc-800 bg-zinc-900/70 p-8 text-center shadow-2xl">
+            <Loader2 className="h-10 w-10 animate-spin text-red-500" />
+            <h1 className="mt-4 text-lg font-extrabold tracking-wider uppercase text-zinc-100">
+              Joining W20 Dice Table
+            </h1>
+            <p className="mt-2 text-xs text-zinc-400">
+              Completing Discord Activity OAuth2 &amp; voice channel handshake...
+            </p>
+          </div>
+        </div>
+      ) : bootState === 'error' || !session ? (
+        <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-zinc-950 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-red-900/70 bg-zinc-900/90 p-6 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-red-950/90 p-2.5 text-red-400">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div>
+                <h1 className="text-base font-extrabold tracking-wide uppercase text-red-200">
+                  Discord Activity Connection Required
+                </h1>
+                <p className="mt-1 text-xs text-zinc-300">
+                  {bootError ?? 'Unable to establish an authenticated Discord Activity session.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/90 p-4 text-xs text-zinc-400">
+              <p className="font-bold uppercase tracking-wider text-zinc-300">
+                Launch Checklist
+              </p>
+              <ul className="mt-2 list-disc space-y-1.5 pl-4">
+                <li>
+                  Launch inside a <strong>Discord Voice Channel</strong> via the Activities Rocket
+                  button so the Discord Embedded App SDK can authorize your session.
+                </li>
+                <li>
+                  Ensure <code className="text-amber-300">VITE_DISCORD_CLIENT_ID</code> and Discord
+                  URL Mappings point <code className="text-zinc-200">/</code> to the Worker host.
+                </li>
+              </ul>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void runBootstrap()}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-red-700 py-2.5 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-red-600"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Retry Discord Handshake
+            </button>
+          </div>
+        </div>
       ) : (
-        <ActivityWorkspace
-          session={session}
-          getLatestSupabaseJwt={getLatestSupabaseJwt}
-          onLeaveRoom={handleLeaveRoom}
-        />
+        <DiceTableWorkspace session={session} />
       )}
     </div>
   );

@@ -180,6 +180,13 @@ export const NpcSpawnTemplateIdSchema = z.enum([
   'nexus_crawler',
 ]);
 
+export const LightWoundPenaltySchema = z.union([
+  z.literal(0),
+  z.literal(-1),
+  z.literal(-2),
+  z.literal(-5),
+]);
+
 export const ClientCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('HELLO_AUTH'),
@@ -230,6 +237,28 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
     specialtyId: z.string().min(1).optional(),
     spendWillpower: z.boolean().optional(),
     isSecretStRoll: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('ROLL_TABLE_POOL'),
+    pool: z.number().int().min(1).max(30),
+    rageDiceCount: z.number().int().min(0).max(30),
+    difficulty: z.number().int().min(2).max(10),
+    hasSpecialty: z.boolean(),
+    spendWillpower: z.boolean(),
+    applyWoundPenalty: z.boolean(),
+    label: z.string().max(120).optional(),
+    isSecretRoll: z.boolean().optional(),
+    physicalDiceValues: z.array(z.number().int().min(1).max(10)).max(30).optional(),
+    rollClientId: z.string().max(80).optional(),
+  }),
+  z.object({
+    type: z.literal('UPDATE_LIGHT_TRACKERS'),
+    trackers: z.object({
+      rage: z.number().int().min(0).max(10).optional(),
+      gnosis: z.number().int().min(0).max(10).optional(),
+      willpower: z.number().int().min(0).max(10).optional(),
+      woundPenalty: LightWoundPenaltySchema.optional(),
+    }),
   }),
   z.object({
     type: z.literal('CHARACTER_UPDATE_TRACKER'),

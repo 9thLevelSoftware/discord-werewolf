@@ -517,4 +517,76 @@ describe('@w20-vtt/protocol parseClientEnvelope & schemas', () => {
     expect(envelope.event.type).toBe('SYNC_SNAPSHOT');
     expect(events).toHaveLength(15);
   });
+
+  it('validates ROLL_TABLE_POOL and UPDATE_LIGHT_TRACKERS and rejects out-of-range dice/wound values', () => {
+    const validRoll = parseClientEnvelope(
+      JSON.stringify({
+        reqId: 'req-table-1',
+        expectedSeq: 0,
+        sentAt: 1_700_000_000_000,
+        command: {
+          type: 'ROLL_TABLE_POOL',
+          pool: 6,
+          rageDiceCount: 2,
+          difficulty: 6,
+          hasSpecialty: true,
+          spendWillpower: true,
+          applyWoundPenalty: false,
+          label: 'Dexterity + Brawl',
+          isSecretRoll: false,
+          physicalDiceValues: [10, 8, 6, 4, 2, 1],
+          rollClientId: 'roll-abc',
+        },
+      })
+    );
+    expect(validRoll.success).toBe(true);
+    if (validRoll.success && validRoll.data.command.type === 'ROLL_TABLE_POOL') {
+      expect(validRoll.data.command.physicalDiceValues).toEqual([10, 8, 6, 4, 2, 1]);
+    }
+
+    const validTracker = parseClientEnvelope(
+      JSON.stringify({
+        reqId: 'req-tracker-1',
+        expectedSeq: 0,
+        sentAt: 1_700_000_000_000,
+        command: {
+          type: 'UPDATE_LIGHT_TRACKERS',
+          trackers: { rage: 4, gnosis: 3, willpower: 5, woundPenalty: -2 },
+        },
+      })
+    );
+    expect(validTracker.success).toBe(true);
+
+    const badDice = parseClientEnvelope(
+      JSON.stringify({
+        reqId: 'req-bad-dice',
+        expectedSeq: 0,
+        sentAt: 1_700_000_000_000,
+        command: {
+          type: 'ROLL_TABLE_POOL',
+          pool: 3,
+          rageDiceCount: 0,
+          difficulty: 6,
+          hasSpecialty: false,
+          spendWillpower: false,
+          applyWoundPenalty: false,
+          physicalDiceValues: [11, 6, 4],
+        },
+      })
+    );
+    expect(badDice.success).toBe(false);
+
+    const badWound = parseClientEnvelope(
+      JSON.stringify({
+        reqId: 'req-bad-wound',
+        expectedSeq: 0,
+        sentAt: 1_700_000_000_000,
+        command: {
+          type: 'UPDATE_LIGHT_TRACKERS',
+          trackers: { woundPenalty: -3 },
+        },
+      })
+    );
+    expect(badWound.success).toBe(false);
+  });
 });
