@@ -12,7 +12,9 @@ import {
   ShieldAlert,
   Sparkles,
   Volume2,
+  VolumeX,
 } from 'lucide-react';
+import { diceSoundEngine, type DiceSoundPreferences } from '../audio/DiceSoundEngine';
 import type { DiscordSessionContext } from '../discordBootstrap';
 import { type Queued3DRoll, useVttRoomStore } from '../store/useVttRoomStore';
 import { ParticipantAvatar, RollResultPlaque } from './dice-table/DieFaceTiles';
@@ -155,6 +157,13 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const [hasDiceOnTable, setHasDiceOnTable] = useState(false);
   const [activeBanner, setActiveBanner] = useState<Queued3DRoll | null>(null);
   const [webglReady, setWebglReady] = useState(false);
+  const [sfxPrefs, setSfxPrefs] = useState<DiceSoundPreferences>(() =>
+    diceSoundEngine.loadPreferences(session.userId)
+  );
+
+  useEffect(() => {
+    setSfxPrefs(diceSoundEngine.loadPreferences(session.userId));
+  }, [session.userId]);
 
   const arenaWrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
@@ -187,6 +196,20 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         gravity: 2,
         throwForce: 6,
         spinForce: 5,
+        onDieComplete: (dieResult: unknown) => {
+          if (!dieResult || typeof dieResult !== 'object') {
+            diceSoundEngine.playDieSettle();
+            return;
+          }
+          const rec = dieResult as { value?: unknown; themeColor?: unknown };
+          const rawVal = Number(rec.value);
+          const val = Number.isFinite(rawVal)
+            ? rawVal === 0
+              ? 10
+              : Math.round(rawVal)
+            : undefined;
+          diceSoundEngine.playDieSettle(val, rec.themeColor === '#991b1b');
+        },
       });
 
       box
@@ -256,6 +279,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       localRollClientIdsRef.current.delete(headRoll.rollClientId);
       setActiveBanner(headRoll);
       setHasDiceOnTable(headRoll.roll.effectivePool > 0 && readyRef.current);
+      diceSoundEngine.playOutcomeAccent(headRoll.roll);
       dequeue3DRoll(headRoll.id);
       return;
     }
@@ -264,10 +288,10 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     busyQueueIdRef.current = headRollId;
 
     const animateRemoteRoll = async () => {
-      const groups = buildDiceBoxGroups(
-        headRoll.roll.effectivePool,
-        headRoll.rageDiceCount ?? 0
-      );
+      const rageCount = headRoll.rageDiceCount ?? 0;
+      const groups = buildDiceBoxGroups(headRoll.roll.effectivePool, rageCount);
+
+      diceSoundEngine.playThrowCascade(headRoll.roll.effectivePool, rageCount);
 
       if (readyRef.current && boxRef.current && groups.length > 0) {
         try {
@@ -275,6 +299,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
             theme: 'default',
             newStartPoint: true,
           });
+          diceSoundEngine.stopActiveRollCascade();
         } catch {
           // Fallback to banner if WebGL is throttled
         }
@@ -289,6 +314,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       if (cancelled) return;
       setHasDiceOnTable(groups.length > 0 && readyRef.current);
       setActiveBanner(headRoll);
+      diceSoundEngine.playOutcomeAccent(headRoll.roll);
       busyQueueIdRef.current = null;
       dequeue3DRoll(headRoll.id);
     };
@@ -355,6 +381,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       setIsThrowing(true);
       let physicalDiceValues: number[] | undefined;
 
+      diceSoundEngine.playThrowCascade(effectivePool, effectiveRage);
+
       try {
         const groups = buildDiceBoxGroups(effectivePool, effectiveRage);
         if (readyRef.current && boxRef.current && groups.length > 0) {
@@ -362,6 +390,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
             theme: 'default',
             newStartPoint: true,
           });
+          diceSoundEngine.stopActiveRollCascade();
           physicalDiceValues = extractSettledDiceValues(settled, effectivePool);
           setHasDiceOnTable(true);
         } else if (readyRef.current && boxRef.current && groups.length === 0) {
@@ -462,6 +491,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   );
 
   const handleClearTable = useCallback(() => {
+    diceSoundEngine.stopActiveRollCascade();
     try {
       boxRef.current?.clear();
     } catch {
@@ -470,6 +500,34 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     setHasDiceOnTable(false);
     setActiveBanner(null);
   }, []);
+
+  const handleToggleMuteSfx = useCallback(() => {
+    diceSoundEngine.unlock();
+    setSfxPrefs((prev) => {
+      const next: DiceSoundPreferences = {
+        muted: !prev.muted,
+        volume: prev.volume > 0 ? prev.volume : 0.75,
+      };
+      diceSoundEngine.savePreferences(session.userId, next);
+      return next;
+    });
+  }, [session.userId]);
+
+  const handleSfxVolumeChange = useCallback(
+    (pct: number) => {
+      const volume = Math.max(0, Math.min(1, pct / 100));
+      if (volume > 0) {
+        diceSoundEngine.unlock();
+      }
+      const next: DiceSoundPreferences = {
+        muted: volume === 0,
+        volume,
+      };
+      diceSoundEngine.savePreferences(session.userId, next);
+      setSfxPrefs(next);
+    },
+    [session.userId]
+  );
 
   const commitPoolInput = useCallback(() => {
     const parsed = Number.parseInt(poolInputValue, 10);
@@ -613,8 +671,33 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
             </div>
           </div>
 
-          {/* Right: Personal W20 Dot Trackers Popover + Arena Utilities */}
+          {/* Right: Audio SFX Pill + Personal W20 Dot Trackers Popover + Arena Utilities */}
           <div className="pointer-events-auto flex shrink-0 items-center gap-2">
+            <div className="w20-obsidian-panel flex items-center gap-1.5 rounded-full px-2.5 py-1.5">
+              <button
+                type="button"
+                onClick={handleToggleMuteSfx}
+                aria-label={sfxPrefs.muted ? 'Unmute dice sound effects' : 'Mute dice sound effects'}
+                title={sfxPrefs.muted ? 'Unmute dice SFX' : 'Mute dice SFX'}
+                className="flex items-center justify-center rounded-full text-stone-200 transition hover:text-amber-200"
+              >
+                {sfxPrefs.muted ? (
+                  <VolumeX className="h-3.5 w-3.5 text-red-400" />
+                ) : (
+                  <Volume2 className="h-3.5 w-3.5 text-amber-300" />
+                )}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={sfxPrefs.muted ? 0 : Math.round(sfxPrefs.volume * 100)}
+                onChange={(e) => handleSfxVolumeChange(Number(e.target.value))}
+                aria-label="Dice sound volume"
+                className="hidden h-1 w-14 cursor-pointer accent-amber-400 sm:block"
+              />
+            </div>
+
             <PersonalTrackersControl trackers={localTrackers} onUpdate={updateTrackers} />
 
             {(hasDiceOnTable || activeBanner) && (

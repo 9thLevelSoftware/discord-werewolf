@@ -6,6 +6,7 @@ import {
   refreshWorkerTokens,
 } from './discordBootstrap';
 import { soundscapeEngine } from './audio/SyncedSoundscapeEngine';
+import { diceSoundEngine } from './audio/DiceSoundEngine';
 import { useVttRoomStore } from './store/useVttRoomStore';
 import { DiceTableWorkspace } from './components/DiceTableWorkspace';
 
@@ -42,6 +43,7 @@ export const App: React.FC = () => {
       if (unlocked) return;
       unlocked = true;
       soundscapeEngine.unlockOnFirstGesture();
+      diceSoundEngine.unlock();
       window.removeEventListener('pointerdown', handleFirstGesture, true);
       window.removeEventListener('keydown', handleFirstGesture, true);
     };

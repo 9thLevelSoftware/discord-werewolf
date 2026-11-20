@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { LightGarouTrackers, LightWoundPenalty } from '@w20-vtt/protocol';
 import { ChevronDown, ShieldAlert, X } from 'lucide-react';
+import { diceSoundEngine } from '../../audio/DiceSoundEngine';
 
 type DotTone = 'crimson' | 'amber' | 'indigo';
 
@@ -68,7 +69,10 @@ export const W20DotRow: React.FC<W20DotRowProps> = ({
             <button
               key={rating}
               type="button"
-              onClick={() => onChange(clamped === 1 && rating === 1 ? 0 : rating)}
+              onClick={() => {
+                diceSoundEngine.playPipClick();
+                onChange(clamped === 1 && rating === 1 ? 0 : rating);
+              }}
               aria-label={`Set ${label} to ${clamped === 1 && rating === 1 ? 0 : rating}`}
               aria-pressed={active}
               className={`h-4 w-4 rounded-full border transition-transform duration-100 hover:scale-110 focus:outline-none focus:ring-1 focus:ring-amber-400/60 ${
@@ -204,7 +208,10 @@ export const PersonalTrackersControl: React.FC<PersonalTrackersControlProps> = (
                   <button
                     key={opt.value}
                     type="button"
-                    onClick={() => onUpdate({ woundPenalty: opt.value })}
+                    onClick={() => {
+                      diceSoundEngine.playPipClick();
+                      onUpdate({ woundPenalty: opt.value });
+                    }}
                     className={`flex flex-col items-center rounded-lg border px-1.5 py-1 text-[10px] transition ${
                       active
                         ? opt.value === 0
