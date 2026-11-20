@@ -13,6 +13,7 @@ function syncDiceBoxAssetsPlugin(): Plugin {
 }
 
 export default defineConfig({
+  envDir: '../..',
   plugins: [react(), tailwindcss(), syncDiceBoxAssetsPlugin()],
   server: {
     port: 5173,

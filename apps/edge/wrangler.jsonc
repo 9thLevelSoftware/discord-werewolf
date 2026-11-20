@@ -8,6 +8,7 @@
     "mode": "smart"
   },
   "vars": {
+    "DISCORD_APPLICATION_ID": "1573451265709711552",
     "SUPABASE_URL": "https://cwmmaqlcqfrbawhmzrfb.supabase.co",
     "SUPABASE_PUBLISHABLE_KEY": "sb_publishable__6wVzKZrsLmypOPgGw87Hw_NYD0Jj0y"
   },

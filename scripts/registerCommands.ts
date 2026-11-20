@@ -179,21 +179,27 @@ export async function registerDiscordCommands(): Promise<void> {
     ? `https://discord.com/api/v10/applications/${applicationId}/guilds/${guildId}/commands`
     : `https://discord.com/api/v10/applications/${applicationId}/commands`;
 
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bot ${botToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(W20_SLASH_COMMANDS),
-  });
+  const registered: Array<{ id: string; name: string }> = [];
+  for (const commandDef of W20_SLASH_COMMANDS) {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${botToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(commandDef),
+    });
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Discord command registration failed (${response.status}): ${body}`);
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `Discord command registration failed for /${commandDef.name} (${response.status}): ${body}`
+      );
+    }
+
+    const created = (await response.json()) as { id: string; name: string };
+    registered.push(created);
   }
-
-  const registered = (await response.json()) as Array<{ id: string; name: string }>;
   const scopeLabel = guildId ? `guild ${guildId}` : 'global application scope';
   console.log(
     `Registered ${registered.length} command(s) in ${scopeLabel}: ${registered.map((c) => `/${c.name}`).join(', ')}`
