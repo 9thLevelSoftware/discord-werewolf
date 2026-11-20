@@ -1,0 +1,229 @@
+import { DatabaseSync } from 'node:sqlite';
+import type { WorkerEnv } from '../../env';
+import type { GameRoomDO } from '../../GameRoomDO';
+
+export class MockWebSocket {
+  public readonly sentMessages: string[] = [];
+  public closedCode: number | null = null;
+  public closedReason: string | null = null;
+  public peer: MockWebSocket | null = null;
+  private attachment: unknown = null;
+
+  serializeAttachment(value: unknown): void {
+    this.attachment = structuredClone(value);
+  }
+
+  deserializeAttachment(): unknown {
+    return this.attachment === null ? null : structuredClone(this.attachment);
+  }
+
+  send(data: string | ArrayBuffer | ArrayBufferView): void {
+    const text =
+      typeof data === 'string'
+        ? data
+        : new TextDecoder().decode(
+            data instanceof ArrayBuffer
+              ? data
+              : new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+          );
+    this.sentMessages.push(text);
+  }
+
+  close(code = 1000, reason = ''): void {
+    this.closedCode = code;
+    this.closedReason = reason;
+  }
+
+  drainJson<T = unknown>(): T[] {
+    const items = this.sentMessages.map((msg) => JSON.parse(msg) as T);
+    this.sentMessages.length = 0;
+    return items;
+  }
+}
+
+export class MockSqlCursor<T = Record<string, unknown>> {
+  constructor(private readonly rows: T[]) {}
+
+  toArray(): T[] {
+    return this.rows;
+  }
+
+  one(): T {
+    if (!this.rows[0]) {
+      throw new Error('Expected at least 1 SQL row');
+    }
+    return this.rows[0];
+  }
+}
+
+export class MockSqlStorage {
+  public readonly db: DatabaseSync;
+
+  constructor(existingDb?: DatabaseSync) {
+    this.db = existingDb ?? new DatabaseSync(':memory:');
+  }
+
+  exec<T = Record<string, unknown>>(query: string, ...bindings: unknown[]): MockSqlCursor<T> {
+    if (bindings.length === 0 && !/^\s*(SELECT|PRAGMA)/i.test(query)) {
+      this.db.exec(query);
+      return new MockSqlCursor<T>([]);
+    }
+    const stmt = this.db.prepare(query);
+    if (/^\s*(SELECT|PRAGMA|WITH)/i.test(query)) {
+      return new MockSqlCursor<T>(stmt.all(...bindings) as T[]);
+    }
+    stmt.run(...bindings);
+    return new MockSqlCursor<T>([]);
+  }
+}
+
+export class MockDurableObjectState {
+  public readonly waitUntilPromises: Promise<unknown>[] = [];
+  public readonly acceptedSockets: MockWebSocket[] = [];
+  public readonly sql: MockSqlStorage;
+  public readonly storage: DurableObjectStorage;
+
+  constructor(existingDb?: DatabaseSync) {
+    this.sql = new MockSqlStorage(existingDb);
+    const sqlRef = this.sql;
+    this.storage = {
+      sql: sqlRef,
+    } as unknown as DurableObjectStorage;
+  }
+
+  async blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
+    return callback();
+  }
+
+  waitUntil(promise: Promise<unknown>): void {
+    this.waitUntilPromises.push(promise);
+  }
+
+  acceptWebSocket(ws: WebSocket): void {
+    this.acceptedSockets.push(ws as unknown as MockWebSocket);
+  }
+
+  getWebSockets(): WebSocket[] {
+    return this.acceptedSockets.filter((ws) => ws.closedCode === null) as unknown as WebSocket[];
+  }
+}
+
+export function installMockWebSocketPairGlobal(): void {
+  const g = globalThis as unknown as {
+    WebSocketPair?: new () => { 0: WebSocket; 1: WebSocket };
+    Response: typeof Response;
+    __w20Patched101Response?: boolean;
+  };
+  g.WebSocketPair = class {
+    0: WebSocket;
+    1: WebSocket;
+    constructor() {
+      const client = new MockWebSocket();
+      const server = new MockWebSocket();
+      client.peer = server;
+      server.peer = client;
+      this[0] = client as unknown as WebSocket;
+      this[1] = server as unknown as WebSocket;
+    }
+  };
+
+  if (!g.__w20Patched101Response) {
+    const NativeResponse = g.Response;
+    const PatchedResponse = function (
+      body?: BodyInit | null,
+      init?: ResponseInit & { webSocket?: WebSocket },
+    ): Response {
+      if (init && init.status === 101) {
+        return {
+          status: 101,
+          ok: true,
+          headers: new Headers(init.headers),
+          webSocket: init.webSocket,
+        } as unknown as Response;
+      }
+      return new NativeResponse(body, init);
+    } as unknown as typeof Response;
+    PatchedResponse.prototype = NativeResponse.prototype;
+    PatchedResponse.json = NativeResponse.json.bind(NativeResponse);
+    PatchedResponse.error = NativeResponse.error.bind(NativeResponse);
+    PatchedResponse.redirect = NativeResponse.redirect.bind(NativeResponse);
+    g.Response = PatchedResponse;
+    g.__w20Patched101Response = true;
+  }
+}
+
+export class MockR2Bucket {
+  private readonly store = new Map<
+    string,
+    { body: Uint8Array; httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string>; etag: string }
+  >();
+
+  async put(
+    key: string,
+    value: ArrayBuffer | ArrayBufferView | string,
+    options?: R2PutOptions,
+  ): Promise<R2Object> {
+    const bytes =
+      typeof value === 'string'
+        ? new TextEncoder().encode(value)
+        : value instanceof ArrayBuffer
+          ? new Uint8Array(value)
+          : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    const etag = `etag-${bytes.byteLength}`;
+    this.store.set(key, {
+      body: new Uint8Array(bytes),
+      httpMetadata: options?.httpMetadata as R2HTTPMetadata | undefined,
+      customMetadata: options?.customMetadata,
+      etag,
+    });
+    return { key, httpEtag: etag, size: bytes.byteLength } as unknown as R2Object;
+  }
+
+  async get(key: string): Promise<R2ObjectBody | null> {
+    const entry = this.store.get(key);
+    if (!entry) {
+      return null;
+    }
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(entry.body);
+        controller.close();
+      },
+    });
+    return {
+      key,
+      body: stream,
+      httpEtag: entry.etag,
+      size: entry.body.byteLength,
+      writeHttpMetadata(headers: Headers) {
+        if (entry.httpMetadata?.contentType) {
+          headers.set('Content-Type', entry.httpMetadata.contentType);
+        }
+        if (entry.httpMetadata?.cacheControl) {
+          headers.set('Cache-Control', entry.httpMetadata.cacheControl);
+        }
+      },
+    } as unknown as R2ObjectBody;
+  }
+}
+
+export function createMockEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
+  return {
+    DISCORD_APPLICATION_ID: 'app-123456',
+    DISCORD_CLIENT_SECRET: 'discord-secret-xyz',
+    DISCORD_PUBLIC_KEY: '00'.repeat(32),
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
+    SUPABASE_SERVICE_ROLE_KEY: 'sb_service_role_test',
+    SUPABASE_JWT_SECRET: 'super-secret-jwt-signing-key-for-w20-tests-256bit',
+    VTT_MEDIA_BUCKET: new MockR2Bucket() as unknown as R2Bucket,
+    ASSETS: {
+      fetch: async () => new Response('<html>spa</html>', { status: 200 }),
+    } as unknown as Fetcher,
+    GAME_ROOM: {
+      idFromName: (name: string) => ({ toString: () => name }) as DurableObjectId,
+      get: () => ({} as DurableObjectStub<GameRoomDO>),
+    } as unknown as DurableObjectNamespace<GameRoomDO>,
+    ...overrides,
+  };
+}

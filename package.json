@@ -1,0 +1,21 @@
+{
+  "name": "w20-discord-vtt",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "build": "pnpm --filter @w20-vtt/core build && pnpm --filter @w20-vtt/protocol build && pnpm --filter @w20-vtt/client build",
+    "typecheck": "pnpm --filter @w20-vtt/core build && pnpm --filter @w20-vtt/protocol build && pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev:client": "pnpm --filter @w20-vtt/client dev",
+    "dev:edge": "pnpm --filter @w20-vtt/edge dev",
+    "deploy": "pnpm build && pnpm --filter @w20-vtt/edge deploy",
+    "discord:register": "tsx scripts/registerCommands.ts"
+  },
+  "devDependencies": {
+    "supabase": "^3.2.0",
+    "tsx": "^4.19.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

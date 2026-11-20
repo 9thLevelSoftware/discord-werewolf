@@ -1,0 +1,13 @@
+node_modules
+dist
+.wrangler
+.dev.vars
+.env
+.env.*
+!.env.example
+apps/client/public/assets/dice-box
+werewolf.pdf
+*.pdf
+*.tsbuildinfo
+coverage
+.DS_Store

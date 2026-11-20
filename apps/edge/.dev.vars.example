@@ -1,0 +1,9 @@
+# Copy to .dev.vars for local `wrangler dev` (never commit real secrets).
+# In production, configure public values via Wrangler vars and secrets via `wrangler secret put`.
+DISCORD_APPLICATION_ID=your-discord-application-id
+DISCORD_CLIENT_SECRET=your-discord-oauth-client-secret
+DISCORD_PUBLIC_KEY=your-discord-ed25519-public-key
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+SUPABASE_JWT_SECRET=your-supabase-jwt-signing-secret

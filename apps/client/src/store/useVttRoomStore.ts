@@ -1,0 +1,694 @@
+import { create } from 'zustand';
+import { subscribeWithSelector } from 'zustand/middleware';
+import type {
+  CombatEncounterView,
+  DeclaredActionInput,
+  GarouForm,
+  MoonPhase,
+  ReactionChoice,
+  RealmLayer,
+  SpecialtyMode,
+  W20CharacterState,
+  W20RollResult,
+} from '@w20-vtt/core';
+import type {
+  AudioSyncPayload,
+  ClientCommand,
+  ClientEnvelope,
+  CommandRejectionCode,
+  FogBrushStroke,
+  HandoutRevealPayload,
+  PackTotemState,
+  ParticipantRole,
+  ProjectedMapToken,
+  ServerEnvelope,
+  WhisperCardPayload,
+} from '@w20-vtt/protocol';
+import { soundscapeEngine } from '../audio/SyncedSoundscapeEngine';
+
+export type ConnectionStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'authenticated'
+  | 'reconnecting';
+
+export interface Queued3DRoll {
+  id: string;
+  rollerDiscordId: string;
+  characterId?: string;
+  label: string;
+  roll: W20RollResult;
+}
+
+export interface ActiveFogToolState {
+  active: boolean;
+  mode: 'reveal' | 'shroud';
+  shape: 'circle' | 'rect';
+  radius: number;
+}
+
+export interface FrenzyPromptState {
+  characterId: string;
+  triggerReason: 'rage_4_plus_successes' | 'severe_wounds' | 'manual_check';
+  baseDifficulty: number;
+  moonPhase: MoonPhase;
+}
+
+export interface ConnectRoomParams {
+  wsUrl: string;
+  sessionJwt: string;
+  localDiscordId: string;
+  campaignId: string;
+  characterId: string | null;
+}
+
+interface VttRoomStoreState {
+  // Connection & Causal Ordering
+  connectionStatus: ConnectionStatus;
+  lastSeq: number;
+  serverClockOffsetMs: number;
+  lastError: { code: CommandRejectionCode | string; message: string } | null;
+
+  // Viewer Context
+  sessionJwt: string | null;
+  localDiscordId: string | null;
+  activeCharacterId: string | null;
+  viewerRole: ParticipantRole;
+  viewerRealm: RealmLayer;
+  storytellerPreviewRealm: RealmLayer | 'both';
+
+  // Authoritative Room State
+  campaignId: string;
+  localGauntlet: number;
+  moonPhase: MoonPhase;
+  specialtyMode: SpecialtyMode;
+  mapAssetUrl: string | null;
+  fogStrokes: FogBrushStroke[];
+  activeFogTool: ActiveFogToolState;
+  audioState: AudioSyncPayload | null;
+  activeHandout: HandoutRevealPayload | null;
+  whispers: WhisperCardPayload[];
+  packTotem: PackTotemState | null;
+  safetyPaused: boolean;
+  safetyPauseReason: string | null;
+  frenzyPrompt: FrenzyPromptState | null;
+  characters: Record<string, W20CharacterState>;
+  tokens: ProjectedMapToken[];
+  optimisticTokenCoords: Record<string, { x: number; y: number }>;
+  combat: CombatEncounterView | null;
+  speakingDiscordIds: Set<string>;
+  diceQueue: Queued3DRoll[];
+
+  // Store Actions
+  connectRoom: (params: ConnectRoomParams) => void;
+  updateSessionJwt: (jwt: string) => void;
+  disconnectRoom: () => void;
+  sendCommand: (command: ClientCommand) => string;
+
+  // High-Frequency & Gameplay Helpers
+  moveTokenOptimistic: (
+    tokenId: string,
+    x: number,
+    y: number,
+    commitToServer: boolean
+  ) => void;
+  setLocalVoiceSpeaking: (
+    speakingUserId: string,
+    isLocal: boolean,
+    active: boolean
+  ) => void;
+  setStorytellerPreviewRealm: (mode: RealmLayer | 'both') => void;
+  setActiveFogTool: (tool: {
+    active: boolean;
+    mode?: 'reveal' | 'shroud';
+    shape?: 'circle' | 'rect';
+    radius?: number;
+  }) => void;
+  shiftCharacterForm: (
+    characterId: string,
+    targetForm: GarouForm,
+    instantRage: boolean
+  ) => void;
+  stepSideways: (characterId: string, targetRealm: RealmLayer) => void;
+  submitCombatDeclaration: (
+    combatantId: string,
+    declaration: DeclaredActionInput
+  ) => void;
+  submitCombatReaction: (
+    defenderCombatantId: string,
+    reaction: ReactionChoice
+  ) => void;
+  dequeue3DRoll: (id: string) => void;
+  dismissWhisper: (id: string) => void;
+  dismissFrenzyPrompt: () => void;
+}
+
+let socket: WebSocket | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let reconnectAttempt = 0;
+let connectionGeneration = 0;
+let latestConnectParams: ConnectRoomParams | null = null;
+
+function clearTimers(): void {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (heartbeatTimer !== null) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}
+
+function closeActiveSocket(): void {
+  if (!socket) return;
+  const old = socket;
+  socket = null;
+  old.onopen = null;
+  old.onmessage = null;
+  old.onclose = null;
+  old.onerror = null;
+  if (old.readyState <= WebSocket.OPEN) {
+    old.close();
+  }
+}
+
+export const useVttRoomStore = create<VttRoomStoreState>()(
+  subscribeWithSelector((set, get) => ({
+    connectionStatus: 'disconnected',
+    lastSeq: 0,
+    serverClockOffsetMs: 0,
+    lastError: null,
+
+    sessionJwt: null,
+    localDiscordId: null,
+    activeCharacterId: null,
+    viewerRole: 'player',
+    viewerRealm: 'physical',
+    storytellerPreviewRealm: 'both',
+
+    campaignId: '',
+    localGauntlet: 6,
+    moonPhase: 'half',
+    specialtyMode: 'w20_double',
+    mapAssetUrl: null,
+    fogStrokes: [],
+    activeFogTool: {
+      active: false,
+      mode: 'reveal',
+      shape: 'circle',
+      radius: 110,
+    },
+    audioState: null,
+    activeHandout: null,
+    whispers: [],
+    packTotem: null,
+    safetyPaused: false,
+    safetyPauseReason: null,
+    frenzyPrompt: null,
+    characters: {},
+    tokens: [],
+    optimisticTokenCoords: {},
+    combat: null,
+    speakingDiscordIds: new Set<string>(),
+    diceQueue: [],
+
+    connectRoom: (params) => {
+      connectionGeneration += 1;
+      const myGen = connectionGeneration;
+
+      const isSameRoom =
+        latestConnectParams !== null &&
+        latestConnectParams.campaignId === params.campaignId &&
+        latestConnectParams.characterId === params.characterId;
+      latestConnectParams = { ...params };
+
+      clearTimers();
+      closeActiveSocket();
+
+      set((state) => ({
+        connectionStatus: reconnectAttempt > 0 ? 'reconnecting' : 'connecting',
+        sessionJwt: params.sessionJwt,
+        localDiscordId: params.localDiscordId,
+        activeCharacterId: params.characterId,
+        campaignId: params.campaignId,
+        lastSeq: isSameRoom ? state.lastSeq : 0,
+        lastError: null,
+        ...(isSameRoom
+          ? {}
+          : {
+              characters: {},
+              tokens: [],
+              optimisticTokenCoords: {},
+              fogStrokes: [],
+              combat: null,
+              activeHandout: null,
+              whispers: [],
+              packTotem: null,
+              safetyPaused: false,
+              safetyPauseReason: null,
+              frenzyPrompt: null,
+              diceQueue: [],
+            }),
+      }));
+
+      const ws = new WebSocket(params.wsUrl);
+      socket = ws;
+
+      ws.onopen = () => {
+        if (myGen !== connectionGeneration) return;
+        reconnectAttempt = 0;
+
+        const state = get();
+        const activeJwt = state.sessionJwt ?? params.sessionJwt;
+        get().sendCommand({
+          type: 'HELLO_AUTH',
+          sessionJwt: activeJwt,
+          campaignId: params.campaignId,
+          characterId: params.characterId,
+          lastSeenSeq: state.lastSeq > 0 ? state.lastSeq : null,
+        });
+
+        if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
+        heartbeatTimer = setInterval(() => {
+          if (myGen !== connectionGeneration) return;
+          if (socket?.readyState === WebSocket.OPEN) {
+            get().sendCommand({ type: 'PING' });
+          }
+        }, 25_000);
+      };
+
+      ws.onmessage = (msgEvent) => {
+        if (myGen !== connectionGeneration) return;
+        if (typeof msgEvent.data !== 'string') return;
+
+        let envelope: ServerEnvelope;
+        try {
+          envelope = JSON.parse(msgEvent.data) as ServerEnvelope;
+        } catch {
+          return;
+        }
+
+        const { seq, serverTime, event } = envelope;
+        const offsetMs = Number.isFinite(serverTime)
+          ? serverTime - Date.now()
+          : get().serverClockOffsetMs;
+
+        switch (event.type) {
+          case 'SYNC_SNAPSHOT': {
+            const { snapshot } = event;
+            const prevRealm = get().viewerRealm;
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              campaignId: snapshot.campaignId,
+              localGauntlet: snapshot.localGauntlet,
+              moonPhase: snapshot.moonPhase,
+              specialtyMode: snapshot.specialtyMode,
+              mapAssetUrl: snapshot.mapAssetUrl,
+              fogStrokes: snapshot.fogStrokes,
+              audioState: snapshot.audioState,
+              activeHandout: snapshot.activeHandout,
+              packTotem: snapshot.packTotem,
+              safetyPaused: snapshot.safetyPaused,
+              safetyPauseReason: snapshot.safetyPauseReason ?? null,
+              viewerRole: snapshot.viewerRole,
+              viewerRealm: snapshot.viewerRealm,
+              characters: snapshot.characters,
+              tokens: snapshot.tokens,
+              optimisticTokenCoords: {},
+              combat: snapshot.combat,
+              speakingDiscordIds: new Set(snapshot.speakingDiscordIds),
+              lastError: null,
+            });
+            if (snapshot.audioState) {
+              soundscapeEngine.syncState(
+                snapshot.audioState,
+                offsetMs,
+                snapshot.viewerRealm
+              );
+            } else if (prevRealm !== snapshot.viewerRealm) {
+              soundscapeEngine.crossfadeToRealm(snapshot.viewerRealm);
+            }
+            break;
+          }
+
+          case 'COMMAND_REJECTED': {
+            set({
+              lastSeq: event.currentSeq,
+              serverClockOffsetMs: offsetMs,
+              optimisticTokenCoords: {},
+              lastError: { code: event.code, message: event.message },
+            });
+            break;
+          }
+
+          case 'DICE_ROLLED_3D': {
+            set((state) => ({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              diceQueue: [
+                ...state.diceQueue,
+                {
+                  id: `${seq}-${event.roll.physicsSeed}-${state.diceQueue.length}`,
+                  rollerDiscordId: event.rollerDiscordId,
+                  characterId: event.characterId,
+                  label: event.label,
+                  roll: event.roll,
+                },
+              ],
+            }));
+            break;
+          }
+
+          case 'COMBAT_STATE_UPDATED': {
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              combat: event.combat,
+            });
+            break;
+          }
+
+          case 'CHARACTER_PATCHED': {
+            const prevState = get();
+            const isActiveViewerChar =
+              event.characterId === prevState.activeCharacterId;
+            const nextViewerRealm = isActiveViewerChar
+              ? event.character.activeRealm
+              : prevState.viewerRealm;
+
+            set((state) => ({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              viewerRealm: nextViewerRealm,
+              characters: {
+                ...state.characters,
+                [event.characterId]: event.character,
+              },
+            }));
+
+            if (nextViewerRealm !== prevState.viewerRealm) {
+              soundscapeEngine.crossfadeToRealm(
+                nextViewerRealm,
+                prevState.audioState?.masterVolume
+              );
+            }
+            break;
+          }
+
+          case 'TOKENS_UPDATED': {
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              tokens: event.tokens,
+              optimisticTokenCoords: {},
+            });
+            break;
+          }
+
+          case 'VOICE_SPEAKERS_UPDATED': {
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              speakingDiscordIds: new Set(event.speakingDiscordIds),
+            });
+            break;
+          }
+
+          case 'WORLD_ENV_UPDATED': {
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              localGauntlet: event.localGauntlet,
+              moonPhase: event.moonPhase,
+              specialtyMode: event.specialtyMode,
+              mapAssetUrl: event.mapAssetUrl,
+            });
+            break;
+          }
+
+          case 'FOG_UPDATED': {
+            const isReset =
+              event.stroke.mode === 'reset_shroud_all' ||
+              event.stroke.mode === 'reset_reveal_all';
+            set((state) => ({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              fogStrokes: isReset
+                ? [event.stroke]
+                : [...state.fogStrokes, event.stroke],
+            }));
+            break;
+          }
+
+          case 'AUDIO_SYNCED': {
+            const activeRealm = get().viewerRealm;
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              audioState: event.payload,
+            });
+            soundscapeEngine.syncState(event.payload, offsetMs, activeRealm);
+            if (event.payload.stingUrl) {
+              soundscapeEngine.playSting(
+                event.payload.stingUrl,
+                event.payload.masterVolume
+              );
+            }
+            break;
+          }
+
+          case 'HANDOUT_UPDATED': {
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              activeHandout: event.handout,
+            });
+            break;
+          }
+
+          case 'WHISPER_RECEIVED': {
+            set((state) => {
+              const exists = state.whispers.some(
+                (w) => w.id === event.whisper.id
+              );
+              return {
+                connectionStatus: 'authenticated',
+                lastSeq: seq,
+                serverClockOffsetMs: offsetMs,
+                whispers: exists
+                  ? state.whispers
+                  : [...state.whispers, event.whisper],
+              };
+            });
+            break;
+          }
+
+          case 'PACK_UPDATED': {
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              packTotem: event.packTotem,
+            });
+            break;
+          }
+
+          case 'SAFETY_PAUSE_UPDATED': {
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              safetyPaused: event.paused,
+              safetyPauseReason: event.paused ? (event.reason ?? null) : null,
+            });
+            break;
+          }
+
+          case 'FRENZY_PROMPT': {
+            set({
+              connectionStatus: 'authenticated',
+              lastSeq: seq,
+              serverClockOffsetMs: offsetMs,
+              frenzyPrompt: {
+                characterId: event.characterId,
+                triggerReason: event.triggerReason,
+                baseDifficulty: event.baseDifficulty,
+                moonPhase: event.moonPhase,
+              },
+            });
+            break;
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        if (myGen !== connectionGeneration) return;
+        if (heartbeatTimer !== null) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+        socket = null;
+        set({ connectionStatus: 'reconnecting' });
+
+        const backoffMs = Math.min(10_000, 500 * Math.pow(2, reconnectAttempt));
+        reconnectAttempt += 1;
+
+        reconnectTimer = setTimeout(() => {
+          if (myGen !== connectionGeneration) return;
+          const nextParams = latestConnectParams ?? params;
+          const latestJwt = get().sessionJwt ?? nextParams.sessionJwt;
+          get().connectRoom({
+            ...nextParams,
+            sessionJwt: latestJwt,
+          });
+        }, backoffMs);
+      };
+    },
+
+    updateSessionJwt: (jwt) => {
+      if (latestConnectParams) {
+        latestConnectParams = { ...latestConnectParams, sessionJwt: jwt };
+      }
+      set({ sessionJwt: jwt });
+    },
+
+    disconnectRoom: () => {
+      connectionGeneration += 1;
+      reconnectAttempt = 0;
+      latestConnectParams = null;
+      clearTimers();
+      closeActiveSocket();
+      set({
+        connectionStatus: 'disconnected',
+        lastSeq: 0,
+        lastError: null,
+        campaignId: '',
+        activeCharacterId: null,
+        characters: {},
+        tokens: [],
+        optimisticTokenCoords: {},
+        fogStrokes: [],
+        combat: null,
+        activeHandout: null,
+        whispers: [],
+        packTotem: null,
+        safetyPaused: false,
+        safetyPauseReason: null,
+        frenzyPrompt: null,
+        diceQueue: [],
+      });
+    },
+
+    sendCommand: (command) => {
+      const reqId = crypto.randomUUID();
+      if (!socket || socket.readyState !== WebSocket.OPEN) return reqId;
+
+      const envelope: ClientEnvelope = {
+        reqId,
+        expectedSeq: get().lastSeq,
+        sentAt: Date.now(),
+        command,
+      };
+      socket.send(JSON.stringify(envelope));
+      return reqId;
+    },
+
+    moveTokenOptimistic: (tokenId, x, y, commitToServer) => {
+      set((state) => ({
+        optimisticTokenCoords: {
+          ...state.optimisticTokenCoords,
+          [tokenId]: { x, y },
+        },
+      }));
+      if (commitToServer) {
+        get().sendCommand({ type: 'TOKEN_MOVE', tokenId, x, y });
+      }
+    },
+
+    setLocalVoiceSpeaking: (speakingUserId, isLocal, active) => {
+      set((state) => {
+        const next = new Set(state.speakingDiscordIds);
+        if (active) next.add(speakingUserId);
+        else next.delete(speakingUserId);
+        return { speakingDiscordIds: next };
+      });
+      if (isLocal) {
+        get().sendCommand({ type: 'VOICE_SPEAKING_STATE', isSpeaking: active });
+      }
+    },
+
+    setStorytellerPreviewRealm: (mode) => set({ storytellerPreviewRealm: mode }),
+
+    setActiveFogTool: (tool) =>
+      set((state) => ({
+        activeFogTool: {
+          active: tool.active,
+          mode: tool.mode ?? state.activeFogTool.mode,
+          shape: tool.shape ?? state.activeFogTool.shape,
+          radius: tool.radius ?? state.activeFogTool.radius,
+        },
+      })),
+
+    shiftCharacterForm: (characterId, targetForm, instantRage) => {
+      get().sendCommand({
+        type: 'CHARACTER_SHIFT_FORM',
+        characterId,
+        targetForm,
+        method: instantRage ? 'instant_rage_spend' : 'roll_primal_urge',
+      });
+    },
+
+    stepSideways: (characterId, targetRealm) => {
+      get().sendCommand({
+        type: 'STEP_SIDEWAYS',
+        characterId,
+        targetRealm,
+      });
+    },
+
+    submitCombatDeclaration: (combatantId, declaration) => {
+      get().sendCommand({
+        type: 'COMBAT_SUBMIT_DECLARATION',
+        combatantId,
+        declaration,
+      });
+    },
+
+    submitCombatReaction: (defenderCombatantId, reaction) => {
+      get().sendCommand({
+        type: 'COMBAT_SUBMIT_REACTION',
+        defenderCombatantId,
+        reaction,
+      });
+    },
+
+    dequeue3DRoll: (id) => {
+      set((state) => ({
+        diceQueue: state.diceQueue.filter((item) => item.id !== id),
+      }));
+    },
+
+    dismissWhisper: (id) => {
+      set((state) => ({
+        whispers: state.whispers.filter((w) => w.id !== id),
+      }));
+    },
+
+    dismissFrenzyPrompt: () => {
+      set({ frenzyPrompt: null });
+    },
+  }))
+);
