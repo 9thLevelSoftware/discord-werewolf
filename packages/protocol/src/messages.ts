@@ -74,12 +74,24 @@ export interface LightGarouTrackers {
   woundPenalty: LightWoundPenalty;
 }
 
+export interface ClientSeatSyncItem {
+  seatId: string;
+  displayName: string;
+  characterName?: string | null;
+  activeForm?: GarouForm | null;
+  trackers: LightGarouTrackers;
+}
+
 export interface TableParticipant {
   discordUserId: string;
   displayName: string;
   avatarUrl: string | null;
   isConnected: boolean;
   trackers: LightGarouTrackers;
+  participantKey?: string;
+  seatId?: string;
+  characterName?: string | null;
+  activeForm?: GarouForm | null;
 }
 
 export interface RollHistoryEntry {
@@ -168,10 +180,20 @@ export type ClientCommand =
       isSecretRoll?: boolean;
       physicalDiceValues?: number[];
       rollClientId?: string;
+      seatId?: string;
+      rollerDisplayName?: string;
     }
   | {
       type: 'UPDATE_LIGHT_TRACKERS';
       trackers: Partial<LightGarouTrackers>;
+      seatId?: string;
+      displayName?: string;
+      characterName?: string | null;
+      activeForm?: GarouForm | null;
+    }
+  | {
+      type: 'SYNC_CLIENT_SEATS';
+      seats: ClientSeatSyncItem[];
     }
   | {
       type: 'CHARACTER_UPDATE_TRACKER';

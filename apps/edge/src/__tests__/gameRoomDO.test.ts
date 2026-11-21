@@ -832,4 +832,246 @@ describe('GameRoomDO authoritative W20 engine & projection security', () => {
       expect(p2Info?.isConnected).toBe(false);
     }
   });
+
+  it('supports multi-seat same-screen presence via SYNC_CLIENT_SEATS, independent seat rolls/trackers, avatarUrl preservation, and multi-seat disconnect cleanup', async () => {
+    const env = createMockEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+
+    const p1Avatar = 'https://cdn.discordapp.com/avatars/player-discord-1/avatar.png';
+    const p1Jwt = (
+      await mintAuthTokensForIdentity(
+        {
+          sub: await discordIdToUuidV5(PLAYER1_DISCORD_ID),
+          discordId: PLAYER1_DISCORD_ID,
+          username: 'PlayerOne',
+          globalName: 'PlayerOne',
+          avatarUrl: p1Avatar,
+          guildIds: [GUILD_ID],
+        },
+        env.SUPABASE_JWT_SECRET,
+      )
+    ).sessionJwt;
+    const p2Jwt = await mintJwtForUser(PLAYER2_DISCORD_ID, 'PlayerTwo', [GUILD_ID], env.SUPABASE_JWT_SECRET);
+
+    const connectVoice = async (jwt: string) => {
+      const res = await room.fetch(
+        new Request('https://vtt.example/ws/room/dice-room-multiseat-1', {
+          headers: { Upgrade: 'websocket' },
+        }),
+      );
+      expect(res.status).toBe(101);
+      const ws = state.acceptedSockets[state.acceptedSockets.length - 1]!;
+      await sendCommand(room, ws, 0, {
+        type: 'HELLO_AUTH',
+        sessionJwt: jwt,
+        campaignId: 'dice-room-multiseat-1',
+        characterId: null,
+        lastSeenSeq: null,
+      });
+      return { ws, events: ws.drainJson<ServerEnvelope<ServerEvent>>() };
+    };
+
+    const p1 = await connectVoice(p1Jwt);
+    const p2 = await connectVoice(p2Jwt);
+    p1.ws.drainJson();
+    p2.ws.drainJson();
+
+    // P1 registers 2 same-screen seats via SYNC_CLIENT_SEATS
+    await sendCommand(room, p1.ws, 0, {
+      type: 'SYNC_CLIENT_SEATS',
+      seats: [
+        {
+          seatId: 'primary',
+          displayName: 'Alex',
+          characterName: 'Ash',
+          activeForm: 'crinos',
+          trackers: { rage: 5, gnosis: 2, willpower: 4, woundPenalty: -1 },
+        },
+        {
+          seatId: 'seat-2',
+          displayName: 'Jordan',
+          characterName: 'Shadowfang',
+          activeForm: 'lupus',
+          trackers: { rage: 3, gnosis: 5, willpower: 6, woundPenalty: -2 },
+        },
+      ],
+    });
+
+    const p1SyncEvents = p1.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const p2SyncEvents = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const syncPartEv = p2SyncEvents.find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    expect(p1SyncEvents.some((e) => e.event.type === 'PARTICIPANTS_UPDATED')).toBe(true);
+    expect(syncPartEv?.event.type).toBe('PARTICIPANTS_UPDATED');
+
+    if (syncPartEv?.event.type === 'PARTICIPANTS_UPDATED') {
+      expect(syncPartEv.event.participants).toHaveLength(3);
+      const primarySeat = syncPartEv.event.participants.find(
+        (p) => p.participantKey === PLAYER1_DISCORD_ID,
+      );
+      const secondSeat = syncPartEv.event.participants.find(
+        (p) => p.participantKey === `${PLAYER1_DISCORD_ID}::seat-2`,
+      );
+      expect(primarySeat).toMatchObject({
+        participantKey: PLAYER1_DISCORD_ID,
+        seatId: 'primary',
+        discordUserId: PLAYER1_DISCORD_ID,
+        displayName: 'Alex',
+        characterName: 'Ash',
+        activeForm: 'crinos',
+        avatarUrl: p1Avatar,
+        isConnected: true,
+        trackers: { rage: 5, gnosis: 2, willpower: 4, woundPenalty: -1 },
+      });
+      expect(secondSeat).toMatchObject({
+        participantKey: `${PLAYER1_DISCORD_ID}::seat-2`,
+        seatId: 'seat-2',
+        discordUserId: PLAYER1_DISCORD_ID,
+        displayName: 'Jordan',
+        characterName: 'Shadowfang',
+        activeForm: 'lupus',
+        isConnected: true,
+        trackers: { rage: 3, gnosis: 5, willpower: 6, woundPenalty: -2 },
+      });
+    }
+
+    // Update seat-2 light trackers independently without affecting primary
+    await sendCommand(room, p1.ws, 0, {
+      type: 'UPDATE_LIGHT_TRACKERS',
+      seatId: 'seat-2',
+      activeForm: 'hispo',
+      trackers: { rage: 7 },
+    });
+    p1.ws.drainJson();
+    const afterSeat2Tracker = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const trEv = afterSeat2Tracker.find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    if (trEv?.event.type === 'PARTICIPANTS_UPDATED') {
+      const seat1 = trEv.event.participants.find((p) => p.participantKey === PLAYER1_DISCORD_ID);
+      const seat2 = trEv.event.participants.find(
+        (p) => p.participantKey === `${PLAYER1_DISCORD_ID}::seat-2`,
+      );
+      expect(seat1?.trackers.rage).toBe(5);
+      expect(seat1?.activeForm).toBe('crinos');
+      expect(seat2?.trackers.rage).toBe(7);
+      expect(seat2?.activeForm).toBe('hispo');
+    }
+
+    // Roll from seat-2 with applyWoundPenalty: true (-2) & spendWillpower: true -> decrements ONLY seat-2's willpower (6->5)
+    await sendCommand(room, p1.ws, 0, {
+      type: 'ROLL_TABLE_POOL',
+      seatId: 'seat-2',
+      pool: 6,
+      rageDiceCount: 1,
+      difficulty: 6,
+      hasSpecialty: false,
+      spendWillpower: true,
+      applyWoundPenalty: true,
+      label: 'Primal Bite',
+      physicalDiceValues: [9, 8, 5, 4],
+    });
+
+    const p1Seat2Roll = p1.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const p2Seat2Roll = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const diceEv = p2Seat2Roll.find((e) => e.event.type === 'DICE_ROLLED_3D');
+    expect(diceEv?.event.type).toBe('DICE_ROLLED_3D');
+    if (diceEv?.event.type === 'DICE_ROLLED_3D') {
+      expect(diceEv.event.roll.effectivePool).toBe(4);
+      expect(diceEv.event.rollerName).toBe('Shadowfang (Jordan)');
+      expect(diceEv.event.historyEntry?.rollerName).toBe('Shadowfang (Jordan)');
+    }
+
+    const wpEv = p1Seat2Roll.find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    expect(wpEv?.event.type).toBe('PARTICIPANTS_UPDATED');
+    if (wpEv?.event.type === 'PARTICIPANTS_UPDATED') {
+      const seat1 = wpEv.event.participants.find((p) => p.participantKey === PLAYER1_DISCORD_ID);
+      const seat2 = wpEv.event.participants.find(
+        (p) => p.participantKey === `${PLAYER1_DISCORD_ID}::seat-2`,
+      );
+      expect(seat1?.trackers.willpower).toBe(4);
+      expect(seat2?.trackers.willpower).toBe(5);
+    }
+
+    // Explicit rollerDisplayName overrides formatted character/display name
+    await sendCommand(room, p1.ws, 0, {
+      type: 'ROLL_TABLE_POOL',
+      seatId: 'primary',
+      rollerDisplayName: 'Pack Leader Alex',
+      pool: 3,
+      rageDiceCount: 0,
+      difficulty: 6,
+      hasSpecialty: false,
+      spendWillpower: false,
+      applyWoundPenalty: false,
+      label: 'Alertness',
+      physicalDiceValues: [8, 7, 3],
+    });
+    const p2PrimaryRoll = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    p1.ws.drainJson();
+    const primaryDiceEv = p2PrimaryRoll.find((e) => e.event.type === 'DICE_ROLLED_3D');
+    if (primaryDiceEv?.event.type === 'DICE_ROLLED_3D') {
+      expect(primaryDiceEv.event.rollerName).toBe('Pack Leader Alex');
+    }
+
+    // Syncing again without seat-2 removes stale seat-2 while preserving primary avatarUrl and P2
+    await sendCommand(room, p1.ws, 0, {
+      type: 'SYNC_CLIENT_SEATS',
+      seats: [
+        {
+          seatId: 'primary',
+          displayName: 'Alex',
+          characterName: 'Ash',
+          activeForm: 'homid',
+          trackers: { rage: 5, gnosis: 2, willpower: 4, woundPenalty: 0 },
+        },
+      ],
+    });
+    p1.ws.drainJson();
+    const afterPrune = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const pruneEv = afterPrune.find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    if (pruneEv?.event.type === 'PARTICIPANTS_UPDATED') {
+      expect(pruneEv.event.participants).toHaveLength(2);
+      expect(
+        pruneEv.event.participants.some((p) => p.participantKey === `${PLAYER1_DISCORD_ID}::seat-2`),
+      ).toBe(false);
+      const primarySeat = pruneEv.event.participants.find(
+        (p) => p.participantKey === PLAYER1_DISCORD_ID,
+      );
+      expect(primarySeat?.avatarUrl).toBe(p1Avatar);
+    }
+
+    // Re-add seat-2, then disconnect P1 -> ALL P1 seats marked isConnected: false
+    await sendCommand(room, p1.ws, 0, {
+      type: 'SYNC_CLIENT_SEATS',
+      seats: [
+        {
+          seatId: 'primary',
+          displayName: 'Alex',
+          characterName: 'Ash',
+          activeForm: 'homid',
+          trackers: { rage: 5, gnosis: 2, willpower: 4, woundPenalty: 0 },
+        },
+        {
+          seatId: 'seat-2',
+          displayName: 'Jordan',
+          characterName: 'Shadowfang',
+          activeForm: 'lupus',
+          trackers: { rage: 3, gnosis: 5, willpower: 5, woundPenalty: 0 },
+        },
+      ],
+    });
+    p1.ws.drainJson();
+    p2.ws.drainJson();
+
+    await room.webSocketClose(p1.ws as unknown as WebSocket);
+    const p2AfterDc = p2.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const dcEv = [...p2AfterDc].reverse().find((e) => e.event.type === 'PARTICIPANTS_UPDATED');
+    expect(dcEv?.event.type).toBe('PARTICIPANTS_UPDATED');
+    if (dcEv?.event.type === 'PARTICIPANTS_UPDATED') {
+      const p1Seats = dcEv.event.participants.filter((p) => p.discordUserId === PLAYER1_DISCORD_ID);
+      expect(p1Seats).toHaveLength(2);
+      expect(p1Seats.every((p) => p.isConnected === false)).toBe(true);
+      const p2Seat = dcEv.event.participants.find((p) => p.discordUserId === PLAYER2_DISCORD_ID);
+      expect(p2Seat?.isConnected).toBe(true);
+    }
+  });
 });

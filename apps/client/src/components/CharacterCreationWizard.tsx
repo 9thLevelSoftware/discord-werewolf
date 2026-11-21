@@ -8,6 +8,7 @@ import {
   Auspice,
   BaseAttributes,
   Breed,
+  CANONICAL_GIFT_CATALOG,
   CanonicalAbilityKey,
   GarouForm,
   GarouTribe,
@@ -24,6 +25,7 @@ import {
   W20CharacterState,
 } from '@w20-vtt/core';
 import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Sparkles, X } from 'lucide-react';
+import { useViewportLayout } from '../hooks/useViewportLayout';
 import { getVttSupabaseClient } from '../supabaseClient';
 
 interface CompendiumGiftRow {
@@ -87,52 +89,15 @@ const PRESET_MERITS_FLAWS: MeritOrFlawChoice[] = [
   { id: 'flaw-dark-fate', name: 'Dark Fate', kind: 'flaw', pointValue: 5 },
 ];
 
-const FALLBACK_LEVEL_1_GIFTS: CompendiumGiftRow[] = [
-  { id: '10000000-0000-4000-8000-000000000101', name: 'Master of Fire', level: 1, sources: ['homid', 'get_of_fenris'], system_summary: 'Spend 1 Gnosis: fire damage heals as Bashing rather than Aggravated for the scene (W20 p. 152).' },
-  { id: '10000000-0000-4000-8000-000000000102', name: 'Persuasion', level: 1, sources: ['homid', 'philodox', 'fianna', 'glass_walkers'], system_summary: 'Roll Charisma + Subterfuge (Diff 7) for -1 Social difficulty.' },
-  { id: '10000000-0000-4000-8000-000000000103', name: 'Smell of Man', level: 1, sources: ['homid'], system_summary: 'Normal animals hesitate or flee from the Garou.' },
-  { id: '10000000-0000-4000-8000-000000000104', name: 'Create Element', level: 1, sources: ['metis'], system_summary: 'Spend 1 Gnosis and roll Gnosis (Diff 6) to conjure elemental matter.' },
-  { id: '10000000-0000-4000-8000-000000000105', name: 'Primal Anger', level: 1, sources: ['metis'], system_summary: 'Store up to +2 temporary Rage above permanent rating for a scene.' },
-  { id: '10000000-0000-4000-8000-000000000106', name: 'Sense Wyrm', level: 1, sources: ['metis', 'theurge', 'black_furies', 'silent_striders', 'silver_fangs', 'stargazers', 'uktena'], system_summary: 'Roll Perception + Occult (Diff 6) to detect Wyrm taint.' },
-  { id: '10000000-0000-4000-8000-000000000107', name: "Hare's Leap", level: 1, sources: ['lupus', 'fianna'], system_summary: 'Roll Strength + Athletics (Diff 7) to double jumping distances.' },
-  { id: '10000000-0000-4000-8000-000000000108', name: 'Heightened Senses', level: 1, sources: ['lupus', 'galliard', 'black_furies'], system_summary: 'Spend 1 Gnosis for -2 Perception difficulty for the scene.' },
-  { id: '10000000-0000-4000-8000-000000000109', name: 'Sense Prey', level: 1, sources: ['lupus'], system_summary: 'Roll Perception + Primal-Urge (Diff 6) to pinpoint hunted quarry (W20 p. 159).' },
-  { id: '10000000-0000-4000-8000-000000000110', name: 'Blur of the Milky Eye', level: 1, sources: ['ragabash'], system_summary: 'Roll Manipulation + Stealth (Diff 8) to go unnoticed.' },
-  { id: '10000000-0000-4000-8000-000000000111', name: 'Open Seal', level: 1, sources: ['ragabash'], system_summary: 'Spend 1 Gnosis and roll Gnosis (Diff 7) to unlock sealed doors.' },
-  { id: '10000000-0000-4000-8000-000000000112', name: 'Scent of Running Water', level: 1, sources: ['ragabash', 'red_talons'], system_summary: 'Masks scent trail (+2 tracking difficulty).' },
-  { id: '10000000-0000-4000-8000-000000000113', name: "Mother's Touch", level: 1, sources: ['theurge', 'children_of_gaia'], system_summary: 'Spend 1 Gnosis and roll Intelligence + Empathy to heal wounds.' },
-  { id: '10000000-0000-4000-8000-000000000114', name: 'Spirit Speech', level: 1, sources: ['theurge', 'uktena'], system_summary: 'Understand and speak the high speech of spirits.' },
-  { id: '10000000-0000-4000-8000-000000000115', name: 'Resist Pain', level: 1, sources: ['philodox', 'children_of_gaia', 'get_of_fenris', 'wendigo'], system_summary: 'Spend 1 Willpower to ignore wound penalties for the scene.' },
-  { id: '10000000-0000-4000-8000-000000000116', name: 'Truth of Gaia', level: 1, sources: ['philodox'], system_summary: 'Roll Intelligence + Empathy to detect deliberate lies.' },
-  { id: '10000000-0000-4000-8000-000000000117', name: 'Beast Speech', level: 1, sources: ['galliard', 'red_talons'], system_summary: 'Communicate natively with mundane animals.' },
-  { id: '10000000-0000-4000-8000-000000000118', name: 'Call of the Wyld', level: 1, sources: ['galliard'], system_summary: 'Roll Stamina + Expression (Diff 6) to project a distant howl.' },
-  { id: '10000000-0000-4000-8000-000000000119', name: 'Mindspeak', level: 1, sources: ['galliard'], system_summary: 'Spend 1 Gnosis and roll Manipulation + Expression for telepathy.' },
-  { id: '10000000-0000-4000-8000-000000000120', name: 'Razor Claws', level: 1, sources: ['ahroun', 'get_of_fenris'], system_summary: 'Spend 1 Rage for +2 Claw damage dice in Crinos/Hispo/Lupus.' },
-  { id: '10000000-0000-4000-8000-000000000121', name: 'Inspiration', level: 1, sources: ['ahroun', 'silver_fangs'], system_summary: 'Spend 1 Gnosis to bolster packmate resolve and initiative.' },
-  { id: '10000000-0000-4000-8000-000000000122', name: 'Falling Touch', level: 1, sources: ['ahroun', 'stargazers'], system_summary: 'Roll Dexterity + Medicine (Diff target Stamina + 3) to knock prone.' },
-  { id: '10000000-0000-4000-8000-000000000123', name: 'Breath of the Wyld', level: 1, sources: ['black_furies'], system_summary: 'Spend 1 Gnosis and roll Charisma + Empathy to revitalize an ally.' },
-  { id: '10000000-0000-4000-8000-000000000124', name: 'Cooking', level: 1, sources: ['bone_gnawers'], system_summary: 'Spend 1 Gnosis and roll Intelligence + Survival to turn scrap into food.' },
-  { id: '10000000-0000-4000-8000-000000000125', name: 'Resist Toxin', level: 1, sources: ['bone_gnawers', 'fianna'], system_summary: 'Roll Stamina + Survival (Diff 6) to neutralize poisons.' },
-  { id: '10000000-0000-4000-8000-000000000126', name: 'Calm', level: 1, sources: ['children_of_gaia'], system_summary: 'Spend 1 Gnosis and roll Charisma + Empathy to soothe Rage/Frenzy.' },
-  { id: '10000000-0000-4000-8000-000000000127', name: "Brother's Scent", level: 1, sources: ['children_of_gaia'], system_summary: 'Roll Charisma + Primal-Urge (Diff 6) to project peaceful kinship.' },
-  { id: '10000000-0000-4000-8000-000000000128', name: 'Two Tongues', level: 1, sources: ['fianna'], system_summary: 'Roll Intelligence + Expression (Diff 6) to hide double meanings.' },
-  { id: '10000000-0000-4000-8000-000000000129', name: 'Visage of Fenris', level: 1, sources: ['get_of_fenris'], system_summary: 'Spend 1 Rage and roll Charisma + Intimidation (Diff 6) to terrify foes.' },
-  { id: '10000000-0000-4000-8000-000000000130', name: 'Control Simple Machine', level: 1, sources: ['glass_walkers'], system_summary: 'Spend 1 Gnosis and roll Manipulation + Technology (Diff 6).' },
-  { id: '10000000-0000-4000-8000-000000000131', name: 'Diagnostics', level: 1, sources: ['glass_walkers'], system_summary: 'Roll Perception + Science (Diff 6) to inspect machines.' },
-  { id: '10000000-0000-4000-8000-000000000132', name: 'Wolf at the Door', level: 1, sources: ['red_talons'], system_summary: 'Spend 1 Gnosis and roll Manipulation + Intimidation (Diff 7).' },
-  { id: '10000000-0000-4000-8000-000000000133', name: 'Aura of Confidence', level: 1, sources: ['shadow_lords'], system_summary: 'Conceal emotional doubt from telepathy and Empathy.' },
-  { id: '10000000-0000-4000-8000-000000000134', name: 'Fatal Flaw', level: 1, sources: ['shadow_lords'], system_summary: 'Spend 1 Gnosis and roll Perception + Empathy (Diff target WP).' },
-  { id: '10000000-0000-4000-8000-000000000135', name: 'Speed of Thought', level: 1, sources: ['silent_striders'], system_summary: 'Spend 1 Gnosis to double running speed for the scene.' },
-  { id: '10000000-0000-4000-8000-000000000136', name: "Heaven's Guidance", level: 1, sources: ['silent_striders'], system_summary: 'Roll Perception + Survival (Diff 6) under open sky for navigation.' },
-  { id: '10000000-0000-4000-8000-000000000137', name: 'Eye of the Falcon', level: 1, sources: ['silver_fangs'], system_summary: 'Spend 1 Gnosis to command respect from lower-ranked Garou.' },
-  { id: '10000000-0000-4000-8000-000000000138', name: 'Lambent Flame', level: 1, sources: ['silver_fangs'], system_summary: 'Spend 1 Gnosis for protective silver moonlight aura.' },
-  { id: '10000000-0000-4000-8000-000000000139', name: 'Balance', level: 1, sources: ['stargazers'], system_summary: 'Maintain flawless footing on narrow ledges or unstable ground.' },
-  { id: '10000000-0000-4000-8000-000000000140', name: 'Inner Strength', level: 1, sources: ['stargazers'], system_summary: 'Spend 1 Gnosis and roll Stamina + Athletics (Diff 6) to center chi.' },
-  { id: '10000000-0000-4000-8000-000000000141', name: 'Sense Magic', level: 1, sources: ['uktena'], system_summary: 'Roll Perception + Occult (Diff 6) to sense Fetishes and Rites.' },
-  { id: '10000000-0000-4000-8000-000000000142', name: 'Shroud', level: 1, sources: ['uktena'], system_summary: 'Spend 1 Gnosis and roll Gnosis (Diff 7) to shroud an area in shadow.' },
-  { id: '10000000-0000-4000-8000-000000000143', name: 'Call the Breeze', level: 1, sources: ['wendigo'], system_summary: 'Spend 1 Gnosis and roll Charisma + Survival (Diff 6) for chill winds.' },
-  { id: '10000000-0000-4000-8000-000000000144', name: 'Camouflage', level: 1, sources: ['wendigo'], system_summary: 'Roll Wits + Stealth (Diff 6) to blend into natural wilderness cover.' },
-];
+const CANONICAL_LEVEL_1_GIFTS: CompendiumGiftRow[] = CANONICAL_GIFT_CATALOG.filter(
+  (g) => g.level === 1
+).map((g) => ({
+  id: g.id,
+  name: g.name,
+  level: g.level,
+  sources: [...g.sources],
+  system_summary: g.summary,
+}));
 
 const INITIAL_DRAFT: W20CharacterCreationDraft = {
   name: '',
@@ -211,11 +176,16 @@ function swapPriorityMap<T extends string>(
 }
 
 interface CharacterCreationWizardProps {
-  campaignId: string;
-  sessionJwt: string;
-  getLatestSupabaseJwt: () => Promise<string | null>;
+  campaignId?: string;
+  sessionJwt?: string;
+  getLatestSupabaseJwt?: () => Promise<string | null>;
   onClose: () => void;
-  onCreated: (character: W20CharacterState) => void;
+  onCreated?: (character: W20CharacterState) => void;
+  customSubmit?: (payload: {
+    draft: W20CharacterCreationDraft;
+    deedName?: string;
+  }) => Promise<void>;
+  defaultPlayerName?: string;
 }
 
 export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = ({
@@ -224,13 +194,16 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
   getLatestSupabaseJwt,
   onClose,
   onCreated,
+  customSubmit,
+  defaultPlayerName,
 }) => {
+  const { isMobile } = useViewportLayout();
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [draft, setDraft] = useState<W20CharacterCreationDraft>(INITIAL_DRAFT);
   const [deedName, setDeedName] = useState('');
   const [portraitsByForm, setPortraitsByForm] = useState<Partial<Record<GarouForm, string>>>({});
 
-  const [gifts, setGifts] = useState<CompendiumGiftRow[]>(FALLBACK_LEVEL_1_GIFTS);
+  const [gifts, setGifts] = useState<CompendiumGiftRow[]>(CANONICAL_LEVEL_1_GIFTS);
   const [giftFetchNote, setGiftFetchNote] = useState<string | null>(null);
 
   const [customMfName, setCustomMfName] = useState('');
@@ -240,8 +213,14 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Load Level 1 Gifts from Supabase compendium_gifts, falling back seamlessly to canonical seed presets
+  // Load Level 1 Gifts from Supabase compendium_gifts when JWT getter is supplied; otherwise use CANONICAL_GIFT_CATALOG directly without warning
   useEffect(() => {
+    if (!getLatestSupabaseJwt) {
+      setGifts(CANONICAL_LEVEL_1_GIFTS);
+      setGiftFetchNote(null);
+      return;
+    }
+
     let active = true;
     const loadGifts = async () => {
       try {
@@ -439,6 +418,16 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
     setSubmitting(true);
     setSubmitError(null);
     try {
+      const trimmedDeed = deedName.trim() || undefined;
+      if (customSubmit) {
+        await customSubmit({ draft, deedName: trimmedDeed });
+        return;
+      }
+
+      if (!campaignId || !sessionJwt) {
+        throw new Error('Campaign session is required to create a campaign character.');
+      }
+
       const cleanedPortraits: Partial<Record<GarouForm, string>> = {};
       for (const formKey of ['homid', 'glabro', 'crinos', 'hispo', 'lupus'] as const) {
         const url = portraitsByForm[formKey]?.trim();
@@ -454,7 +443,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
         body: JSON.stringify({
           campaignId,
           draft,
-          deedName: deedName.trim() || undefined,
+          deedName: trimmedDeed,
           selectedGiftIds: draft.selectedGifts.map((g) => g.giftId),
           portraitsByForm: Object.keys(cleanedPortraits).length > 0 ? cleanedPortraits : undefined,
         }),
@@ -474,7 +463,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
         data && typeof data === 'object' && 'character' in data
           ? (data as { character: W20CharacterState }).character
           : (data as W20CharacterState);
-      onCreated(charObj);
+      onCreated?.(charObj);
     } catch (err: unknown) {
       setSubmitError(err instanceof Error ? err.message : 'Unable to save character.');
     } finally {
@@ -487,31 +476,66 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
   const tribeGifts = gifts.filter((g) => g.sources.includes(draft.tribe));
 
   const ledger = summary.freebieLedger;
+  const stepBtnClass = isMobile
+    ? 'flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 text-sm font-bold text-zinc-100 hover:bg-zinc-700 disabled:opacity-35'
+    : 'rounded bg-zinc-800 px-1.5 py-0.5 font-bold hover:bg-zinc-700 disabled:opacity-40';
+  const stepAmberBtnClass = isMobile
+    ? 'flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 text-sm font-bold text-amber-300 hover:bg-zinc-700 disabled:opacity-35'
+    : 'rounded bg-zinc-800 px-1 font-bold text-amber-300 hover:bg-zinc-700 disabled:opacity-35';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm">
-      <div className="flex max-h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl">
+    <div
+      className={
+        isMobile
+          ? 'fixed inset-0 z-50 flex flex-col bg-black/95'
+          : 'fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm'
+      }
+    >
+      <div
+        className={
+          isMobile
+            ? 'flex h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-zinc-950 text-zinc-100'
+            : 'flex max-h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl'
+        }
+      >
         {/* Header + Step Bar */}
-        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/80 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-emerald-400" />
-            <h2 className="text-sm font-extrabold tracking-wider uppercase">
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900/80 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Sparkles className="h-4 w-4 shrink-0 text-emerald-400" />
+            <h2 className="truncate text-sm font-extrabold tracking-wider uppercase">
               Rank 1 Cliath Creation Wizard
             </h2>
+            {defaultPlayerName?.trim() && (
+              <span className="shrink-0 rounded-full border border-amber-500/35 bg-amber-950/35 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+                {defaultPlayerName.trim()}
+              </span>
+            )}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Step Navigation & Live Freebie Ledger Bar */}
-        <div className="border-b border-zinc-800 bg-zinc-900/40 px-4 py-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap gap-1">
+        <div className="shrink-0 border-b border-zinc-800 bg-zinc-900/40 px-4 py-2.5">
+          <div
+            className={
+              isMobile
+                ? 'flex flex-col gap-2'
+                : 'flex flex-wrap items-center justify-between gap-2'
+            }
+          >
+            <div
+              className={
+                isMobile
+                  ? 'flex flex-nowrap gap-1.5 overflow-x-auto pb-1'
+                  : 'flex flex-wrap gap-1'
+              }
+            >
               {(
                 [
                   [1, '1. Identity'],
@@ -525,7 +549,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   key={num}
                   type="button"
                   onClick={() => setStep(num)}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition ${
+                  className={`shrink-0 rounded-md px-2.5 py-1.5 text-[11px] font-bold transition ${
                     step === num
                       ? 'bg-red-700 text-white'
                       : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
@@ -536,7 +560,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
               ))}
             </div>
 
-            <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1 text-[11px]">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1 text-[11px]">
               <span className="text-zinc-400">
                 Freebies:{' '}
                 <strong
@@ -564,7 +588,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
         <div className="flex-1 overflow-y-auto p-4 text-xs">
           {/* STEP 1: IDENTITY */}
           {step === 1 && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className={isMobile ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 gap-4 md:grid-cols-2'}>
               <div className="space-y-3">
                 <label className="block">
                   <span className="font-bold text-zinc-300">Garou Name *</span>
@@ -639,7 +663,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
                 <div>
                   <span className="block font-bold text-zinc-300">Auspice (Starting Rage)</span>
-                  <div className="mt-1 grid grid-cols-5 gap-1.5">
+                  <div className={isMobile ? 'mt-1 grid grid-cols-2 gap-1.5' : 'mt-1 grid grid-cols-5 gap-1.5'}>
                     {(['ragabash', 'theurge', 'philodox', 'galliard', 'ahroun'] as Auspice[]).map(
                       (a) => (
                         <button
@@ -686,7 +710,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         : `Fixed by ${formatLabel(draft.auspice)}`}
                     </span>
                   </div>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
+                  <div className={isMobile ? 'mt-2 grid grid-cols-1 gap-2' : 'mt-2 grid grid-cols-3 gap-2'}>
                     {(['glory', 'honor', 'wisdom'] as const).map((rKey) => {
                       const val = draft.startingRenown[rKey];
                       const isRagabash = draft.auspice === 'ragabash';
@@ -709,7 +733,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     },
                                   }))
                                 }
-                                className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
+                                className={stepBtnClass}
                               >
                                 -
                               </button>
@@ -734,7 +758,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     };
                                   })
                                 }
-                                className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
+                                className={stepBtnClass}
                               >
                                 +
                               </button>
@@ -759,7 +783,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 cap 5).
               </p>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className={isMobile ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-1 gap-3 md:grid-cols-3'}>
                 {(['physical', 'social', 'mental'] as AttributeCategory[]).map((cat) => {
                   const tier = draft.attributePriorities[cat];
                   const budget = ATTR_TIER_DOTS[tier];
@@ -829,7 +853,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   <button
                                     type="button"
                                     onClick={() => adjustPriorityAttr(attr, -1)}
-                                    className="rounded bg-zinc-800 px-1.5 py-0.5 font-bold hover:bg-zinc-700"
+                                    className={stepBtnClass}
                                   >
                                     -
                                   </button>
@@ -840,7 +864,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     type="button"
                                     disabled={total >= 5 || spent >= budget}
                                     onClick={() => adjustPriorityAttr(attr, 1)}
-                                    className="rounded bg-zinc-800 px-1.5 py-0.5 font-bold hover:bg-zinc-700 disabled:opacity-40"
+                                    className={stepBtnClass}
                                   >
                                     +
                                   </button>
@@ -851,7 +875,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   <button
                                     type="button"
                                     onClick={() => adjustFreebieAttr(attr, -1)}
-                                    className="rounded bg-zinc-800 px-1.5 py-0.5 font-bold hover:bg-zinc-700"
+                                    className={stepBtnClass}
                                   >
                                     -
                                   </button>
@@ -862,7 +886,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     type="button"
                                     disabled={total >= 5}
                                     onClick={() => adjustFreebieAttr(attr, 1)}
-                                    className="rounded bg-zinc-800 px-1.5 py-0.5 font-bold hover:bg-zinc-700 disabled:opacity-40"
+                                    className={stepBtnClass}
                                   >
                                     +
                                   </button>
@@ -893,7 +917,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 )}
               </p>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className={isMobile ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-1 gap-3 md:grid-cols-3'}>
                 {(['talents', 'skills', 'knowledges'] as AbilityCategory[]).map((cat) => {
                   const tier = draft.abilityPriorities[cat];
                   const budget = ABIL_TIER_DOTS[tier];
@@ -973,7 +997,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   <button
                                     type="button"
                                     onClick={() => adjustPriorityAbility(abilKey, -1)}
-                                    className="rounded bg-zinc-800 px-1 font-bold hover:bg-zinc-700"
+                                    className={stepBtnClass}
                                   >
                                     -
                                   </button>
@@ -986,7 +1010,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                       lupusRestricted || prio >= 3 || total >= 5 || spent >= budget
                                     }
                                     onClick={() => adjustPriorityAbility(abilKey, 1)}
-                                    className="rounded bg-zinc-800 px-1 font-bold hover:bg-zinc-700 disabled:opacity-35"
+                                    className={stepBtnClass}
                                   >
                                     +
                                   </button>
@@ -999,7 +1023,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   <button
                                     type="button"
                                     onClick={() => adjustFreebieAbility(abilKey, -1)}
-                                    className="rounded bg-zinc-800 px-1 font-bold text-amber-300 hover:bg-zinc-700"
+                                    className={stepAmberBtnClass}
                                   >
                                     -
                                   </button>
@@ -1010,7 +1034,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     type="button"
                                     disabled={total >= 5}
                                     onClick={() => adjustFreebieAbility(abilKey, 1)}
-                                    className="rounded bg-zinc-800 px-1 font-bold text-amber-300 hover:bg-zinc-700 disabled:opacity-35"
+                                    className={stepAmberBtnClass}
                                   >
                                     +
                                   </button>
@@ -1029,7 +1053,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
           {/* STEP 4: BACKGROUNDS, CORE TRAITS & MERITS/FLAWS */}
           {step === 4 && (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className={isMobile ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 gap-4 lg:grid-cols-2'}>
               {/* Backgrounds */}
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
                 <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
@@ -1042,7 +1066,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   </span>
                 </div>
 
-                <div className="mt-2.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                <div className={isMobile ? 'mt-2.5 grid grid-cols-1 gap-1.5' : 'mt-2.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2'}>
                   {CANONICAL_BACKGROUNDS.map((bg) => {
                     const prio = draft.priorityBackgroundDots[bg.key] ?? 0;
                     const free = draft.freebieBackgroundDots[bg.key] ?? 0;
@@ -1088,7 +1112,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                             <button
                               type="button"
                               onClick={() => adjustBackground(bg.key, 'priority', -1)}
-                              className="rounded bg-zinc-800 px-1 font-bold hover:bg-zinc-700"
+                              className={stepBtnClass}
                             >
                               -
                             </button>
@@ -1097,7 +1121,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               type="button"
                               disabled={isForbidden || total >= 5}
                               onClick={() => adjustBackground(bg.key, 'priority', 1)}
-                              className="rounded bg-zinc-800 px-1 font-bold hover:bg-zinc-700 disabled:opacity-35"
+                              className={stepBtnClass}
                             >
                               +
                             </button>
@@ -1107,7 +1131,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                             <button
                               type="button"
                               onClick={() => adjustBackground(bg.key, 'freebie', -1)}
-                              className="rounded bg-zinc-800 px-1 font-bold hover:bg-zinc-700"
+                              className={stepAmberBtnClass}
                             >
                               -
                             </button>
@@ -1116,7 +1140,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               type="button"
                               disabled={isForbidden || total >= 5}
                               onClick={() => adjustBackground(bg.key, 'freebie', 1)}
-                              className="rounded bg-zinc-800 px-1 font-bold hover:bg-zinc-700 disabled:opacity-35"
+                              className={stepAmberBtnClass}
                             >
                               +
                             </button>
@@ -1134,7 +1158,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   <p className="font-extrabold uppercase tracking-wide text-zinc-200">
                     Raise Rage, Gnosis &amp; Willpower with Freebies
                   </p>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
+                  <div className={isMobile ? 'mt-2 grid grid-cols-1 gap-2' : 'mt-2 grid grid-cols-3 gap-2'}>
                     <div className="rounded border border-zinc-800 bg-zinc-950 p-2">
                       <div className="text-[10px] font-bold uppercase text-red-400">
                         Rage ({W20_FREEBIE_COSTS.rage}pt/dot)
@@ -1152,7 +1176,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 freebieRageDots: Math.max(0, p.freebieRageDots - 1),
                               }))
                             }
-                            className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
+                            className={stepBtnClass}
                           >
                             -
                           </button>
@@ -1167,7 +1191,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     : p.freebieRageDots + 1,
                               }))
                             }
-                            className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
+                            className={stepBtnClass}
                           >
                             +
                           </button>
@@ -1192,7 +1216,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 freebieGnosisDots: Math.max(0, p.freebieGnosisDots - 1),
                               }))
                             }
-                            className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
+                            className={stepBtnClass}
                           >
                             -
                           </button>
@@ -1207,7 +1231,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     : p.freebieGnosisDots + 1,
                               }))
                             }
-                            className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
+                            className={stepBtnClass}
                           >
                             +
                           </button>
@@ -1232,7 +1256,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 freebieWillpowerDots: Math.max(0, p.freebieWillpowerDots - 1),
                               }))
                             }
-                            className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
+                            className={stepBtnClass}
                           >
                             -
                           </button>
@@ -1247,7 +1271,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     : p.freebieWillpowerDots + 1,
                               }))
                             }
-                            className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
+                            className={stepBtnClass}
                           >
                             +
                           </button>
@@ -1285,13 +1309,13 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   </div>
 
                   {/* Custom Merit / Flaw */}
-                  <div className="mt-3 flex gap-1.5">
+                  <div className="mt-3 flex flex-wrap gap-1.5">
                     <input
                       type="text"
                       value={customMfName}
                       onChange={(e) => setCustomMfName(e.target.value)}
                       placeholder="Custom Merit or Flaw name"
-                      className="flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1"
+                      className="min-w-[140px] flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1"
                     />
                     <select
                       value={customMfKind}
@@ -1356,7 +1380,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className={isMobile ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-1 gap-3 md:grid-cols-3'}>
                 {(
                   [
                     ['breed', `Breed Gift (${formatLabel(draft.breed)})`, breedGifts],
@@ -1435,7 +1459,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 <summary className="cursor-pointer font-bold text-zinc-300">
                   Optional Shifted Form Portrait URLs
                 </summary>
-                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className={isMobile ? 'mt-2 grid grid-cols-1 gap-2' : 'mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2'}>
                   {(['homid', 'glabro', 'crinos', 'hispo', 'lupus'] as GarouForm[]).map((form) => (
                     <label key={form} className="flex items-center gap-2">
                       <span className="w-14 capitalize text-zinc-400">{form}</span>
@@ -1500,13 +1524,19 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
         </div>
 
         {/* Footer Controls */}
-        <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-900/80 px-4 py-3 text-xs">
+        <div
+          className={
+            isMobile
+              ? 'sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 bg-zinc-900/95 px-3 py-3 text-xs'
+              : 'flex shrink-0 items-center justify-between border-t border-zinc-800 bg-zinc-900/80 px-4 py-3 text-xs'
+          }
+        >
           <div className="flex items-center gap-2">
             <button
               type="button"
               disabled={step === 1}
               onClick={() => setStep((s) => Math.max(1, s - 1) as 1 | 2 | 3 | 4 | 5)}
-              className="flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-semibold hover:bg-zinc-800 disabled:opacity-40"
+              className="flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-semibold hover:bg-zinc-800 disabled:opacity-40"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
               Back
@@ -1515,7 +1545,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
               type="button"
               disabled={step === 5}
               onClick={() => setStep((s) => Math.min(5, s + 1) as 1 | 2 | 3 | 4 | 5)}
-              className="flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-semibold hover:bg-zinc-800 disabled:opacity-40"
+              className="flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-semibold hover:bg-zinc-800 disabled:opacity-40"
             >
               Next
               <ChevronRight className="h-3.5 w-3.5" />
@@ -1523,7 +1553,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
           </div>
 
           <div className="flex items-center gap-2">
-            {!summary.isValid && step !== 5 && (
+            {!summary.isValid && step !== 5 && !isMobile && (
               <span className="text-[11px] text-amber-300">
                 {summary.errors.length} rule check(s) remaining
               </span>
@@ -1532,7 +1562,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
               type="button"
               disabled={!summary.isValid || submitting}
               onClick={() => void handleSubmitCharacter()}
-              className="rounded-lg bg-emerald-600 px-4 py-1.5 font-extrabold uppercase tracking-wider text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-45"
+              className="rounded-lg bg-emerald-600 px-4 py-2 font-extrabold uppercase tracking-wider text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {submitting ? 'Forging Garou...' : 'Finalize & Save Garou'}
             </button>

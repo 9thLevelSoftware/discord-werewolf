@@ -7,3 +7,4 @@ export * from './combatMachine';
 export * from './macros';
 export * from './characterCreation';
 export * from './xpCalculator';
+export * from './userCharacterSheet';

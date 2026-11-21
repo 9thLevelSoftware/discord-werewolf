@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { W20UserCharacterSheet } from '@w20-vtt/core';
 import type { ClientEnvelope } from './messages';
 
 export const AttributeKeySchema = z.enum([
@@ -14,10 +15,14 @@ export const AttributeKeySchema = z.enum([
 ]);
 
 export const GarouFormSchema = z.enum(['homid', 'glabro', 'crinos', 'hispo', 'lupus']);
+export const BreedSchema = z.enum(['homid', 'metis', 'lupus']);
+export const AuspiceSchema = z.enum(['ragabash', 'theurge', 'philodox', 'galliard', 'ahroun']);
+export const AbilityCategorySchema = z.enum(['talents', 'skills', 'knowledges']);
 export const RealmLayerSchema = z.enum(['physical', 'penumbra', 'deep_umbra']);
 export const MoonPhaseSchema = z.enum(['new', 'crescent', 'half', 'gibbous', 'full']);
 export const SpecialtyModeSchema = z.enum(['w20_double', 'revised_explode']);
 export const NonEmptyDamageTypeSchema = z.enum(['bashing', 'lethal', 'aggravated']);
+export const DamageTypeSchema = z.enum(['none', 'bashing', 'lethal', 'aggravated']);
 
 export const ActionCategorySchema = z.enum([
   'melee_attack',
@@ -187,6 +192,210 @@ export const LightWoundPenaltySchema = z.union([
   z.literal(-5),
 ]);
 
+export const LightGarouTrackersSchema = z.object({
+  rage: z.number().int().min(0).max(10),
+  gnosis: z.number().int().min(0).max(10),
+  willpower: z.number().int().min(0).max(10),
+  woundPenalty: LightWoundPenaltySchema,
+});
+
+export const ClientSeatSyncItemSchema = z.object({
+  seatId: z.string().min(1).max(80),
+  displayName: z.string().min(1).max(80),
+  characterName: z.string().max(120).nullable().optional(),
+  activeForm: GarouFormSchema.nullable().optional(),
+  trackers: LightGarouTrackersSchema,
+});
+
+const DotRatingSchema = z.number().int().min(0).max(10);
+
+export const DualTrackerSchema = z.object({
+  permanent: DotRatingSchema,
+  temporary: DotRatingSchema,
+});
+
+export const BaseAttributesSchema = z.object({
+  strength: DotRatingSchema,
+  dexterity: DotRatingSchema,
+  stamina: DotRatingSchema,
+  charisma: DotRatingSchema,
+  manipulation: DotRatingSchema,
+  appearance: DotRatingSchema,
+  perception: DotRatingSchema,
+  intelligence: DotRatingSchema,
+  wits: DotRatingSchema,
+});
+
+export const HealthStateSchema = z.object({
+  bonusBruisedBoxes: z.number().int().min(0).max(10),
+  boxes: z.array(DamageTypeSchema).min(7).max(20),
+});
+
+export const CustomAbilityEntrySchema = z.object({
+  id: z.string().min(1).max(120),
+  category: AbilityCategorySchema,
+  name: z.string().min(1).max(120),
+  dots: DotRatingSchema,
+  specialty: z.string().max(120).optional(),
+});
+
+export const SheetBackgroundEntrySchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  dots: DotRatingSchema,
+});
+
+export const SheetRollTraitSchema = z.union([
+  AttributeKeySchema,
+  z.enum(['rage', 'gnosis', 'willpower']),
+]);
+
+export const SheetGiftEntrySchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  level: z.number().int().min(1).max(6),
+  rollAttribute: SheetRollTraitSchema.nullable().optional(),
+  rollAbility: z.string().max(120).nullable().optional(),
+  difficulty: z.number().int().min(2).max(10).optional(),
+  rageCost: DotRatingSchema.optional(),
+  gnosisCost: DotRatingSchema.optional(),
+  willpowerCost: DotRatingSchema.optional(),
+  summary: z.string().max(2000),
+});
+
+export const SheetFetishItemSchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  level: z.number().int().min(0).max(6),
+  gnosisRating: z.number().int().min(1).max(10),
+  power: z.string().max(2000),
+  isSilver: z.boolean().optional(),
+});
+
+export const SheetRiteEntrySchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  level: z.number().int().min(0).max(6).optional(),
+  summary: z.string().max(2000),
+});
+
+export const SheetOtherTraitEntrySchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  dots: DotRatingSchema,
+});
+
+export const SheetWeaponEntrySchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  rollAttribute: AttributeKeySchema,
+  rollAbility: z.string().min(1).max(120),
+  difficulty: z.number().int().min(2).max(10),
+  damageMode: z.enum(['strength_plus', 'flat']),
+  damageDice: z.number().int().min(0).max(30),
+  damageType: NonEmptyDamageTypeSchema,
+  range: z.string().max(60),
+  rate: z.string().max(60),
+  clip: z.string().max(60),
+});
+
+export const ShortcutPoolSourceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('trait_combo'),
+    attribute: SheetRollTraitSchema.nullable().optional(),
+    ability: z.string().max(120).nullable().optional(),
+    flatModifier: z.number().int().min(-20).max(20).optional(),
+    useFormStats: z.boolean().optional(),
+    applyPerceptionFormDiff: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('soak'),
+    includeArmor: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('natural_brawl_damage'),
+    maneuver: z.enum(['claw', 'bite', 'punch', 'kick']),
+  }),
+  z.object({
+    kind: z.literal('weapon_attack'),
+    weaponId: z.string().min(1).max(120),
+  }),
+  z.object({
+    kind: z.literal('weapon_damage'),
+    weaponId: z.string().min(1).max(120),
+  }),
+  z.object({
+    kind: z.literal('fetish_activate'),
+    fetishId: z.string().min(1).max(120),
+  }),
+  z.object({
+    kind: z.literal('static'),
+    pool: z.number().int().min(0).max(30),
+  }),
+]);
+
+export const SheetShortcutSchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  source: ShortcutPoolSourceSchema,
+  difficulty: z.number().int().min(2).max(10),
+  rageDiceCount: z.number().int().min(0).max(30),
+  applyWoundPenalty: z.boolean(),
+  forceSpecialty: z.boolean().optional(),
+  isSecretRoll: z.boolean(),
+});
+
+export const W20UserCharacterSheetSchema: z.ZodType<W20UserCharacterSheet> = z.object({
+  id: z.string().min(1).max(120),
+  ownerDiscordId: z.string().min(1).max(120),
+  syncCode: z.string().max(32).nullable().optional(),
+  name: z.string().max(120),
+  player: z.string().max(120),
+  chronicle: z.string().max(120),
+  breed: BreedSchema,
+  auspice: AuspiceSchema,
+  tribe: z.string().max(120),
+  packName: z.string().max(120),
+  packTotem: z.string().max(120),
+  concept: z.string().max(240),
+  deedName: z.string().max(120).optional(),
+  metisDeformity: z.string().max(240).optional(),
+  baseAttributes: BaseAttributesSchema,
+  abilities: z.record(z.string(), DotRatingSchema),
+  customAbilities: z.array(CustomAbilityEntrySchema).max(50),
+  specialties: z.record(z.string(), z.string().max(160)),
+  backgrounds: z.array(SheetBackgroundEntrySchema).max(50),
+  gifts: z.array(SheetGiftEntrySchema).max(100),
+  renown: z.object({
+    glory: DualTrackerSchema,
+    honor: DualTrackerSchema,
+    wisdom: DualTrackerSchema,
+  }),
+  rank: z.number().int().min(0).max(6),
+  rage: DualTrackerSchema,
+  gnosis: DualTrackerSchema,
+  willpower: DualTrackerSchema,
+  silverCarriedItems: z.number().int().min(0).max(20),
+  health: HealthStateSchema,
+  experience: z.object({
+    total: z.number().int().min(0).max(10000),
+    spent: z.number().int().min(0).max(10000),
+  }),
+  activeForm: GarouFormSchema,
+  otherTraits: z.array(SheetOtherTraitEntrySchema).max(50),
+  fetishes: z.array(SheetFetishItemSchema).max(50),
+  rites: z.array(SheetRiteEntrySchema).max(100),
+  combatWeapons: z.array(SheetWeaponEntrySchema).max(50),
+  armor: z.object({
+    rating: z.number().int().min(0).max(15),
+    description: z.string().max(500),
+  }),
+  shortcuts: z.array(SheetShortcutSchema).max(100),
+  lastUsedAt: z.number().finite().nonnegative(),
+  createdAt: z.number().finite().nonnegative(),
+  updatedAt: z.number().finite().nonnegative(),
+});
+
 export const ClientCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('HELLO_AUTH'),
@@ -250,6 +459,8 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
     isSecretRoll: z.boolean().optional(),
     physicalDiceValues: z.array(z.number().int().min(1).max(10)).max(30).optional(),
     rollClientId: z.string().max(80).optional(),
+    seatId: z.string().min(1).max(80).optional(),
+    rollerDisplayName: z.string().min(1).max(80).optional(),
   }),
   z.object({
     type: z.literal('UPDATE_LIGHT_TRACKERS'),
@@ -259,6 +470,14 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
       willpower: z.number().int().min(0).max(10).optional(),
       woundPenalty: LightWoundPenaltySchema.optional(),
     }),
+    seatId: z.string().min(1).max(80).optional(),
+    displayName: z.string().min(1).max(80).optional(),
+    characterName: z.string().max(120).nullable().optional(),
+    activeForm: GarouFormSchema.nullable().optional(),
+  }),
+  z.object({
+    type: z.literal('SYNC_CLIENT_SEATS'),
+    seats: z.array(ClientSeatSyncItemSchema).min(1).max(8),
   }),
   z.object({
     type: z.literal('CHARACTER_UPDATE_TRACKER'),

@@ -155,8 +155,51 @@ export function installMockWebSocketPairGlobal(): void {
 export class MockR2Bucket {
   private readonly store = new Map<
     string,
-    { body: Uint8Array; httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string>; etag: string }
+    {
+      body: Uint8Array;
+      httpMetadata?: R2HTTPMetadata;
+      customMetadata?: Record<string, string>;
+      etag: string;
+      uploaded: Date;
+    }
   >();
+
+  private toR2Object(
+    key: string,
+    entry: {
+      body: Uint8Array;
+      httpMetadata?: R2HTTPMetadata;
+      customMetadata?: Record<string, string>;
+      etag: string;
+      uploaded: Date;
+    },
+  ): R2Object {
+    return {
+      key,
+      version: 'mock-v1',
+      size: entry.body.byteLength,
+      etag: entry.etag,
+      httpEtag: entry.etag,
+      checksums: { toJSON: () => ({}) },
+      uploaded: entry.uploaded,
+      httpMetadata: entry.httpMetadata,
+      customMetadata: entry.customMetadata,
+      storageClass: 'Standard',
+      writeHttpMetadata(headers: Headers) {
+        if (entry.httpMetadata?.contentType) {
+          headers.set('Content-Type', entry.httpMetadata.contentType);
+        }
+        if (entry.httpMetadata?.cacheControl) {
+          headers.set('Cache-Control', entry.httpMetadata.cacheControl);
+        }
+      },
+    } as unknown as R2Object;
+  }
+
+  async head(key: string): Promise<R2Object | null> {
+    const entry = this.store.get(key);
+    return entry ? this.toR2Object(key, entry) : null;
+  }
 
   async put(
     key: string,
@@ -170,13 +213,15 @@ export class MockR2Bucket {
           ? new Uint8Array(value)
           : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     const etag = `etag-${bytes.byteLength}`;
-    this.store.set(key, {
+    const entry = {
       body: new Uint8Array(bytes),
       httpMetadata: options?.httpMetadata as R2HTTPMetadata | undefined,
       customMetadata: options?.customMetadata,
       etag,
-    });
-    return { key, httpEtag: etag, size: bytes.byteLength } as unknown as R2Object;
+      uploaded: new Date(),
+    };
+    this.store.set(key, entry);
+    return this.toR2Object(key, entry);
   }
 
   async get(key: string): Promise<R2ObjectBody | null> {
@@ -184,26 +229,89 @@ export class MockR2Bucket {
     if (!entry) {
       return null;
     }
+    const copy = new Uint8Array(entry.body);
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(entry.body);
+        controller.enqueue(copy);
         controller.close();
       },
     });
+    const baseObj = this.toR2Object(key, entry);
     return {
-      key,
+      ...baseObj,
       body: stream,
-      httpEtag: entry.etag,
-      size: entry.body.byteLength,
-      writeHttpMetadata(headers: Headers) {
-        if (entry.httpMetadata?.contentType) {
-          headers.set('Content-Type', entry.httpMetadata.contentType);
-        }
-        if (entry.httpMetadata?.cacheControl) {
-          headers.set('Cache-Control', entry.httpMetadata.cacheControl);
-        }
+      bodyUsed: false,
+      writeHttpMetadata: baseObj.writeHttpMetadata,
+      async arrayBuffer(): Promise<ArrayBuffer> {
+        return copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength);
+      },
+      async bytes(): Promise<Uint8Array> {
+        return new Uint8Array(copy);
+      },
+      async text(): Promise<string> {
+        return new TextDecoder().decode(copy);
+      },
+      async json<T>(): Promise<T> {
+        return JSON.parse(new TextDecoder().decode(copy)) as T;
+      },
+      async blob(): Promise<Blob> {
+        return new Blob([copy]);
       },
     } as unknown as R2ObjectBody;
+  }
+
+  async delete(keys: string | string[]): Promise<void> {
+    const list = Array.isArray(keys) ? keys : [keys];
+    for (const key of list) {
+      this.store.delete(key);
+    }
+  }
+
+  async list(options?: R2ListOptions): Promise<R2Objects> {
+    const prefix = options?.prefix ?? '';
+    const startAfter = options?.startAfter ?? '';
+    const delimiter = options?.delimiter;
+    const limit = typeof options?.limit === 'number' && options.limit > 0 ? options.limit : 1000;
+    const offset = options?.cursor ? Math.max(0, Number(options.cursor) || 0) : 0;
+
+    const allKeys = Array.from(this.store.keys())
+      .filter((key) => key.startsWith(prefix) && (!startAfter || key > startAfter))
+      .sort();
+
+    const delimitedSet = new Set<string>();
+    const matchingKeys: string[] = [];
+
+    for (const key of allKeys) {
+      if (delimiter) {
+        const rest = key.slice(prefix.length);
+        const delimIdx = rest.indexOf(delimiter);
+        if (delimIdx >= 0) {
+          delimitedSet.add(prefix + rest.slice(0, delimIdx + delimiter.length));
+          continue;
+        }
+      }
+      matchingKeys.push(key);
+    }
+
+    const slice = matchingKeys.slice(offset, offset + limit);
+    const objects = slice.map((key) => this.toR2Object(key, this.store.get(key)!));
+    const delimitedPrefixes = Array.from(delimitedSet).sort();
+    const nextOffset = offset + slice.length;
+
+    if (nextOffset < matchingKeys.length) {
+      return {
+        objects,
+        delimitedPrefixes,
+        truncated: true,
+        cursor: String(nextOffset),
+      };
+    }
+
+    return {
+      objects,
+      delimitedPrefixes,
+      truncated: false,
+    };
   }
 }
 

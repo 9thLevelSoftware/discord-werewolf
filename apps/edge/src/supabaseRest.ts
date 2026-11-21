@@ -1,18 +1,20 @@
-import type {
-  ActiveCharacterBuff,
-  Auspice,
-  Breed,
-  CharacterFetishEntry,
-  DamageType,
-  GarouForm,
-  MeritOrFlawChoice,
-  MoonPhase,
-  RealmLayer,
-  SpecialtyEntry,
-  SpecialtyMode,
-  W20CharacterState,
-  W20MacroDefinition,
-  W20RollResult,
+import {
+  createBlankUserCharacterSheet,
+  type ActiveCharacterBuff,
+  type Auspice,
+  type Breed,
+  type CharacterFetishEntry,
+  type DamageType,
+  type GarouForm,
+  type MeritOrFlawChoice,
+  type MoonPhase,
+  type RealmLayer,
+  type SpecialtyEntry,
+  type SpecialtyMode,
+  type W20CharacterState,
+  type W20MacroDefinition,
+  type W20RollResult,
+  type W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import type { PackTotemState } from '@w20-vtt/protocol';
 import type { WorkerEnv } from './env';
@@ -120,6 +122,136 @@ export interface XpLedgerRow {
   reason: string;
   approved_by_discord_id: string;
   created_at: string;
+}
+
+export interface UserCharacterSheetRow {
+  id: string;
+  owner_discord_id: string;
+  player_name: string;
+  name: string;
+  breed: Breed;
+  auspice: Auspice;
+  tribe: string;
+  rank: number;
+  active_form: GarouForm;
+  sync_code: string | null;
+  sheet_data: Record<string, unknown>;
+  last_used_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseIsoTimestampMs(raw: unknown, fallback: number): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return raw;
+  }
+  if (typeof raw === 'string' && raw.trim().length > 0) {
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
+function toIsoTimestamp(epochMs: number): string {
+  const safeMs = Number.isFinite(epochMs) && epochMs >= 0 ? epochMs : Date.now();
+  return new Date(safeMs).toISOString();
+}
+
+export function mapUserCharacterSheetRowToSheet(row: UserCharacterSheetRow): W20UserCharacterSheet {
+  const rawData = (
+    row.sheet_data && typeof row.sheet_data === 'object' && !Array.isArray(row.sheet_data)
+      ? row.sheet_data
+      : {}
+  ) as Partial<W20UserCharacterSheet>;
+
+  const now = Date.now();
+  const createdAt = parseIsoTimestampMs(
+    row.created_at,
+    typeof rawData.createdAt === 'number' ? rawData.createdAt : now,
+  );
+  const updatedAt = parseIsoTimestampMs(
+    row.updated_at,
+    typeof rawData.updatedAt === 'number' ? rawData.updatedAt : createdAt,
+  );
+  const lastUsedAt = parseIsoTimestampMs(
+    row.last_used_at,
+    typeof rawData.lastUsedAt === 'number' ? rawData.lastUsedAt : updatedAt,
+  );
+
+  const base = createBlankUserCharacterSheet({
+    id: row.id,
+    ownerDiscordId: row.owner_discord_id,
+    syncCode: row.sync_code ?? null,
+    name: row.name,
+    player: row.player_name ?? '',
+    breed: row.breed,
+    auspice: row.auspice,
+    tribe: row.tribe,
+    now: createdAt,
+  });
+
+  return {
+    ...base,
+    ...rawData,
+    id: row.id,
+    ownerDiscordId: row.owner_discord_id,
+    syncCode: row.sync_code !== undefined ? row.sync_code : (rawData.syncCode ?? null),
+    name: row.name ?? rawData.name ?? base.name,
+    player: row.player_name ?? rawData.player ?? base.player,
+    breed: row.breed ?? rawData.breed ?? base.breed,
+    auspice: row.auspice ?? rawData.auspice ?? base.auspice,
+    tribe: row.tribe ?? rawData.tribe ?? base.tribe,
+    rank: typeof row.rank === 'number' ? Number(row.rank) : base.rank,
+    activeForm: row.active_form ?? rawData.activeForm ?? base.activeForm,
+    baseAttributes: rawData.baseAttributes
+      ? { ...base.baseAttributes, ...rawData.baseAttributes }
+      : base.baseAttributes,
+    abilities: rawData.abilities ?? base.abilities,
+    customAbilities: Array.isArray(rawData.customAbilities)
+      ? rawData.customAbilities
+      : base.customAbilities,
+    specialties: rawData.specialties ?? base.specialties,
+    backgrounds: Array.isArray(rawData.backgrounds) ? rawData.backgrounds : base.backgrounds,
+    gifts: Array.isArray(rawData.gifts) ? rawData.gifts : base.gifts,
+    renown: rawData.renown ?? base.renown,
+    rage: rawData.rage ?? base.rage,
+    gnosis: rawData.gnosis ?? base.gnosis,
+    willpower: rawData.willpower ?? base.willpower,
+    health: rawData.health ?? base.health,
+    experience: rawData.experience ?? base.experience,
+    otherTraits: Array.isArray(rawData.otherTraits) ? rawData.otherTraits : base.otherTraits,
+    fetishes: Array.isArray(rawData.fetishes) ? rawData.fetishes : base.fetishes,
+    rites: Array.isArray(rawData.rites) ? rawData.rites : base.rites,
+    combatWeapons: Array.isArray(rawData.combatWeapons)
+      ? rawData.combatWeapons
+      : base.combatWeapons,
+    armor: rawData.armor ?? base.armor,
+    shortcuts: Array.isArray(rawData.shortcuts) ? rawData.shortcuts : base.shortcuts,
+    lastUsedAt,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function mapUserCharacterSheetToRow(sheet: W20UserCharacterSheet): UserCharacterSheetRow {
+  return {
+    id: sheet.id,
+    owner_discord_id: sheet.ownerDiscordId,
+    player_name: sheet.player,
+    name: sheet.name,
+    breed: sheet.breed,
+    auspice: sheet.auspice,
+    tribe: sheet.tribe,
+    rank: sheet.rank,
+    active_form: sheet.activeForm,
+    sync_code: sheet.syncCode ?? null,
+    sheet_data: { ...sheet } as unknown as Record<string, unknown>,
+    last_used_at: toIsoTimestamp(sheet.lastUsedAt),
+    created_at: toIsoTimestamp(sheet.createdAt),
+    updated_at: toIsoTimestamp(sheet.updatedAt),
+  };
 }
 
 export interface RoomHydrationPayload {
@@ -644,5 +776,80 @@ export class SupabaseRestClient {
       : null;
 
     return { campaign, packTotem, characters };
+  }
+
+  async listUserCharacterSheets(ownerDiscordId: string): Promise<W20UserCharacterSheet[]> {
+    const rows = await this.request<UserCharacterSheetRow[]>(
+      `/user_character_sheets?owner_discord_id=eq.${encodeURIComponent(ownerDiscordId)}&select=*&order=last_used_at.desc`,
+    );
+    return rows.map(mapUserCharacterSheetRowToSheet);
+  }
+
+  async getUserCharacterSheetById(sheetId: string): Promise<W20UserCharacterSheet | null> {
+    const rows = await this.request<UserCharacterSheetRow[]>(
+      `/user_character_sheets?id=eq.${encodeURIComponent(sheetId)}&select=*&limit=1`,
+    );
+    return rows[0] ? mapUserCharacterSheetRowToSheet(rows[0]) : null;
+  }
+
+  async getUserCharacterSheetBySyncCode(syncCode: string): Promise<W20UserCharacterSheet | null> {
+    const rows = await this.request<UserCharacterSheetRow[]>(
+      `/user_character_sheets?sync_code=eq.${encodeURIComponent(syncCode)}&select=*&limit=1`,
+    );
+    return rows[0] ? mapUserCharacterSheetRowToSheet(rows[0]) : null;
+  }
+
+  async insertUserCharacterSheet(sheet: W20UserCharacterSheet): Promise<W20UserCharacterSheet> {
+    const insertRow = mapUserCharacterSheetToRow(sheet);
+    const rows = await this.request<UserCharacterSheetRow[]>('/user_character_sheets', {
+      method: 'POST',
+      prefer: 'return=representation',
+      body: JSON.stringify(insertRow),
+    });
+    if (!rows[0]) {
+      throw new SupabaseRestError('User character sheet insert returned no row.', 500, '');
+    }
+    return mapUserCharacterSheetRowToSheet(rows[0]);
+  }
+
+  async updateUserCharacterSheet(
+    sheet: W20UserCharacterSheet,
+  ): Promise<W20UserCharacterSheet | null> {
+    const row = mapUserCharacterSheetToRow(sheet);
+    const patch = {
+      player_name: row.player_name,
+      name: row.name,
+      breed: row.breed,
+      auspice: row.auspice,
+      tribe: row.tribe,
+      rank: row.rank,
+      active_form: row.active_form,
+      sync_code: row.sync_code,
+      sheet_data: row.sheet_data,
+      last_used_at: row.last_used_at,
+      updated_at: row.updated_at,
+    };
+    const rows = await this.request<UserCharacterSheetRow[] | undefined>(
+      `/user_character_sheets?id=eq.${encodeURIComponent(sheet.id)}`,
+      {
+        method: 'PATCH',
+        prefer: 'return=representation',
+        body: JSON.stringify(patch),
+      },
+    );
+    if (!rows) {
+      return sheet;
+    }
+    if (!rows[0]) {
+      return null;
+    }
+    return mapUserCharacterSheetRowToSheet(rows[0]);
+  }
+
+  async deleteUserCharacterSheet(sheetId: string): Promise<void> {
+    await this.request<unknown>(`/user_character_sheets?id=eq.${encodeURIComponent(sheetId)}`, {
+      method: 'DELETE',
+      prefer: 'return=minimal',
+    });
   }
 }

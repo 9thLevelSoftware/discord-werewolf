@@ -160,14 +160,33 @@ export const AuthoritativeDieChips: React.FC<{
 interface RollResultPlaqueProps {
   banner: Queued3DRoll;
   onDismiss: () => void;
+  compact?: boolean;
 }
 
-export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({ banner, onDismiss }) => {
+export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
+  banner,
+  onDismiss,
+  compact = false,
+}) => {
   const accentBorder = banner.roll.isBotch
     ? '!border-red-500/85'
     : banner.roll.netSuccesses > 0
       ? '!border-emerald-500/70'
       : '';
+
+  const summaryText = banner.roll.isBotch
+    ? compact
+      ? 'Botch!'
+      : 'Catastrophic Botch'
+    : banner.roll.netSuccesses > 0
+      ? compact
+        ? `${banner.roll.netSuccesses} Net (${banner.roll.outcome})`
+        : `${banner.roll.netSuccesses} Net ${
+            banner.roll.netSuccesses === 1 ? 'Success' : 'Successes'
+          } (${banner.roll.outcome})`
+      : compact
+        ? 'Failure (0 Net)'
+        : 'Failure — 0 Net Successes';
 
   return (
     <div
@@ -178,20 +197,30 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({ banner, onDi
         if (e.key === 'Enter' || e.key === ' ') onDismiss();
       }}
       title="Click to dismiss plaque (dice stay on felt)"
-      className={`w20-obsidian-panel absolute top-16 left-1/2 z-20 w-[min(92%,560px)] -translate-x-1/2 cursor-pointer rounded-2xl px-4 py-3 transition hover:brightness-105 ${accentBorder}`}
+      className={`w20-obsidian-panel absolute left-1/2 z-20 -translate-x-1/2 cursor-pointer transition hover:brightness-105 ${
+        compact
+          ? 'top-14 mt-[env(safe-area-inset-top,0px)] w-[min(94%,440px)] rounded-xl px-3 py-2'
+          : 'top-16 w-[min(92%,560px)] rounded-2xl px-4 py-3'
+      } ${accentBorder}`}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
+      <div className={`flex items-start justify-between ${compact ? 'gap-2' : 'gap-4'}`}>
+        <div className={`flex min-w-0 items-center ${compact ? 'gap-2' : 'gap-3'}`}>
           <ParticipantAvatar
             name={banner.rollerName ?? 'Player'}
             avatarUrl={banner.rollerAvatarUrl ?? null}
-            sizeClass="h-9 w-9"
+            sizeClass={compact ? 'h-7 w-7 shrink-0' : 'h-9 w-9 shrink-0'}
           />
-          <div>
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-stone-300">
-              <span className="font-bold text-amber-100">{banner.rollerName ?? 'Player'}</span>
+          <div className="min-w-0">
+            <div
+              className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium text-stone-300 ${
+                compact ? 'text-[10px]' : 'text-[11px]'
+              }`}
+            >
+              <span className="max-w-[140px] truncate font-bold text-amber-100">
+                {banner.rollerName ?? 'Player'}
+              </span>
               <span className="text-stone-600">•</span>
-              <span>{banner.label}</span>
+              <span className="max-w-[140px] truncate">{banner.label}</span>
               <span className="text-stone-600">•</span>
               <span className="font-mono text-amber-300/90">
                 Diff {banner.roll.clampedDifficulty}
@@ -203,7 +232,9 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({ banner, onDi
               )}
             </div>
             <p
-              className={`font-display mt-0.5 text-base font-black tracking-wide uppercase ${
+              className={`font-display mt-0.5 font-black tracking-wide uppercase ${
+                compact ? 'text-sm leading-tight' : 'text-base'
+              } ${
                 banner.roll.isBotch
                   ? 'text-red-300'
                   : banner.roll.netSuccesses > 0
@@ -211,31 +242,26 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({ banner, onDi
                     : 'text-stone-300'
               }`}
             >
-              {banner.roll.isBotch
-                ? 'Catastrophic Botch'
-                : banner.roll.netSuccesses > 0
-                  ? `${banner.roll.netSuccesses} Net ${
-                      banner.roll.netSuccesses === 1 ? 'Success' : 'Successes'
-                    } (${banner.roll.outcome})`
-                  : 'Failure — 0 Net Successes'}
+              {summaryText}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           {banner.roll.automaticSuccesses > 0 && (
             <span className="rounded-full border border-indigo-400/50 bg-indigo-950/80 px-2 py-0.5 text-[10px] font-bold text-indigo-200">
               +{banner.roll.automaticSuccesses} WP
             </span>
           )}
-          <X className="h-4 w-4 text-stone-400" />
+          <X className={compact ? 'h-3.5 w-3.5 text-stone-400' : 'h-4 w-4 text-stone-400'} />
         </div>
       </div>
 
       {banner.roll.dice.length > 0 && (
-        <div className="mt-2.5">
+        <div className={compact ? 'mt-1.5' : 'mt-2.5'}>
           <AuthoritativeDieChips
             roll={banner.roll}
             rageDiceCount={banner.rageDiceCount ?? 0}
+            compact={compact}
           />
         </div>
       )}
