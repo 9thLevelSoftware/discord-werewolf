@@ -1,23 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  type AttributeKey,
-  type CanonicalAbilityKey,
-  computeUserSheetStats,
   type GarouForm,
   type ResolvedSheetShortcut,
   resolveSheetShortcut,
-  type SheetShortcut,
   type W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import type { LightGarouTrackers, TableParticipant } from '@w20-vtt/protocol';
-import { BookmarkPlus, Check, EyeOff, Pin, Sparkles, X } from 'lucide-react';
+import { BookmarkPlus, Check, EyeOff, Sparkles, X } from 'lucide-react';
 import { create } from 'zustand';
 import type { DiceSoundPreferences } from '../../audio/DiceSoundEngine';
 import type { DiscordSessionContext } from '../../discordBootstrap';
 import type { ViewportLayoutMode } from '../../hooks/useViewportLayout';
 import type { LocalTableSeat } from '../../store/useCharacterSheetStore';
 import type { ConnectionStatus, Queued3DRoll } from '../../store/useVttRoomStore';
-import { formatTraitName } from '../character-sheet/sheetShared';
+import type {
+  ComposerAttributeKey,
+  ResolvedTraitRollSelection,
+  RollSourceMode,
+} from './traitRollMath';
 
 export interface QuickRollPreset {
   id: string;
@@ -29,70 +29,7 @@ export interface QuickRollPreset {
   isSecretRoll: boolean;
 }
 
-export type ComposerAttributeKey = AttributeKey | 'rage' | 'gnosis' | 'willpower';
-
 export const POOL_QUICK_JUMPS = [3, 5, 7, 10, 12] as const;
-
-export const COMPOSER_ATTRIBUTE_GROUPS: ReadonlyArray<{
-  group: string;
-  keys: readonly ComposerAttributeKey[];
-}> = [
-  { group: 'Physical', keys: ['strength', 'dexterity', 'stamina'] },
-  { group: 'Social', keys: ['charisma', 'manipulation', 'appearance'] },
-  { group: 'Mental', keys: ['perception', 'intelligence', 'wits'] },
-  { group: 'Inner Traits', keys: ['rage', 'gnosis', 'willpower'] },
-];
-
-export const COMPOSER_ABILITY_GROUPS: ReadonlyArray<{
-  group: string;
-  keys: readonly CanonicalAbilityKey[];
-}> = [
-  {
-    group: 'Talents',
-    keys: [
-      'alertness',
-      'athletics',
-      'brawl',
-      'empathy',
-      'expression',
-      'intimidation',
-      'leadership',
-      'primal_urge',
-      'streetwise',
-      'subterfuge',
-    ],
-  },
-  {
-    group: 'Skills',
-    keys: [
-      'animal_ken',
-      'crafts',
-      'drive',
-      'etiquette',
-      'firearms',
-      'larceny',
-      'melee',
-      'performance',
-      'stealth',
-      'survival',
-    ],
-  },
-  {
-    group: 'Knowledges',
-    keys: [
-      'academics',
-      'computer',
-      'enigmas',
-      'investigation',
-      'law',
-      'medicine',
-      'occult',
-      'rituals',
-      'science',
-      'technology',
-    ],
-  },
-];
 
 export interface DiceTableHudProps {
   session: DiscordSessionContext;
@@ -112,16 +49,26 @@ export interface DiceTableHudProps {
   activeBanner: Queued3DRoll | null;
   sfxPrefs: DiceSoundPreferences;
   layoutMode: ViewportLayoutMode;
+  rollSourceMode: RollSourceMode;
   pool: number;
   editingPool: boolean;
   poolInputValue: string;
+  bonusDice: number;
   rageDiceCount: number;
   difficulty: number;
   hasSpecialty: boolean;
+  isAutoSpecialty: boolean;
+  specialtyReason?: string;
+  perceptionFormMod: number;
+  untrainedHint?: string;
+  compactTraitFormula: string;
+  hasTraitSelection: boolean;
+  traitSelection: ResolvedTraitRollSelection | null;
   spendWillpower: boolean;
   applyWoundPenalty: boolean;
   isSecretRoll: boolean;
   rollLabel: string;
+  effectiveRollLabel: string;
   manualControlsOpen: boolean;
   isThrowing: boolean;
   effectivePreviewPool: number;
@@ -143,10 +90,12 @@ export interface DiceTableHudProps {
   onOpenRoster: () => void;
   onOpenSheet: () => void;
   onSetActiveSheetForm: (form: GarouForm) => void;
+  onSetRollSourceMode: (mode: RollSourceMode) => void;
   onSetPool: React.Dispatch<React.SetStateAction<number>>;
   onSetEditingPool: (editing: boolean) => void;
   onSetPoolInputValue: (val: string) => void;
   onCommitPoolInput: () => void;
+  onSetBonusDice: React.Dispatch<React.SetStateAction<number>>;
   onSetRageDiceCount: React.Dispatch<React.SetStateAction<number>>;
   onSetDifficulty: React.Dispatch<React.SetStateAction<number>>;
   onToggleSpecialty: () => void;
@@ -294,179 +243,6 @@ export const useUnboundQuickRollStore = create<UnboundQuickRollStore>()((set, ge
   },
 }));
 
-export function resolveComposerSelection(
-  sheet: W20UserCharacterSheet,
-  attr: ComposerAttributeKey | '',
-  abil: string
-): {
-  label: string;
-  resolved: ResolvedSheetShortcut | null;
-} {
-  if (!attr && !abil) {
-    return { label: '', resolved: null };
-  }
-  const parts: string[] = [];
-  if (attr) parts.push(formatTraitName(attr));
-  if (abil) {
-    const custom = sheet.customAbilities.find((c) => c.id === abil);
-    parts.push(custom ? custom.name : formatTraitName(abil));
-  }
-  const label = parts.join(' + ');
-  const synthetic: SheetShortcut = {
-    id: 'composer-preview',
-    name: label,
-    source: {
-      kind: 'trait_combo',
-      attribute: attr || null,
-      ability: abil || null,
-      useFormStats: true,
-      applyPerceptionFormDiff: attr === 'perception',
-    },
-    difficulty: 6,
-    rageDiceCount: 0,
-    applyWoundPenalty: true,
-    isSecretRoll: false,
-  };
-  return {
-    label,
-    resolved: resolveSheetShortcut(sheet, synthetic),
-  };
-}
-
-interface TraitPairQuickComposerProps {
-  activeSheet: W20UserCharacterSheet;
-  composerAttr: ComposerAttributeKey | '';
-  composerAbil: string;
-  compact?: boolean;
-  onChange: (attr: ComposerAttributeKey | '', abil: string) => void;
-  onPinShortcut: () => void;
-}
-
-export const TraitPairQuickComposer: React.FC<TraitPairQuickComposerProps> = ({
-  activeSheet,
-  composerAttr,
-  composerAbil,
-  compact = false,
-  onChange,
-  onPinShortcut,
-}) => {
-  const [pinnedFlash, setPinnedFlash] = useState(false);
-
-  const preview = useMemo(
-    () => resolveComposerSelection(activeSheet, composerAttr, composerAbil),
-    [activeSheet, composerAttr, composerAbil]
-  );
-
-  const stats = useMemo(() => computeUserSheetStats(activeSheet), [activeSheet]);
-
-  const handlePin = () => {
-    if (!composerAttr && !composerAbil) return;
-    onPinShortcut();
-    setPinnedFlash(true);
-    window.setTimeout(() => setPinnedFlash(false), 1400);
-  };
-
-  return (
-    <div
-      className={`rounded-xl border border-amber-500/25 bg-zinc-950/75 ${
-        compact ? 'space-y-2 p-2.5' : 'flex flex-wrap items-center gap-2 px-2.5 py-2'
-      }`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-display shrink-0 text-[10px] font-bold tracking-wider uppercase text-amber-200/85">
-          Trait Pair
-        </span>
-        {compact && preview.resolved && (
-          <span className="font-mono text-[10px] text-amber-300">
-            {preview.resolved.formulaSummary}
-          </span>
-        )}
-      </div>
-
-      <div className={compact ? 'grid grid-cols-2 gap-2' : 'flex min-w-0 flex-1 flex-wrap items-center gap-1.5'}>
-        <select
-          value={composerAttr}
-          onChange={(e) => onChange(e.target.value as ComposerAttributeKey | '', composerAbil)}
-          aria-label="Select Attribute or Inner Trait"
-          className={`rounded-lg border border-stone-700/80 bg-zinc-900/95 px-2 text-xs text-stone-100 focus:border-amber-400/75 focus:outline-none ${
-            compact ? 'min-h-[38px] w-full py-1.5' : 'h-7 max-w-[165px] py-0.5 text-[11px]'
-          }`}
-        >
-          <option value="">Attribute (None)</option>
-          {COMPOSER_ATTRIBUTE_GROUPS.map((grp) => (
-            <optgroup key={grp.group} label={grp.group}>
-              {grp.keys.map((key) => {
-                const dots =
-                  key === 'rage'
-                    ? activeSheet.rage.permanent
-                    : key === 'gnosis'
-                      ? stats.effectiveGnosisPool
-                      : key === 'willpower'
-                        ? activeSheet.willpower.permanent
-                        : stats.effectiveAttributes[key];
-                return (
-                  <option key={key} value={key}>
-                    {formatTraitName(key)} ({dots})
-                  </option>
-                );
-              })}
-            </optgroup>
-          ))}
-        </select>
-
-        <select
-          value={composerAbil}
-          onChange={(e) => onChange(composerAttr, e.target.value)}
-          aria-label="Select Ability"
-          className={`rounded-lg border border-stone-700/80 bg-zinc-900/95 px-2 text-xs text-stone-100 focus:border-amber-400/75 focus:outline-none ${
-            compact ? 'min-h-[38px] w-full py-1.5' : 'h-7 max-w-[180px] py-0.5 text-[11px]'
-          }`}
-        >
-          <option value="">Ability (None)</option>
-          {COMPOSER_ABILITY_GROUPS.map((grp) => (
-            <optgroup key={grp.group} label={grp.group}>
-              {grp.keys.map((key) => (
-                <option key={key} value={key}>
-                  {formatTraitName(key)} ({activeSheet.abilities[key] ?? 0})
-                </option>
-              ))}
-            </optgroup>
-          ))}
-          {activeSheet.customAbilities.length > 0 && (
-            <optgroup label="Custom Abilities">
-              {activeSheet.customAbilities.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.dots})
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
-      </div>
-
-      {!compact && preview.resolved && (
-        <span className="font-mono text-[10px] text-amber-200/85">
-          {preview.resolved.formulaSummary} ={' '}
-          <strong className="text-amber-300">{preview.resolved.effectivePool}d10</strong>
-          {preview.resolved.hasSpecialty ? ' • Spec' : ''}
-        </span>
-      )}
-
-      <button
-        type="button"
-        disabled={!composerAttr && !composerAbil}
-        onClick={handlePin}
-        className={`flex shrink-0 items-center justify-center gap-1 rounded-lg border border-amber-500/50 bg-amber-950/35 px-2.5 font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/60 disabled:cursor-not-allowed disabled:opacity-40 ${
-          compact ? 'min-h-[38px] w-full text-xs' : 'h-7 text-[10px]'
-        }`}
-      >
-        {pinnedFlash ? <Check className="h-3 w-3 text-emerald-300" /> : <Pin className="h-3 w-3" />}
-        {pinnedFlash ? 'Pinned!' : 'Pin Shortcut'}
-      </button>
-    </div>
-  );
-};
-
 interface QuickRollBarProps {
   userId: string;
   seatId: string;
@@ -563,14 +339,14 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
     >
       {!compact && (
         <span className="font-display shrink-0 text-[10px] font-bold tracking-wider uppercase text-amber-300/75">
-          {activeSheet ? 'Sheet Rolls' : 'Quick Rolls'}
+          {activeSheet ? 'Pinned Rolls' : 'Quick Rolls'}
         </span>
       )}
 
       {activeSheet ? (
         resolvedShortcuts.length === 0 ? (
           <span className="shrink-0 text-[10px] italic text-stone-500">
-            No pinned shortcuts — pin from Sheet or Controls
+            No pinned rolls — click Pin to save any Trait + Skill setup
           </span>
         ) : (
           resolvedShortcuts.map((resolved) => {
