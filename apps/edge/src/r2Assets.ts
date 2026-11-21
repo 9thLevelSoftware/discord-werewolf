@@ -51,6 +51,10 @@ export async function handleGetR2Asset(request: Request, env: WorkerEnv): Promis
     return errorResponse('Asset not found.', 404);
   }
 
+  if (!env.VTT_MEDIA_BUCKET) {
+    return errorResponse('R2 media storage is not configured in this environment.', 503);
+  }
+
   const object = await env.VTT_MEDIA_BUCKET.get(key);
   if (!object) {
     return errorResponse('Asset not found.', 404);
@@ -124,6 +128,10 @@ export async function handlePutR2Asset(
   }
   if (bodyBytes.byteLength > MAX_UPLOAD_BYTES) {
     return errorResponse('Asset exceeds maximum allowed 25 MiB size.', 413);
+  }
+
+  if (!env.VTT_MEDIA_BUCKET) {
+    return errorResponse('R2 media storage is not configured in this environment.', 503);
   }
 
   const contentType = request.headers.get('Content-Type') || 'application/octet-stream';

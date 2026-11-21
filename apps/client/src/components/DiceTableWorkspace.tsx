@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DiceBox from '@3d-dice/dice-box';
 import {
-  computeUserSheetStats,
-  type GarouForm,
   type ResolvedSheetShortcut,
   type SheetShortcut,
   sheetToLightTrackers,
@@ -23,12 +21,15 @@ import { W20InteractiveSheetModal } from './character-sheet/W20InteractiveSheetM
 import { DesktopDiceTableHud } from './dice-table/DesktopDiceTableHud';
 import { MobileDiceTableHud } from './dice-table/MobileDiceTableHud';
 import {
-  type ComposerAttributeKey,
   type DiceTableHudProps,
   type QuickRollPreset,
-  resolveComposerSelection,
   useUnboundQuickRollStore,
 } from './dice-table/QuickRollBar';
+import {
+  type ComposerAttributeKey,
+  resolveTraitRollSelection,
+  type RollSourceMode,
+} from './dice-table/TraitRollBuilder';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
 
 interface DiceTableWorkspaceProps {
@@ -241,20 +242,23 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   }, [seats, setActiveSeat]);
 
   // Console state (independent per player)
-  const [pool, setPool] = useState(6);
+  const [rollSourceMode, setRollSourceMode] = useState<RollSourceMode>('traits');
+  const [manualPool, setManualPool] = useState(6);
   const [editingPool, setEditingPool] = useState(false);
   const [poolInputValue, setPoolInputValue] = useState('6');
+  const [bonusDice, setBonusDice] = useState(0);
   const [rageDiceCount, setRageDiceCount] = useState(0);
   const [difficulty, setDifficulty] = useState(6);
-  const [hasSpecialty, setHasSpecialty] = useState(false);
+  const [manualSpecialty, setManualSpecialty] = useState(false);
+  const [specialtyOverride, setSpecialtyOverride] = useState<boolean | null>(null);
   const [spendWillpower, setSpendWillpower] = useState(false);
-  const [applyWoundPenalty, setApplyWoundPenalty] = useState(true);
+  const [manualApplyWounds, setManualApplyWounds] = useState(true);
+  const [woundOverride, setWoundOverride] = useState<boolean | null>(null);
   const [isSecretRoll, setIsSecretRoll] = useState(false);
   const [rollLabel, setRollLabel] = useState('');
   const [manualControlsOpen, setManualControlsOpen] = useState(false);
-  const [composerAttr, setComposerAttr] = useState<ComposerAttributeKey | ''>('');
+  const [composerAttr, setComposerAttr] = useState<ComposerAttributeKey | ''>('dexterity');
   const [composerAbil, setComposerAbil] = useState('');
-  const lastComposerPoolRef = useRef<number | null>(null);
 
   // Arena & Drawer state
   const [feedOpen, setFeedOpen] = useState(() =>
@@ -272,49 +276,67 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     setSfxPrefs(diceSoundEngine.loadPreferences(session.userId));
   }, [session.userId]);
 
-  // Reset trait composer selection when changing seats so seat-specific abilities don't leak
+  // Reset trait builder selection cleanly whenever switching seats or changing bound sheet
+  const prevSeatOrSheetRef = useRef<{ seatId: string; sheetId: string | null }>({
+    seatId: activeSeat.seatId,
+    sheetId: activeSheet?.id ?? null,
+  });
+
   useEffect(() => {
-    setComposerAttr('');
-    setComposerAbil('');
-    lastComposerPoolRef.current = null;
-  }, [activeSeat.seatId]);
+    const nextSheetId = activeSheet?.id ?? null;
+    const prev = prevSeatOrSheetRef.current;
+    if (prev.seatId !== activeSeat.seatId || prev.sheetId !== nextSheetId) {
+      prevSeatOrSheetRef.current = { seatId: activeSeat.seatId, sheetId: nextSheetId };
+      setRollSourceMode('traits');
+      setComposerAttr(nextSheetId ? 'dexterity' : '');
+      setComposerAbil('');
+      setBonusDice(0);
+      setSpecialtyOverride(null);
+      setWoundOverride(null);
+      setRollLabel('');
+    }
+  }, [activeSeat.seatId, activeSheet?.id]);
 
-  // Keep trait-pair composer pool synced live ONLY when shifting Garou forms
-  const prevComposerSheetFormRef = useRef<{ sheetId: string; form: GarouForm } | null>(null);
-  useEffect(() => {
-    if (!activeSheet) {
-      prevComposerSheetFormRef.current = null;
-      return;
-    }
-    const prev = prevComposerSheetFormRef.current;
-    if (!prev || prev.sheetId !== activeSheet.id) {
-      prevComposerSheetFormRef.current = {
-        sheetId: activeSheet.id,
-        form: activeSheet.activeForm,
-      };
-      return;
-    }
-    if (prev.form === activeSheet.activeForm) {
-      return;
-    }
-    prevComposerSheetFormRef.current = {
-      sheetId: activeSheet.id,
-      form: activeSheet.activeForm,
-    };
+  // Live reactive sheet-driven pool & specialty derivation (tracks form shifts and sheet edits automatically)
+  const isSheetTraitsMode = Boolean(activeSheet && rollSourceMode === 'traits');
+  const traitSelection = useMemo(
+    () =>
+      activeSheet
+        ? resolveTraitRollSelection({
+            sheet: activeSheet,
+            attribute: composerAttr,
+            ability: composerAbil,
+            bonusDice,
+            difficulty,
+            specialtyOverride,
+            woundOverride,
+          })
+        : null,
+    [
+      activeSheet,
+      composerAttr,
+      composerAbil,
+      bonusDice,
+      difficulty,
+      specialtyOverride,
+      woundOverride,
+    ]
+  );
 
-    if (!composerAttr && !composerAbil) return;
-    const selection = resolveComposerSelection(activeSheet, composerAttr, composerAbil);
-    if (!selection.resolved) return;
-
-    if (lastComposerPoolRef.current === pool) {
-      setPool(selection.resolved.basePool);
-      lastComposerPoolRef.current = selection.resolved.basePool;
-    }
-    if (composerAttr === 'perception') {
-      const stats = computeUserSheetStats(activeSheet);
-      setDifficulty(Math.max(2, Math.min(10, 6 + stats.formSpec.perceptionDifficultyMod)));
-    }
-  }, [activeSheet, composerAttr, composerAbil, pool]);
+  const activeBasePool =
+    isSheetTraitsMode && traitSelection ? traitSelection.basePool : manualPool;
+  const activeHasSpecialty =
+    isSheetTraitsMode && traitSelection
+      ? traitSelection.effectiveHasSpecialty
+      : manualSpecialty;
+  const activeApplyWounds =
+    isSheetTraitsMode && traitSelection
+      ? traitSelection.effectiveApplyWounds
+      : manualApplyWounds;
+  const effectiveRollLabel =
+    isSheetTraitsMode && traitSelection
+      ? rollLabel.trim() || traitSelection.autoLabel
+      : rollLabel;
 
   // Clear spendWillpower if temporary Willpower drops to 0
   useEffect(() => {
@@ -340,8 +362,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const busyQueueIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    setRageDiceCount((prev) => Math.min(prev, pool));
-  }, [pool]);
+    setRageDiceCount((prev) => Math.min(prev, Math.max(0, activeBasePool)));
+  }, [activeBasePool]);
 
   // Initialize full-stage @3d-dice/dice-box ONCE outside the isMobile branch
   useEffect(() => {
@@ -527,13 +549,15 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     }) => {
       if (isThrowing || connectionStatus !== 'authenticated') return;
 
-      const targetPool = overrides?.pool ?? pool;
-      const targetDiff = overrides?.difficulty ?? difficulty;
-      const targetSpec = overrides?.hasSpecialty ?? hasSpecialty;
+      const rawTargetPool = overrides?.pool ?? activeBasePool;
+      if (rawTargetPool <= 0) return;
+      const targetPool = Math.max(1, Math.min(30, Math.round(rawTargetPool)));
+      const targetDiff = Math.max(2, Math.min(10, Math.round(overrides?.difficulty ?? difficulty)));
+      const targetSpec = overrides?.hasSpecialty ?? activeHasSpecialty;
       const targetWp = overrides?.spendWillpower ?? spendWillpower;
-      const targetApplyWounds = overrides?.applyWoundPenalty ?? applyWoundPenalty;
+      const targetApplyWounds = overrides?.applyWoundPenalty ?? activeApplyWounds;
       const targetSecret = overrides?.isSecretRoll ?? isSecretRoll;
-      const targetLabel = (overrides?.label ?? rollLabel).trim();
+      const targetLabel = (overrides?.label ?? effectiveRollLabel).trim();
 
       const woundMod = targetApplyWounds ? activeTrackers.woundPenalty : 0;
       const effectivePool = Math.max(0, targetPool + woundMod);
@@ -598,13 +622,13 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     [
       isThrowing,
       connectionStatus,
-      pool,
+      activeBasePool,
       difficulty,
-      hasSpecialty,
+      activeHasSpecialty,
       spendWillpower,
-      applyWoundPenalty,
+      activeApplyWounds,
       isSecretRoll,
-      rollLabel,
+      effectiveRollLabel,
       activeTrackers.woundPenalty,
       rageDiceCount,
       spendActiveSeatWillpower,
@@ -615,13 +639,59 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     ]
   );
 
+  const handleSetManualPool: React.Dispatch<React.SetStateAction<number>> = useCallback(
+    (updater) => {
+      setManualPool((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        return Math.max(1, Math.min(30, next));
+      });
+    },
+    []
+  );
+
+  const handleSetBonusDice: React.Dispatch<React.SetStateAction<number>> = useCallback(
+    (updater) => {
+      setBonusDice((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        return Math.max(-15, Math.min(15, next));
+      });
+    },
+    []
+  );
+
+  const handleSetRollSourceMode = useCallback(
+    (mode: RollSourceMode) => {
+      if (mode === 'manual' && traitSelection && traitSelection.basePool >= 1) {
+        setManualPool(Math.max(1, Math.min(30, traitSelection.basePool)));
+      }
+      setRollSourceMode(mode);
+    },
+    [traitSelection]
+  );
+
+  const handleToggleSpecialty = useCallback(() => {
+    if (isSheetTraitsMode && traitSelection) {
+      setSpecialtyOverride((prev) => !(prev ?? traitSelection.autoSpecialty));
+      return;
+    }
+    setManualSpecialty((v) => !v);
+  }, [isSheetTraitsMode, traitSelection]);
+
+  const handleToggleApplyWoundPenalty = useCallback(() => {
+    if (isSheetTraitsMode && traitSelection) {
+      setWoundOverride((prev) => !(prev ?? traitSelection.autoApplyWounds));
+      return;
+    }
+    setManualApplyWounds((v) => !v);
+  }, [isSheetTraitsMode, traitSelection]);
+
   const handleTriggerPreset = useCallback(
     (preset: QuickRollPreset) => {
       const nextRage = Math.min(preset.pool, preset.rageDiceCount);
-      setPool(preset.pool);
+      setManualPool(preset.pool);
       setRageDiceCount(nextRage);
       setDifficulty(preset.difficulty);
-      setHasSpecialty(preset.hasSpecialty);
+      setManualSpecialty(preset.hasSpecialty);
       setIsSecretRoll(preset.isSecretRoll);
       setRollLabel(preset.name);
 
@@ -631,24 +701,50 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         difficulty: preset.difficulty,
         hasSpecialty: preset.hasSpecialty,
         spendWillpower: false,
-        applyWoundPenalty,
+        applyWoundPenalty: manualApplyWounds,
         label: preset.name,
         isSecretRoll: preset.isSecretRoll,
       });
     },
-    [applyWoundPenalty, executeRoll]
+    [manualApplyWounds, executeRoll]
   );
 
   const handleTriggerResolvedShortcut = useCallback(
     (resolved: ResolvedSheetShortcut) => {
       const nextRage = Math.min(resolved.basePool, resolved.rageDiceCount);
-      setPool(resolved.basePool);
-      setRageDiceCount(nextRage);
-      setDifficulty(resolved.difficulty);
-      setHasSpecialty(resolved.hasSpecialty);
-      setApplyWoundPenalty(resolved.applyWoundPenalty);
-      setIsSecretRoll(resolved.isSecretRoll);
-      setRollLabel(resolved.label);
+      const src = resolved.shortcut.source;
+      if (src.kind === 'trait_combo' && activeSheet) {
+        const attr = src.attribute ?? '';
+        const abil = src.ability ?? '';
+        const flatMod = src.flatModifier ?? 0;
+        const autoBaseline = resolveTraitRollSelection({
+          sheet: activeSheet,
+          attribute: attr,
+          ability: abil,
+          bonusDice: flatMod,
+          difficulty: resolved.difficulty,
+          specialtyOverride: null,
+          woundOverride: null,
+        });
+        setRollSourceMode('traits');
+        setComposerAttr(attr);
+        setComposerAbil(abil);
+        setBonusDice(flatMod);
+        setDifficulty(resolved.difficulty);
+        setRageDiceCount(nextRage);
+        setSpecialtyOverride(
+          resolved.hasSpecialty !== autoBaseline.autoSpecialty ? resolved.hasSpecialty : null
+        );
+        setWoundOverride(
+          resolved.applyWoundPenalty !== autoBaseline.autoApplyWounds
+            ? resolved.applyWoundPenalty
+            : null
+        );
+        setIsSecretRoll(resolved.isSecretRoll);
+        setRollLabel('');
+      } else {
+        setManualPool(Math.max(1, Math.min(30, resolved.basePool)));
+      }
 
       void executeRoll({
         pool: resolved.basePool,
@@ -661,20 +757,22 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         isSecretRoll: resolved.isSecretRoll,
       });
     },
-    [executeRoll]
+    [activeSheet, executeRoll]
   );
 
   const handleRollFromSheet = useCallback(
     (req: SheetRollRequest) => {
       setSheetModalOpen(false);
       const nextRage = Math.min(req.pool, req.rageDiceCount ?? 0);
-      setPool(req.pool);
-      setRageDiceCount(nextRage);
-      setDifficulty(req.difficulty);
-      setHasSpecialty(req.hasSpecialty);
-      setApplyWoundPenalty(req.applyWoundPenalty);
-      setIsSecretRoll(req.isSecretRoll ?? false);
-      setRollLabel(req.label);
+      if (!isSheetTraitsMode) {
+        setManualPool(Math.max(1, Math.min(30, req.pool)));
+        setRageDiceCount(nextRage);
+        setDifficulty(req.difficulty);
+        setManualSpecialty(req.hasSpecialty);
+        setManualApplyWounds(req.applyWoundPenalty);
+        setIsSecretRoll(req.isSecretRoll ?? false);
+        setRollLabel(req.label);
+      }
 
       void executeRoll({
         pool: req.pool,
@@ -687,7 +785,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         isSecretRoll: req.isSecretRoll ?? false,
       });
     },
-    [executeRoll, setSheetModalOpen]
+    [executeRoll, isSheetTraitsMode, setSheetModalOpen]
   );
 
   const handleRerollFromHistory = useCallback(
@@ -698,13 +796,15 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       const usedSpecialty = entry.roll.dice.some(
         (d) => d.contributedSuccesses === 2 || d.isBonusExplosionDie
       );
-      setPool(targetPool);
-      setRageDiceCount(targetRage);
-      setDifficulty(targetDiff);
-      setHasSpecialty(usedSpecialty);
-      setApplyWoundPenalty(false);
-      setIsSecretRoll(entry.isSecretRoll);
-      setRollLabel(entry.label);
+      if (!isSheetTraitsMode) {
+        setManualPool(targetPool);
+        setRageDiceCount(targetRage);
+        setDifficulty(targetDiff);
+        setManualSpecialty(usedSpecialty);
+        setManualApplyWounds(false);
+        setIsSecretRoll(entry.isSecretRoll);
+        setRollLabel(entry.label);
+      }
 
       void executeRoll({
         pool: targetPool,
@@ -717,7 +817,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         isSecretRoll: entry.isSecretRoll,
       });
     },
-    [executeRoll]
+    [executeRoll, isSheetTraitsMode]
   );
 
   const handleClearTable = useCallback(() => {
@@ -762,7 +862,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const commitPoolInput = useCallback(() => {
     const parsed = Number.parseInt(poolInputValue, 10);
     if (Number.isFinite(parsed)) {
-      setPool(Math.max(1, Math.min(30, parsed)));
+      setManualPool(Math.max(1, Math.min(30, parsed)));
     }
     setEditingPool(false);
   }, [poolInputValue]);
@@ -779,53 +879,36 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     (attr: ComposerAttributeKey | '', abil: string) => {
       setComposerAttr(attr);
       setComposerAbil(abil);
-      if (!activeSheet) return;
-
-      if (!attr && !abil) {
-        lastComposerPoolRef.current = null;
-        return;
-      }
-
-      const selection = resolveComposerSelection(activeSheet, attr, abil);
-      if (selection.resolved) {
-        const stats = computeUserSheetStats(activeSheet);
-        const targetDiff =
-          attr === 'perception'
-            ? Math.max(2, Math.min(10, 6 + stats.formSpec.perceptionDifficultyMod))
-            : 6;
-
-        setPool(selection.resolved.basePool);
-        lastComposerPoolRef.current = selection.resolved.basePool;
-        setDifficulty(targetDiff);
-        setHasSpecialty(selection.resolved.hasSpecialty);
-        setApplyWoundPenalty(selection.resolved.applyWoundPenalty);
-        setRollLabel(selection.label);
-      }
+      setSpecialtyOverride(null);
+      setWoundOverride(null);
+      setRollLabel('');
     },
-    [activeSheet]
+    []
   );
 
   const handlePinComposerShortcut = useCallback(() => {
     if (!activeSheet || (!composerAttr && !composerAbil)) return;
-    const selection = resolveComposerSelection(activeSheet, composerAttr, composerAbil);
-    const flatModifier = selection.resolved ? pool - selection.resolved.basePool : 0;
-    const autoSpecialty = selection.resolved?.hasSpecialty ?? false;
+    const autoSpecialty = traitSelection?.autoSpecialty ?? false;
 
     const shortcut: SheetShortcut = {
       id: `sc-${crypto.randomUUID().slice(0, 8)}`,
-      name: (rollLabel.trim() || selection.label || `Pool ${pool}d10`).slice(0, 48),
+      name: (
+        rollLabel.trim() ||
+        traitSelection?.autoLabel ||
+        `Pool ${activeBasePool}d10`
+      ).slice(0, 48),
       source: {
         kind: 'trait_combo',
         attribute: composerAttr || null,
         ability: composerAbil || null,
         useFormStats: true,
-        applyPerceptionFormDiff: composerAttr === 'perception',
-        ...(flatModifier !== 0 ? { flatModifier } : {}),
+        applyPerceptionFormDiff: false,
+        ...(bonusDice !== 0 ? { flatModifier: bonusDice } : {}),
       },
       difficulty,
       rageDiceCount,
-      applyWoundPenalty,
-      ...(hasSpecialty && !autoSpecialty ? { forceSpecialty: true } : {}),
+      applyWoundPenalty: activeApplyWounds,
+      ...(activeHasSpecialty && !autoSpecialty ? { forceSpecialty: true } : {}),
       isSecretRoll,
     };
     pinShortcutToActiveSheet(shortcut);
@@ -833,69 +916,73 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     activeSheet,
     composerAttr,
     composerAbil,
-    pool,
+    traitSelection,
     rollLabel,
+    activeBasePool,
+    bonusDice,
     difficulty,
     rageDiceCount,
-    applyWoundPenalty,
-    hasSpecialty,
+    activeApplyWounds,
+    activeHasSpecialty,
     isSecretRoll,
     pinShortcutToActiveSheet,
   ]);
 
   const handlePinCurrentToSheet = useCallback(() => {
     if (!activeSheet) return;
-    if (composerAttr || composerAbil) {
+    if (rollSourceMode === 'traits' && (composerAttr || composerAbil)) {
       handlePinComposerShortcut();
       return;
     }
 
+    const staticPool = Math.max(1, Math.min(30, activeBasePool));
     const shortcut: SheetShortcut = {
       id: `sc-${crypto.randomUUID().slice(0, 8)}`,
-      name: (rollLabel.trim() || `Pool ${pool}d10`).slice(0, 48),
+      name: (rollLabel.trim() || `Pool ${staticPool}d10`).slice(0, 48),
       source: {
         kind: 'static',
-        pool,
+        pool: staticPool,
       },
       difficulty,
       rageDiceCount,
-      applyWoundPenalty,
-      ...(hasSpecialty ? { forceSpecialty: true } : {}),
+      applyWoundPenalty: activeApplyWounds,
+      ...(activeHasSpecialty ? { forceSpecialty: true } : {}),
       isSecretRoll,
     };
     pinShortcutToActiveSheet(shortcut);
   }, [
     activeSheet,
+    rollSourceMode,
     composerAttr,
     composerAbil,
     handlePinComposerShortcut,
     rollLabel,
-    pool,
+    activeBasePool,
     difficulty,
     rageDiceCount,
-    applyWoundPenalty,
-    hasSpecialty,
+    activeApplyWounds,
+    activeHasSpecialty,
     isSecretRoll,
     pinShortcutToActiveSheet,
   ]);
 
   const handleSaveCurrentUnboundPreset = useCallback(() => {
     useUnboundQuickRollStore.getState().addPreset(session.userId, activeSeat.seatId, {
-      name: (rollLabel.trim() || `Pool ${pool}d10`).slice(0, 32),
-      pool,
+      name: (rollLabel.trim() || `Pool ${manualPool}d10`).slice(0, 32),
+      pool: manualPool,
       rageDiceCount,
       difficulty,
-      hasSpecialty,
+      hasSpecialty: manualSpecialty,
       isSecretRoll,
     });
   }, [
     session.userId,
     activeSeat.seatId,
     rollLabel,
-    pool,
+    manualPool,
     rageDiceCount,
     difficulty,
-    hasSpecialty,
+    manualSpecialty,
     isSecretRoll,
   ]);
 
@@ -944,17 +1031,24 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   const effectivePreviewPool = Math.max(
     0,
-    pool + (applyWoundPenalty ? activeTrackers.woundPenalty : 0)
+    activeBasePool + (activeApplyWounds ? activeTrackers.woundPenalty : 0)
   );
   const clampedPreviewRage = Math.min(effectivePreviewPool, rageDiceCount);
   const obsidianPreviewCount = Math.max(0, effectivePreviewPool - clampedPreviewRage);
 
   const activeModifierCount =
-    (difficulty !== 6 ? 1 : 0) +
+    (isSheetTraitsMode && bonusDice !== 0 ? 1 : 0) +
+    (activeSheet && rollSourceMode === 'manual' ? 1 : 0) +
     (rageDiceCount > 0 ? 1 : 0) +
-    (hasSpecialty ? 1 : 0) +
+    (isSheetTraitsMode
+      ? specialtyOverride !== null && specialtyOverride !== traitSelection?.autoSpecialty
+        ? 1
+        : 0
+      : manualSpecialty
+        ? 1
+        : 0) +
     (spendWillpower ? 1 : 0) +
-    (!applyWoundPenalty ? 1 : 0) +
+    (!activeApplyWounds ? 1 : 0) +
     (isSecretRoll ? 1 : 0);
 
   const hudProps: DiceTableHudProps = {
@@ -975,16 +1069,26 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     activeBanner,
     sfxPrefs,
     layoutMode,
-    pool,
+    rollSourceMode,
+    pool: activeBasePool,
     editingPool,
     poolInputValue,
+    bonusDice,
     rageDiceCount,
     difficulty,
-    hasSpecialty,
+    hasSpecialty: activeHasSpecialty,
+    isAutoSpecialty: Boolean(isSheetTraitsMode && traitSelection?.autoSpecialty),
+    specialtyReason: isSheetTraitsMode ? traitSelection?.specialtyReason : undefined,
+    perceptionFormMod: isSheetTraitsMode ? (traitSelection?.perceptionFormMod ?? 0) : 0,
+    untrainedHint: isSheetTraitsMode ? traitSelection?.untrainedHint : undefined,
+    compactTraitFormula: isSheetTraitsMode ? (traitSelection?.compactFormula ?? '') : '',
+    hasTraitSelection: Boolean(traitSelection?.hasSelection),
+    traitSelection,
     spendWillpower,
-    applyWoundPenalty,
+    applyWoundPenalty: activeApplyWounds,
     isSecretRoll,
     rollLabel,
+    effectiveRollLabel,
     manualControlsOpen,
     isThrowing,
     effectivePreviewPool,
@@ -1006,15 +1110,17 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     onOpenRoster: () => setRosterModalOpen(true),
     onOpenSheet: () => setSheetModalOpen(true),
     onSetActiveSheetForm: setActiveSheetForm,
-    onSetPool: setPool,
+    onSetRollSourceMode: handleSetRollSourceMode,
+    onSetPool: handleSetManualPool,
     onSetEditingPool: setEditingPool,
     onSetPoolInputValue: setPoolInputValue,
     onCommitPoolInput: commitPoolInput,
+    onSetBonusDice: handleSetBonusDice,
     onSetRageDiceCount: setRageDiceCount,
     onSetDifficulty: setDifficulty,
-    onToggleSpecialty: () => setHasSpecialty((v) => !v),
+    onToggleSpecialty: handleToggleSpecialty,
     onToggleSpendWillpower: () => setSpendWillpower((v) => !v),
-    onToggleApplyWoundPenalty: () => setApplyWoundPenalty((v) => !v),
+    onToggleApplyWoundPenalty: handleToggleApplyWoundPenalty,
     onToggleSecretRoll: () => setIsSecretRoll((v) => !v),
     onSetRollLabel: setRollLabel,
     onSetManualControlsOpen: setManualControlsOpen,
@@ -1052,9 +1158,9 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
               Garou Umbral Felt
             </p>
             <p className="mt-1.5 text-[11px] text-stone-400">
-              {isMobile
-                ? 'Tap a quick roll or Roll below to cast d10s'
-                : 'Dial your pool below to cast Obsidian & Rage d10s'}
+              {activeSheet
+                ? `Pick an Attribute + Skill and Difficulty below to roll from ${activeSheet.name}'s sheet`
+                : 'Select a Garou sheet below to roll by Attribute + Skill, or dial a raw d10 pool'}
             </p>
           </div>
         )}
