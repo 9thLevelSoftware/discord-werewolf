@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "pnpm --dir ../.. build",
     "dev": "wrangler dev",
+    "preview": "wrangler preview",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"

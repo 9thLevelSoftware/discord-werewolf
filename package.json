@@ -9,6 +9,7 @@
     "test": "pnpm -r test",
     "dev:client": "pnpm --filter @w20-vtt/client dev",
     "dev:edge": "pnpm --filter @w20-vtt/edge dev",
+    "preview": "pnpm build && pnpm --filter @w20-vtt/edge run preview",
     "deploy": "pnpm build && pnpm --filter @w20-vtt/edge run deploy",
     "discord:register": "tsx scripts/registerCommands.ts"
   },
