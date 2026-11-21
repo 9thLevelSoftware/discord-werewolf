@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { W20CharacterState } from '@w20-vtt/core';
+import { createBlankUserCharacterSheet, type W20CharacterState } from '@w20-vtt/core';
 import {
   ClientEnvelope,
+  ClientSeatSyncItem,
   ParticipantRole,
   RoomSnapshotView,
   ServerEnvelope,
   ServerEvent,
+  TableParticipant,
   W20MacroDefinitionSchema,
+  W20UserCharacterSheetSchema,
   parseClientEnvelope,
 } from '../index';
 
@@ -588,5 +591,209 @@ describe('@w20-vtt/protocol parseClientEnvelope & schemas', () => {
       })
     );
     expect(badWound.success).toBe(false);
+  });
+
+  it('validates SYNC_CLIENT_SEATS and extended multi-seat fields on ROLL_TABLE_POOL and UPDATE_LIGHT_TRACKERS', () => {
+    const seats: ClientSeatSyncItem[] = [
+      {
+        seatId: 'seat-1',
+        displayName: 'Kaelen',
+        characterName: 'Kaelen Shadowclaw',
+        activeForm: 'crinos',
+        trackers: { rage: 5, gnosis: 3, willpower: 4, woundPenalty: -1 },
+      },
+      {
+        seatId: 'seat-2',
+        displayName: 'Lyra',
+        characterName: null,
+        activeForm: null,
+        trackers: { rage: 2, gnosis: 5, willpower: 6, woundPenalty: 0 },
+      },
+    ];
+
+    const syncSeats = parseClientEnvelope(
+      makeEnvelope({
+        type: 'SYNC_CLIENT_SEATS',
+        seats,
+      })
+    );
+    expect(syncSeats.success).toBe(true);
+    if (syncSeats.success && syncSeats.data.command.type === 'SYNC_CLIENT_SEATS') {
+      expect(syncSeats.data.command.seats).toHaveLength(2);
+      expect(syncSeats.data.command.seats[0].activeForm).toBe('crinos');
+    }
+
+    const emptySeats = parseClientEnvelope(
+      makeEnvelope({
+        type: 'SYNC_CLIENT_SEATS',
+        seats: [],
+      })
+    );
+    expect(emptySeats.success).toBe(false);
+
+    const tooManySeats = parseClientEnvelope(
+      makeEnvelope({
+        type: 'SYNC_CLIENT_SEATS',
+        seats: Array.from({ length: 9 }, (_, i) => ({
+          seatId: `seat-${i + 1}`,
+          displayName: `Player ${i + 1}`,
+          trackers: { rage: 3, gnosis: 3, willpower: 5, woundPenalty: 0 as const },
+        })),
+      })
+    );
+    expect(tooManySeats.success).toBe(false);
+
+    const extendedRoll = parseClientEnvelope(
+      makeEnvelope({
+        type: 'ROLL_TABLE_POOL',
+        pool: 7,
+        rageDiceCount: 1,
+        difficulty: 6,
+        hasSpecialty: true,
+        spendWillpower: false,
+        applyWoundPenalty: true,
+        label: 'Claws',
+        seatId: 'seat-1',
+        rollerDisplayName: 'Kaelen',
+      })
+    );
+    expect(extendedRoll.success).toBe(true);
+    if (extendedRoll.success && extendedRoll.data.command.type === 'ROLL_TABLE_POOL') {
+      expect(extendedRoll.data.command.seatId).toBe('seat-1');
+      expect(extendedRoll.data.command.rollerDisplayName).toBe('Kaelen');
+    }
+
+    const extendedTracker = parseClientEnvelope(
+      makeEnvelope({
+        type: 'UPDATE_LIGHT_TRACKERS',
+        trackers: { rage: 4 },
+        seatId: 'seat-1',
+        displayName: 'Kaelen',
+        characterName: 'Kaelen Shadowclaw',
+        activeForm: 'hispo',
+      })
+    );
+    expect(extendedTracker.success).toBe(true);
+    if (extendedTracker.success && extendedTracker.data.command.type === 'UPDATE_LIGHT_TRACKERS') {
+      expect(extendedTracker.data.command.seatId).toBe('seat-1');
+      expect(extendedTracker.data.command.activeForm).toBe('hispo');
+    }
+
+    const participant: TableParticipant = {
+      discordUserId: 'u-1',
+      displayName: 'Kaelen',
+      avatarUrl: null,
+      isConnected: true,
+      trackers: { rage: 4, gnosis: 3, willpower: 5, woundPenalty: 0 },
+      participantKey: 'u-1:seat-1',
+      seatId: 'seat-1',
+      characterName: 'Kaelen Shadowclaw',
+      activeForm: 'hispo',
+    };
+    expect(participant.participantKey).toBe('u-1:seat-1');
+  });
+
+  it('validates W20UserCharacterSheetSchema and rejects out-of-range dots or invalid shapes', () => {
+    const baseSheet = createBlankUserCharacterSheet({
+      id: 'sheet-proto-1',
+      ownerDiscordId: 'u-42',
+      syncCode: 'ABCD2345',
+      name: 'Ashara Moonfang',
+      player: 'Alice',
+      chronicle: 'Silver Oak',
+      breed: 'lupus',
+      auspice: 'theurge',
+      tribe: 'Uktena (Custom String)',
+      now: 1_700_000_000_000,
+    });
+
+    const populatedSheet = {
+      ...baseSheet,
+      customAbilities: [
+        {
+          id: 'ca-1',
+          category: 'knowledges' as const,
+          name: 'Umbral Lore',
+          dots: 3,
+          specialty: 'Banes',
+        },
+      ],
+      specialties: { brawl: 'Bite', 'ca-1': 'Banes' },
+      backgrounds: [{ id: 'totem', name: 'Totem', dots: 3 }],
+      gifts: [
+        {
+          id: '10000000-0000-4000-8000-000000000142',
+          name: 'Shroud',
+          level: 1,
+          rollAttribute: 'gnosis' as const,
+          rollAbility: null,
+          difficulty: 7,
+          gnosisCost: 1,
+          summary: 'Creates darkness.',
+        },
+      ],
+      otherTraits: [{ id: 'merit-1', name: 'Acute Senses', dots: 1 }],
+      fetishes: [
+        {
+          id: 'fet-1',
+          name: 'Klaive',
+          level: 4,
+          gnosisRating: 6,
+          power: 'Deals Aggravated Silver damage.',
+          isSilver: true,
+        },
+      ],
+      rites: [{ id: 'rite-1', name: 'Rite of Cleansing', level: 1, summary: 'Purifies Wyrm taint.' }],
+      combatWeapons: [
+        {
+          id: 'wpn-1',
+          name: 'Klaive',
+          rollAttribute: 'dexterity' as const,
+          rollAbility: 'melee',
+          difficulty: 6,
+          damageMode: 'strength_plus' as const,
+          damageDice: 2,
+          damageType: 'aggravated' as const,
+          range: 'Melee',
+          rate: '1',
+          clip: '-',
+        },
+      ],
+      armor: { rating: 2, description: 'Leather jacket' },
+    };
+
+    expect(W20UserCharacterSheetSchema.safeParse(populatedSheet).success).toBe(true);
+
+    // Rejects dots > 10
+    expect(
+      W20UserCharacterSheetSchema.safeParse({
+        ...populatedSheet,
+        baseAttributes: { ...populatedSheet.baseAttributes, strength: 11 },
+      }).success
+    ).toBe(false);
+
+    // Rejects negative ability dots
+    expect(
+      W20UserCharacterSheetSchema.safeParse({
+        ...populatedSheet,
+        abilities: { brawl: -1 },
+      }).success
+    ).toBe(false);
+
+    // Rejects health track with fewer than 7 boxes
+    expect(
+      W20UserCharacterSheetSchema.safeParse({
+        ...populatedSheet,
+        health: { bonusBruisedBoxes: 0, boxes: ['none', 'none'] },
+      }).success
+    ).toBe(false);
+
+    // Rejects invalid custom ability item shape
+    expect(
+      W20UserCharacterSheetSchema.safeParse({
+        ...populatedSheet,
+        customAbilities: [{ id: '', category: 'talents', name: 'Bad', dots: 2 }],
+      }).success
+    ).toBe(false);
   });
 });

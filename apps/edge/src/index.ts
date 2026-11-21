@@ -1,14 +1,22 @@
 import {
+  buildDefaultSheetShortcuts,
   calculateW20XpCost,
+  createBlankUserCharacterSheet,
+  draftToUserCharacterSheet,
+  formatSyncCode,
+  generateRandomSyncCode,
   materializeCharacterFromDraft,
+  normalizeSyncCode,
   validateW20CharacterCreation,
   type AttributeKey,
   type MoonPhase,
   type SpecialtyMode,
   type W20CharacterCreationDraft,
   type W20CharacterState,
+  type W20UserCharacterSheet,
   type XpSpendCategory,
 } from '@w20-vtt/core';
+import { W20UserCharacterSheetSchema } from '@w20-vtt/protocol';
 import { handleDiscordInteraction } from './discordBotBridge';
 import {
   handleDiscordTokenExchange,
@@ -19,6 +27,7 @@ import { errorResponse, jsonResponse, type WorkerEnv } from './env';
 import { GameRoomDO } from './GameRoomDO';
 import { handleGetR2Asset, handlePutR2Asset } from './r2Assets';
 import { SupabaseRestClient, SupabaseRestError } from './supabaseRest';
+import { UserSheetRepository } from './userSheetStore';
 
 export { GameRoomDO };
 
@@ -56,6 +65,437 @@ async function parseJsonBody(request: Request): Promise<Record<string, unknown> 
   } catch {
     return null;
   }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSyncCodeCollisionError(err: unknown): boolean {
+  if (!(err instanceof SupabaseRestError)) {
+    return false;
+  }
+  return (
+    err.status === 409 ||
+    err.bodyText.includes('23505') ||
+    err.bodyText.toLowerCase().includes('sync_code')
+  );
+}
+
+async function handleListMyCharacterSheets(request: Request, env: WorkerEnv): Promise<Response> {
+  const session = await requireSessionFromRequest(request, env);
+  if (!session) {
+    return errorResponse('Authentication required.', 401);
+  }
+
+  const repo = new UserSheetRepository(env);
+  const sheets = await repo.listByOwner(session.discordId);
+  return jsonResponse({ sheets }, 200);
+}
+
+async function handleCreateMyCharacterSheet(request: Request, env: WorkerEnv): Promise<Response> {
+  const session = await requireSessionFromRequest(request, env);
+  if (!session) {
+    return errorResponse('Authentication required.', 401);
+  }
+
+  const body = await parseJsonBody(request);
+  if (!body) {
+    return errorResponse('Invalid JSON request body.', 400);
+  }
+
+  const mode = body.mode;
+  const repo = new UserSheetRepository(env);
+  const now = Date.now();
+
+  if (mode === 'guided') {
+    const draft = body.draft as W20CharacterCreationDraft | undefined;
+    if (!isPlainRecord(draft)) {
+      return errorResponse('draft object is required for guided mode.', 400);
+    }
+
+    let validation;
+    try {
+      validation = validateW20CharacterCreation(draft);
+    } catch {
+      return errorResponse('Malformed character creation draft.', 400);
+    }
+
+    if (!validation.isValid) {
+      return jsonResponse(
+        {
+          error: 'Character creation draft failed W20 rules validation.',
+          errors: validation.errors,
+          validation,
+        },
+        400,
+      );
+    }
+
+    const sheet = draftToUserCharacterSheet(draft, {
+      id: crypto.randomUUID(),
+      ownerDiscordId: session.discordId,
+      syncCode: null,
+      player: typeof body.player === 'string' ? body.player.trim() : '',
+      chronicle: typeof body.chronicle === 'string' ? body.chronicle.trim() : '',
+      packName: typeof body.packName === 'string' ? body.packName.trim() : '',
+      packTotem: typeof body.packTotem === 'string' ? body.packTotem.trim() : '',
+      deedName: typeof body.deedName === 'string' ? body.deedName.trim() || undefined : undefined,
+      now,
+    });
+
+    const created = await repo.create(sheet);
+    return jsonResponse({ sheet: created }, 201);
+  }
+
+  if (mode === 'freeform') {
+    const raw = body.sheet;
+    if (!isPlainRecord(raw)) {
+      return errorResponse('sheet object is required for freeform mode.', 400);
+    }
+
+    const validBreed =
+      raw.breed === 'homid' || raw.breed === 'metis' || raw.breed === 'lupus' ? raw.breed : 'homid';
+    const validAuspice =
+      raw.auspice === 'ragabash' ||
+      raw.auspice === 'theurge' ||
+      raw.auspice === 'philodox' ||
+      raw.auspice === 'galliard' ||
+      raw.auspice === 'ahroun'
+        ? raw.auspice
+        : 'ragabash';
+
+    const blank = createBlankUserCharacterSheet({
+      id: crypto.randomUUID(),
+      ownerDiscordId: session.discordId,
+      syncCode: null,
+      breed: validBreed,
+      auspice: validAuspice,
+      tribe: typeof raw.tribe === 'string' ? raw.tribe : '',
+      now,
+    });
+
+    const mergedRenown = isPlainRecord(raw.renown)
+      ? {
+          glory: isPlainRecord(raw.renown.glory)
+            ? { ...blank.renown.glory, ...raw.renown.glory }
+            : (raw.renown.glory ?? blank.renown.glory),
+          honor: isPlainRecord(raw.renown.honor)
+            ? { ...blank.renown.honor, ...raw.renown.honor }
+            : (raw.renown.honor ?? blank.renown.honor),
+          wisdom: isPlainRecord(raw.renown.wisdom)
+            ? { ...blank.renown.wisdom, ...raw.renown.wisdom }
+            : (raw.renown.wisdom ?? blank.renown.wisdom),
+        }
+      : raw.renown !== undefined
+        ? raw.renown
+        : blank.renown;
+
+    const mergedCandidate: Record<string, unknown> = {
+      ...blank,
+      ...raw,
+      baseAttributes: isPlainRecord(raw.baseAttributes)
+        ? { ...blank.baseAttributes, ...raw.baseAttributes }
+        : raw.baseAttributes !== undefined
+          ? raw.baseAttributes
+          : blank.baseAttributes,
+      renown: mergedRenown,
+      rage: isPlainRecord(raw.rage) ? { ...blank.rage, ...raw.rage } : (raw.rage ?? blank.rage),
+      gnosis: isPlainRecord(raw.gnosis)
+        ? { ...blank.gnosis, ...raw.gnosis }
+        : (raw.gnosis ?? blank.gnosis),
+      willpower: isPlainRecord(raw.willpower)
+        ? { ...blank.willpower, ...raw.willpower }
+        : (raw.willpower ?? blank.willpower),
+      health: isPlainRecord(raw.health)
+        ? { ...blank.health, ...raw.health }
+        : (raw.health ?? blank.health),
+      experience: isPlainRecord(raw.experience)
+        ? { ...blank.experience, ...raw.experience }
+        : (raw.experience ?? blank.experience),
+      armor: isPlainRecord(raw.armor)
+        ? { ...blank.armor, ...raw.armor }
+        : (raw.armor ?? blank.armor),
+      id: blank.id,
+      ownerDiscordId: session.discordId,
+      syncCode: null,
+      lastUsedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const parsed = W20UserCharacterSheetSchema.safeParse(mergedCandidate);
+    if (!parsed.success) {
+      return jsonResponse(
+        {
+          error: 'Invalid character sheet payload.',
+          issues: parsed.error.issues,
+        },
+        400,
+      );
+    }
+
+    const normalizedSheet: W20UserCharacterSheet =
+      raw.shortcuts === undefined
+        ? { ...parsed.data, shortcuts: buildDefaultSheetShortcuts(parsed.data) }
+        : parsed.data;
+
+    const created = await repo.create(normalizedSheet);
+    return jsonResponse({ sheet: created }, 201);
+  }
+
+  return errorResponse('Unsupported mode. Expected "guided" or "freeform".', 400);
+}
+
+async function handleUpdateMyCharacterSheet(
+  request: Request,
+  env: WorkerEnv,
+  sheetId: string,
+): Promise<Response> {
+  const session = await requireSessionFromRequest(request, env);
+  if (!session) {
+    return errorResponse('Authentication required.', 401);
+  }
+
+  const repo = new UserSheetRepository(env);
+  const existing = await repo.getById(sheetId);
+  if (!existing) {
+    return errorResponse('Character sheet not found.', 404);
+  }
+  if (existing.ownerDiscordId !== session.discordId) {
+    return errorResponse('Forbidden: you do not own this character sheet.', 403);
+  }
+
+  const body = await parseJsonBody(request);
+  if (!body) {
+    return errorResponse('Invalid JSON request body.', 400);
+  }
+
+  const rawSheet = 'sheet' in body ? body.sheet : body;
+  const parsed = W20UserCharacterSheetSchema.safeParse(rawSheet);
+  if (!parsed.success) {
+    return jsonResponse(
+      {
+        error: 'Invalid character sheet payload.',
+        issues: parsed.error.issues,
+      },
+      400,
+    );
+  }
+
+  const now = Date.now();
+  const nextSheet: W20UserCharacterSheet = {
+    ...parsed.data,
+    id: existing.id,
+    ownerDiscordId: existing.ownerDiscordId,
+    syncCode: existing.syncCode ?? null,
+    createdAt: existing.createdAt,
+    updatedAt: now,
+    lastUsedAt: now,
+  };
+
+  const updated = await repo.update(nextSheet);
+  if (!updated) {
+    return errorResponse('Character sheet not found.', 404);
+  }
+  return jsonResponse({ sheet: updated }, 200);
+}
+
+async function handleDeleteMyCharacterSheet(
+  request: Request,
+  env: WorkerEnv,
+  sheetId: string,
+): Promise<Response> {
+  const session = await requireSessionFromRequest(request, env);
+  if (!session) {
+    return errorResponse('Authentication required.', 401);
+  }
+
+  const repo = new UserSheetRepository(env);
+  const existing = await repo.getById(sheetId);
+  if (!existing) {
+    return errorResponse('Character sheet not found.', 404);
+  }
+  if (existing.ownerDiscordId !== session.discordId) {
+    return errorResponse('Forbidden: you do not own this character sheet.', 403);
+  }
+
+  await repo.delete(existing.id);
+  return jsonResponse({ ok: true }, 200);
+}
+
+async function handleGenerateMySheetSyncCode(
+  request: Request,
+  env: WorkerEnv,
+  sheetId: string,
+): Promise<Response> {
+  const session = await requireSessionFromRequest(request, env);
+  if (!session) {
+    return errorResponse('Authentication required.', 401);
+  }
+
+  const repo = new UserSheetRepository(env);
+  const existing = await repo.getById(sheetId);
+  if (!existing) {
+    return errorResponse('Character sheet not found.', 404);
+  }
+  if (existing.ownerDiscordId !== session.discordId) {
+    return errorResponse('Forbidden: you do not own this character sheet.', 403);
+  }
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = generateRandomSyncCode();
+    const collision = await repo.getBySyncCode(candidate);
+    if (collision && collision.id !== existing.id) {
+      continue;
+    }
+
+    const now = Date.now();
+    try {
+      const updated = await repo.update({
+        ...existing,
+        syncCode: candidate,
+        updatedAt: now,
+      });
+      if (!updated) {
+        return errorResponse('Character sheet not found.', 404);
+      }
+      return jsonResponse(
+        {
+          syncCode: candidate,
+          formattedSyncCode: formatSyncCode(candidate),
+          sheet: updated,
+        },
+        200,
+      );
+    } catch (err) {
+      if (isSyncCodeCollisionError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return errorResponse('Unable to generate a unique sync code. Please retry.', 503);
+}
+
+async function handleRevokeMySheetSyncCode(
+  request: Request,
+  env: WorkerEnv,
+  sheetId: string,
+): Promise<Response> {
+  const session = await requireSessionFromRequest(request, env);
+  if (!session) {
+    return errorResponse('Authentication required.', 401);
+  }
+
+  const repo = new UserSheetRepository(env);
+  const existing = await repo.getById(sheetId);
+  if (!existing) {
+    return errorResponse('Character sheet not found.', 404);
+  }
+  if (existing.ownerDiscordId !== session.discordId) {
+    return errorResponse('Forbidden: you do not own this character sheet.', 403);
+  }
+
+  const updated = await repo.update({
+    ...existing,
+    syncCode: null,
+    updatedAt: Date.now(),
+  });
+  if (!updated) {
+    return errorResponse('Character sheet not found.', 404);
+  }
+  return jsonResponse({ ok: true, sheet: updated }, 200);
+}
+
+async function handleResolveSheetSyncCode(request: Request, env: WorkerEnv): Promise<Response> {
+  const session = await requireSessionFromRequest(request, env);
+  if (!session) {
+    return errorResponse('Authentication required.', 401);
+  }
+
+  const body = await parseJsonBody(request);
+  if (!body) {
+    return errorResponse('Invalid JSON request body.', 400);
+  }
+
+  const rawCode = typeof body.syncCode === 'string' ? body.syncCode : '';
+  const syncCode = normalizeSyncCode(rawCode);
+  if (!syncCode) {
+    return errorResponse('Invalid sync code format. Expected 8 characters.', 400);
+  }
+
+  const repo = new UserSheetRepository(env);
+  const sheet = await repo.getBySyncCode(syncCode);
+  if (!sheet) {
+    return errorResponse('Sync code not found or has been revoked.', 404);
+  }
+
+  return jsonResponse(
+    {
+      sheet,
+      syncCode,
+      formattedSyncCode: formatSyncCode(syncCode),
+    },
+    200,
+  );
+}
+
+async function handleUpdateSheetBySyncCode(
+  request: Request,
+  env: WorkerEnv,
+  rawCode: string,
+): Promise<Response> {
+  const session = await requireSessionFromRequest(request, env);
+  if (!session) {
+    return errorResponse('Authentication required.', 401);
+  }
+
+  const syncCode = normalizeSyncCode(rawCode);
+  if (!syncCode) {
+    return errorResponse('Invalid sync code format. Expected 8 characters.', 400);
+  }
+
+  const repo = new UserSheetRepository(env);
+  const existing = await repo.getBySyncCode(syncCode);
+  if (!existing) {
+    return errorResponse('Sync code not found or has been revoked.', 404);
+  }
+
+  const body = await parseJsonBody(request);
+  if (!body) {
+    return errorResponse('Invalid JSON request body.', 400);
+  }
+
+  const rawSheet = 'sheet' in body ? body.sheet : body;
+  const parsed = W20UserCharacterSheetSchema.safeParse(rawSheet);
+  if (!parsed.success) {
+    return jsonResponse(
+      {
+        error: 'Invalid character sheet payload.',
+        issues: parsed.error.issues,
+      },
+      400,
+    );
+  }
+
+  const now = Date.now();
+  const nextSheet: W20UserCharacterSheet = {
+    ...parsed.data,
+    id: existing.id,
+    ownerDiscordId: existing.ownerDiscordId,
+    syncCode: existing.syncCode ?? syncCode,
+    createdAt: existing.createdAt,
+    updatedAt: now,
+    lastUsedAt: now,
+  };
+
+  const updated = await repo.update(nextSheet);
+  if (!updated) {
+    return errorResponse('Character sheet not found.', 404);
+  }
+  return jsonResponse({ sheet: updated }, 200);
 }
 
 async function handleListCampaigns(request: Request, env: WorkerEnv): Promise<Response> {
@@ -526,6 +966,48 @@ export default {
       }
       if (pathname === '/api/discord-interactions' && request.method === 'POST') {
         return await handleDiscordInteraction(request, env);
+      }
+
+      if (pathname === '/api/me/character-sheets' && request.method === 'GET') {
+        return await handleListMyCharacterSheets(request, env);
+      }
+      if (pathname === '/api/me/character-sheets' && request.method === 'POST') {
+        return await handleCreateMyCharacterSheet(request, env);
+      }
+
+      const mySheetSyncMatch = /^\/api\/me\/character-sheets\/([^/]+)\/sync-code$/.exec(pathname);
+      if (mySheetSyncMatch && request.method === 'POST') {
+        const sheetId = decodeSegment(mySheetSyncMatch[1]!);
+        if (!sheetId) return errorResponse('Invalid character sheet id.', 400);
+        return await handleGenerateMySheetSyncCode(request, env, sheetId);
+      }
+      if (mySheetSyncMatch && request.method === 'DELETE') {
+        const sheetId = decodeSegment(mySheetSyncMatch[1]!);
+        if (!sheetId) return errorResponse('Invalid character sheet id.', 400);
+        return await handleRevokeMySheetSyncCode(request, env, sheetId);
+      }
+
+      const mySheetMatch = /^\/api\/me\/character-sheets\/([^/]+)$/.exec(pathname);
+      if (mySheetMatch && request.method === 'PUT') {
+        const sheetId = decodeSegment(mySheetMatch[1]!);
+        if (!sheetId) return errorResponse('Invalid character sheet id.', 400);
+        return await handleUpdateMyCharacterSheet(request, env, sheetId);
+      }
+      if (mySheetMatch && request.method === 'DELETE') {
+        const sheetId = decodeSegment(mySheetMatch[1]!);
+        if (!sheetId) return errorResponse('Invalid character sheet id.', 400);
+        return await handleDeleteMyCharacterSheet(request, env, sheetId);
+      }
+
+      if (pathname === '/api/character-sheets/sync-code/resolve' && request.method === 'POST') {
+        return await handleResolveSheetSyncCode(request, env);
+      }
+
+      const bySyncCodeMatch = /^\/api\/character-sheets\/by-sync-code\/([^/]+)$/.exec(pathname);
+      if (bySyncCodeMatch && request.method === 'PUT') {
+        const rawCode = decodeSegment(bySyncCodeMatch[1]!);
+        if (!rawCode) return errorResponse('Invalid sync code.', 400);
+        return await handleUpdateSheetBySyncCode(request, env, rawCode);
       }
 
       if (pathname === '/api/campaigns' && request.method === 'GET') {

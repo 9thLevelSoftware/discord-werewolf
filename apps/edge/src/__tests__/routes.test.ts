@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { W20CharacterCreationDraft, W20CharacterState } from '@w20-vtt/core';
+import {
+  formatSyncCode,
+  SYNC_CODE_ALPHABET,
+  type W20CharacterCreationDraft,
+  type W20CharacterState,
+  type W20UserCharacterSheet,
+} from '@w20-vtt/core';
 import { discordIdToUuidV5, mintAuthTokensForIdentity } from '../discordOAuth';
 import type { GameRoomDO } from '../GameRoomDO';
 import worker from '../index';
-import { SupabaseRestClient } from '../supabaseRest';
+import { SupabaseRestClient, type UserCharacterSheetRow } from '../supabaseRest';
 import { createMockEnv } from './shims/cfTestHarness';
 
 const EXECUTION_CTX = {
@@ -708,5 +714,620 @@ describe('Worker REST router, character creation validation, XP economy, and R2 
       apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.legacy',
       authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.legacy',
     });
+  });
+
+  it('supports standalone user character sheets CRUD via Supabase, guided/freeform validation, ownership 403, and ISO<->epoch ms conversion', async () => {
+    const env = createMockEnv();
+    const p1Jwt = (
+      await mintAuthTokensForIdentity(
+        {
+          sub: await discordIdToUuidV5('pl-1'),
+          discordId: 'pl-1',
+          username: 'PlayerOne',
+          globalName: 'Player One',
+          avatarUrl: null,
+          guildIds: ['guild-1'],
+        },
+        env.SUPABASE_JWT_SECRET,
+      )
+    ).sessionJwt;
+
+    const p2Jwt = (
+      await mintAuthTokensForIdentity(
+        {
+          sub: await discordIdToUuidV5('pl-2'),
+          discordId: 'pl-2',
+          username: 'PlayerTwo',
+          globalName: 'Player Two',
+          avatarUrl: null,
+          guildIds: ['guild-1'],
+        },
+        env.SUPABASE_JWT_SECRET,
+      )
+    ).sessionJwt;
+
+    const dbRows = new Map<string, UserCharacterSheetRow>();
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const parsedUrl = new URL(url);
+
+      if (parsedUrl.pathname === '/rest/v1/user_character_sheets') {
+        const method = init?.method ?? 'GET';
+        if (method === 'GET') {
+          const ownerEq = parsedUrl.searchParams.get('owner_discord_id');
+          const idEq = parsedUrl.searchParams.get('id');
+          const syncEq = parsedUrl.searchParams.get('sync_code');
+
+          let matches = Array.from(dbRows.values());
+          if (ownerEq?.startsWith('eq.')) {
+            const owner = ownerEq.slice(3);
+            matches = matches.filter((r) => r.owner_discord_id === owner);
+          }
+          if (idEq?.startsWith('eq.')) {
+            const id = idEq.slice(3);
+            matches = matches.filter((r) => r.id === id);
+          }
+          if (syncEq?.startsWith('eq.')) {
+            const code = syncEq.slice(3);
+            matches = matches.filter((r) => r.sync_code === code);
+          }
+          matches.sort((a, b) => Date.parse(b.last_used_at) - Date.parse(a.last_used_at));
+          return new Response(JSON.stringify(matches), { status: 200 });
+        }
+
+        if (method === 'POST') {
+          const row = JSON.parse(String(init?.body)) as UserCharacterSheetRow;
+          dbRows.set(row.id, row);
+          return new Response(JSON.stringify([row]), { status: 201 });
+        }
+
+        if (method === 'PATCH') {
+          const idEq = parsedUrl.searchParams.get('id');
+          const id = idEq?.startsWith('eq.') ? idEq.slice(3) : '';
+          const existing = dbRows.get(id);
+          if (!existing) {
+            return new Response('[]', { status: 200 });
+          }
+          const patch = JSON.parse(String(init?.body)) as Partial<UserCharacterSheetRow>;
+          const updated: UserCharacterSheetRow = { ...existing, ...patch };
+          dbRows.set(id, updated);
+          return new Response(JSON.stringify([updated]), { status: 200 });
+        }
+
+        if (method === 'DELETE') {
+          const idEq = parsedUrl.searchParams.get('id');
+          const id = idEq?.startsWith('eq.') ? idEq.slice(3) : '';
+          dbRows.delete(id);
+          return new Response(null, { status: 204 });
+        }
+      }
+
+      return new Response('[]', { status: 200 });
+    });
+
+    // Unauthenticated request rejected with 401
+    const unauthRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets'),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(unauthRes.status).toBe(401);
+
+    // Invalid guided draft rejected with 400
+    const badDraft = makeValidCliathDraft();
+    badDraft.freebieWillpowerDots = 25;
+    const badGuidedRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p1Jwt}` },
+        body: JSON.stringify({ mode: 'guided', draft: badDraft }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(badGuidedRes.status).toBe(400);
+
+    // Valid guided draft -> 201 + forced ownerDiscordId
+    const validDraft = makeValidCliathDraft();
+    const guidedRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p1Jwt}` },
+        body: JSON.stringify({
+          mode: 'guided',
+          draft: validDraft,
+          player: 'Alex',
+          chronicle: 'Manhattan',
+          deedName: 'Moon-Singer',
+        }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(guidedRes.status).toBe(201);
+    const guidedBody = (await guidedRes.json()) as { sheet: W20UserCharacterSheet };
+    expect(guidedBody.sheet.ownerDiscordId).toBe('pl-1');
+    expect(guidedBody.sheet.player).toBe('Alex');
+    expect(guidedBody.sheet.deedName).toBe('Moon-Singer');
+    expect(typeof guidedBody.sheet.createdAt).toBe('number');
+    expect(typeof guidedBody.sheet.lastUsedAt).toBe('number');
+    const savedRow = dbRows.get(guidedBody.sheet.id)!;
+    expect(typeof savedRow.created_at).toBe('string');
+    expect(Number.isFinite(Date.parse(savedRow.created_at))).toBe(true);
+
+    // Invalid freeform sheet rejected with 400
+    const badFreeformRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p1Jwt}` },
+        body: JSON.stringify({
+          mode: 'freeform',
+          sheet: { name: 'Overpowered', baseAttributes: { strength: 99 } },
+        }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(badFreeformRes.status).toBe(400);
+
+    // Valid freeform sheet merges onto blank sheet and forces ownerDiscordId
+    const freeformRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p1Jwt}` },
+        body: JSON.stringify({
+          mode: 'freeform',
+          sheet: {
+            id: 'spoofed-id',
+            ownerDiscordId: 'pl-2',
+            syncCode: 'SPOOFED1',
+            name: 'Ashclaw',
+            breed: 'lupus',
+            auspice: 'ahroun',
+            tribe: 'red_talons',
+          },
+        }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(freeformRes.status).toBe(201);
+    const freeformBody = (await freeformRes.json()) as { sheet: W20UserCharacterSheet };
+    expect(freeformBody.sheet.id).not.toBe('spoofed-id');
+    expect(freeformBody.sheet.ownerDiscordId).toBe('pl-1');
+    expect(freeformBody.sheet.syncCode).toBeNull();
+    expect(freeformBody.sheet.activeForm).toBe('lupus');
+    expect(freeformBody.sheet.rage.permanent).toBe(5);
+    expect(freeformBody.sheet.gnosis.permanent).toBe(5);
+
+    // GET /api/me/character-sheets returns p1's sheets (and none for p2)
+    const p1ListRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        headers: { Authorization: `Bearer ${p1Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(p1ListRes.status).toBe(200);
+    const p1List = (await p1ListRes.json()) as { sheets: W20UserCharacterSheet[] };
+    expect(p1List.sheets).toHaveLength(2);
+
+    // Player 2 cannot PUT or DELETE Player 1's sheet -> 403
+    const p2PutRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${guidedBody.sheet.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p2Jwt}` },
+        body: JSON.stringify({ sheet: guidedBody.sheet }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(p2PutRes.status).toBe(403);
+
+    const p2DeleteRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${guidedBody.sheet.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${p2Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(p2DeleteRes.status).toBe(403);
+
+    // Missing sheet -> 404
+    const missingPutRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets/00000000-0000-4000-8000-000000000999', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p1Jwt}` },
+        body: JSON.stringify({ sheet: guidedBody.sheet }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(missingPutRes.status).toBe(404);
+
+    // Owner PUT preserves id, ownerDiscordId, syncCode and updates name & timestamps
+    const putRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${guidedBody.sheet.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p1Jwt}` },
+        body: JSON.stringify({
+          sheet: {
+            ...guidedBody.sheet,
+            id: 'other-id',
+            ownerDiscordId: 'other-owner',
+            syncCode: 'BADCODE1',
+            name: 'Talia Updated',
+            activeForm: 'crinos',
+          },
+        }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(putRes.status).toBe(200);
+    const putBody = (await putRes.json()) as { sheet: W20UserCharacterSheet };
+    expect(putBody.sheet.id).toBe(guidedBody.sheet.id);
+    expect(putBody.sheet.ownerDiscordId).toBe('pl-1');
+    expect(putBody.sheet.syncCode).toBeNull();
+    expect(putBody.sheet.name).toBe('Talia Updated');
+    expect(putBody.sheet.activeForm).toBe('crinos');
+
+    // Owner DELETE -> 200 { ok: true }
+    const delRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${freeformBody.sheet.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${p1Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(delRes.status).toBe(200);
+    expect(await delRes.json()).toEqual({ ok: true });
+    expect(dbRows.has(freeformBody.sheet.id)).toBe(false);
+  });
+
+  it('falls back transparently to private R2 storage on Supabase 404 PGRST205, blocks /r2-assets/private/*, and handles 8-char sync code lifecycle', async () => {
+    const env = createMockEnv();
+    const p1Jwt = (
+      await mintAuthTokensForIdentity(
+        {
+          sub: await discordIdToUuidV5('pl-1'),
+          discordId: 'pl-1',
+          username: 'PlayerOne',
+          globalName: 'Player One',
+          avatarUrl: null,
+          guildIds: ['guild-1'],
+        },
+        env.SUPABASE_JWT_SECRET,
+      )
+    ).sessionJwt;
+
+    const p2Jwt = (
+      await mintAuthTokensForIdentity(
+        {
+          sub: await discordIdToUuidV5('pl-2'),
+          discordId: 'pl-2',
+          username: 'PlayerTwo',
+          globalName: 'Player Two',
+          avatarUrl: null,
+          guildIds: ['guild-1'],
+        },
+        env.SUPABASE_JWT_SECRET,
+      )
+    ).sessionJwt;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/rest/v1/user_character_sheets')) {
+        return new Response(
+          JSON.stringify({
+            code: 'PGRST205',
+            message: "Could not find the table 'public.user_character_sheets' in the schema cache",
+          }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('[]', { status: 200 });
+    });
+
+    // Create sheet via R2 fallback
+    const createRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p1Jwt}` },
+        body: JSON.stringify({
+          mode: 'freeform',
+          sheet: {
+            name: 'R2 Fallback Garou',
+            breed: 'homid',
+            auspice: 'theurge',
+            tribe: 'uktena',
+          },
+        }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(createRes.status).toBe(201);
+    const createdSheet = ((await createRes.json()) as { sheet: W20UserCharacterSheet }).sheet;
+
+    // Verify private R2 keys exist and CANNOT be fetched via /r2-assets/private/*
+    const rawR2Obj = await env.VTT_MEDIA_BUCKET.get(`private/character-sheets/sheets/${createdSheet.id}.json`);
+    expect(rawR2Obj).not.toBeNull();
+
+    const leakedGetRes = await worker.fetch(
+      new Request(`https://vtt.example/r2-assets/private/character-sheets/sheets/${createdSheet.id}.json`),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(leakedGetRes.status).toBe(404);
+
+    const leakedEncodedRes = await worker.fetch(
+      new Request(`https://vtt.example/r2-assets/%70rivate/character-sheets/sheets/${createdSheet.id}.json`),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(leakedEncodedRes.status).toBe(404);
+
+    // List sheets from R2
+    const listRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        headers: { Authorization: `Bearer ${p1Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(listRes.status).toBe(200);
+    const listJson = (await listRes.json()) as { sheets: W20UserCharacterSheet[] };
+    expect(listJson.sheets.map((s) => s.id)).toEqual([createdSheet.id]);
+
+    // Seed a second sheet owned by p2 with a known syncCode to test collision retry
+    const p2CreateRes = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p2Jwt}` },
+        body: JSON.stringify({
+          mode: 'freeform',
+          sheet: { name: 'P2 Garou' },
+        }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    const p2Sheet = ((await p2CreateRes.json()) as { sheet: W20UserCharacterSheet }).sheet;
+    const p2SyncRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${p2Sheet.id}/sync-code`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${p2Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    const p2Code = ((await p2SyncRes.json()) as { syncCode: string }).syncCode;
+
+    // Force first random draw to collide with p2Code, second draw to produce a fresh code
+    const origGetRandomValues = crypto.getRandomValues.bind(crypto);
+    let drawCount = 0;
+    const p2CodeBytes = new Uint8Array(
+      p2Code.split('').map((ch) => SYNC_CODE_ALPHABET.indexOf(ch)),
+    );
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((arr) => {
+      if (arr instanceof Uint8Array && arr.length === 8) {
+        drawCount += 1;
+        if (drawCount === 1) {
+          arr.set(p2CodeBytes);
+          return arr;
+        }
+        arr.fill(1); // 'BBBBBBBB'
+        return arr;
+      }
+      return origGetRandomValues(arr);
+    });
+
+    const p1SyncRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${createdSheet.id}/sync-code`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${p1Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    vi.restoreAllMocks();
+    // Re-mock Supabase 404 after restoreAllMocks
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/rest/v1/user_character_sheets')) {
+        return new Response(
+          JSON.stringify({ code: 'PGRST205', message: 'Missing user_character_sheets' }),
+          { status: 404 },
+        );
+      }
+      return new Response('[]', { status: 200 });
+    });
+
+    expect(p1SyncRes.status).toBe(200);
+    const p1SyncJson = (await p1SyncRes.json()) as {
+      syncCode: string;
+      formattedSyncCode: string;
+      sheet: W20UserCharacterSheet;
+    };
+    expect(drawCount).toBe(2);
+    expect(p1SyncJson.syncCode).toBe('BBBBBBBB');
+    expect(p1SyncJson.syncCode).not.toBe(p2Code);
+    expect(p1SyncJson.formattedSyncCode).toBe(formatSyncCode('BBBBBBBB'));
+    expect(p1SyncJson.sheet.syncCode).toBe('BBBBBBBB');
+
+    // Invalid sync code format -> 400
+    const invalidResolveRes = await worker.fetch(
+      new Request('https://vtt.example/api/character-sheets/sync-code/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p2Jwt}` },
+        body: JSON.stringify({ syncCode: 'BAD' }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(invalidResolveRes.status).toBe(400);
+
+    // Unknown valid-format sync code -> 404
+    const missingResolveRes = await worker.fetch(
+      new Request('https://vtt.example/api/character-sheets/sync-code/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p2Jwt}` },
+        body: JSON.stringify({ syncCode: 'ZZZZ-ZZZZ' }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(missingResolveRes.status).toBe(404);
+
+    // Cross-account resolve via lowercase/hyphenated code
+    const resolveRes = await worker.fetch(
+      new Request('https://vtt.example/api/character-sheets/sync-code/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p2Jwt}` },
+        body: JSON.stringify({ syncCode: 'bbbb-bbbb' }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(resolveRes.status).toBe(200);
+    const resolvedJson = (await resolveRes.json()) as {
+      sheet: W20UserCharacterSheet;
+      syncCode: string;
+      formattedSyncCode: string;
+    };
+    expect(resolvedJson.sheet.id).toBe(createdSheet.id);
+    expect(resolvedJson.syncCode).toBe('BBBBBBBB');
+    expect(resolvedJson.formattedSyncCode).toBe('BBBB-BBBB');
+
+    // Cross-account update via PUT /api/character-sheets/by-sync-code/:code preserves id, ownerDiscordId, syncCode
+    const syncPutRes = await worker.fetch(
+      new Request('https://vtt.example/api/character-sheets/by-sync-code/bbbb-bbbb', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p2Jwt}` },
+        body: JSON.stringify({
+          sheet: {
+            ...resolvedJson.sheet,
+            id: 'hijack-id',
+            ownerDiscordId: 'pl-2',
+            syncCode: 'HIJACKED',
+            name: 'Synced From Second Screen',
+            rage: { permanent: 4, temporary: 2 },
+          },
+        }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(syncPutRes.status).toBe(200);
+    const syncPutJson = (await syncPutRes.json()) as { sheet: W20UserCharacterSheet };
+    expect(syncPutJson.sheet.id).toBe(createdSheet.id);
+    expect(syncPutJson.sheet.ownerDiscordId).toBe('pl-1');
+    expect(syncPutJson.sheet.syncCode).toBe('BBBBBBBB');
+    expect(syncPutJson.sheet.name).toBe('Synced From Second Screen');
+    expect(syncPutJson.sheet.rage.temporary).toBe(2);
+
+    // Regenerate sync code replaces old R2 sync index entry
+    const regenRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${createdSheet.id}/sync-code`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${p1Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(regenRes.status).toBe(200);
+    const regenJson = (await regenRes.json()) as { syncCode: string; sheet: W20UserCharacterSheet };
+    expect(regenJson.syncCode).not.toBe('BBBBBBBB');
+    expect(await env.VTT_MEDIA_BUCKET.get('private/character-sheets/sync/BBBBBBBB.json')).toBeNull();
+    expect(
+      await env.VTT_MEDIA_BUCKET.get(`private/character-sheets/sync/${regenJson.syncCode}.json`),
+    ).not.toBeNull();
+
+    // Revoke sync code cleans R2 sync index and returns 404 on subsequent resolve/PUT
+    const revokeRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${createdSheet.id}/sync-code`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${p1Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(revokeRes.status).toBe(200);
+    const revokeJson = (await revokeRes.json()) as { ok: boolean; sheet: W20UserCharacterSheet };
+    expect(revokeJson.ok).toBe(true);
+    expect(revokeJson.sheet.syncCode).toBeNull();
+    expect(
+      await env.VTT_MEDIA_BUCKET.get(`private/character-sheets/sync/${regenJson.syncCode}.json`),
+    ).toBeNull();
+
+    const postRevokeResolve = await worker.fetch(
+      new Request('https://vtt.example/api/character-sheets/sync-code/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p2Jwt}` },
+        body: JSON.stringify({ syncCode: regenJson.syncCode }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(postRevokeResolve.status).toBe(404);
+
+    const postRevokePut = await worker.fetch(
+      new Request(`https://vtt.example/api/character-sheets/by-sync-code/${regenJson.syncCode}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p2Jwt}` },
+        body: JSON.stringify({ sheet: regenJson.sheet }),
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(postRevokePut.status).toBe(404);
+
+    // Delete sheet cleans R2 sheet and owner index entries
+    const deleteRes = await worker.fetch(
+      new Request(`https://vtt.example/api/me/character-sheets/${createdSheet.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${p1Jwt}` },
+      }),
+      env,
+      EXECUTION_CTX,
+    );
+    expect(deleteRes.status).toBe(200);
+    expect(
+      await env.VTT_MEDIA_BUCKET.get(`private/character-sheets/sheets/${createdSheet.id}.json`),
+    ).toBeNull();
+    expect(
+      await env.VTT_MEDIA_BUCKET.get(
+        `private/character-sheets/owners/pl-1/${createdSheet.id}.json`,
+      ),
+    ).toBeNull();
+
+    // Unconfigured Supabase uses R2 directly without making any network fetch
+    vi.restoreAllMocks();
+    const unconfiguredFetchSpy = vi.spyOn(globalThis, 'fetch');
+    const noSupaEnv = createMockEnv({ SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '' });
+    const noSupaPost = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p1Jwt}` },
+        body: JSON.stringify({ mode: 'freeform', sheet: { name: 'Offline R2 Garou' } }),
+      }),
+      noSupaEnv,
+      EXECUTION_CTX,
+    );
+    expect(noSupaPost.status).toBe(201);
+    const noSupaList = await worker.fetch(
+      new Request('https://vtt.example/api/me/character-sheets', {
+        headers: { Authorization: `Bearer ${p1Jwt}` },
+      }),
+      noSupaEnv,
+      EXECUTION_CTX,
+    );
+    expect(noSupaList.status).toBe(200);
+    expect(((await noSupaList.json()) as { sheets: W20UserCharacterSheet[] }).sheets).toHaveLength(1);
+    expect(unconfiguredFetchSpy).not.toHaveBeenCalled();
   });
 });

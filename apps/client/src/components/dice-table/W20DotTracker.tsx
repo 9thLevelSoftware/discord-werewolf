@@ -38,6 +38,7 @@ interface W20DotRowProps {
   value: number;
   max?: number;
   tone: DotTone;
+  touchFriendly?: boolean;
   onChange: (nextValue: number) => void;
 }
 
@@ -46,13 +47,15 @@ export const W20DotRow: React.FC<W20DotRowProps> = ({
   value,
   max = 10,
   tone,
+  touchFriendly = false,
   onChange,
 }) => {
   const styles = TONE_CLASSES[tone];
   const clamped = Math.max(0, Math.min(max, value));
+  const pipSizeClass = touchFriendly ? 'h-6 w-6' : 'h-4 w-4';
 
   return (
-    <div className="space-y-1.5">
+    <div className={touchFriendly ? 'space-y-2' : 'space-y-1.5'}>
       <div className="flex items-center justify-between text-[11px]">
         <span className={`font-display font-bold tracking-wider uppercase ${styles.label}`}>
           {label}
@@ -75,7 +78,7 @@ export const W20DotRow: React.FC<W20DotRowProps> = ({
               }}
               aria-label={`Set ${label} to ${clamped === 1 && rating === 1 ? 0 : rating}`}
               aria-pressed={active}
-              className={`h-4 w-4 rounded-full border transition-transform duration-100 hover:scale-110 focus:outline-none focus:ring-1 focus:ring-amber-400/60 ${
+              className={`${pipSizeClass} rounded-full border transition-transform duration-100 hover:scale-110 active:scale-95 focus:outline-none focus:ring-1 focus:ring-amber-400/60 ${
                 active ? styles.filled : styles.empty
               }`}
             />
@@ -86,20 +89,125 @@ export const W20DotRow: React.FC<W20DotRowProps> = ({
   );
 };
 
+export interface PersonalTrackersPanelProps {
+  trackers: LightGarouTrackers;
+  onUpdate: (patch: Partial<LightGarouTrackers>) => void;
+  touchFriendly?: boolean;
+  showHeader?: boolean;
+  onClose?: () => void;
+}
+
+export const PersonalTrackersPanel: React.FC<PersonalTrackersPanelProps> = ({
+  trackers,
+  onUpdate,
+  touchFriendly = false,
+  showHeader = false,
+  onClose,
+}) => {
+  return (
+    <div>
+      {showHeader && (
+        <>
+          <div className="flex items-center justify-between pb-2">
+            <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
+              Garou Trait Pips
+            </span>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded p-0.5 text-stone-400 hover:bg-zinc-800/80 hover:text-stone-100"
+                aria-label="Close trackers"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <div className="w20-gold-divider mb-3" />
+        </>
+      )}
+
+      <div className={touchFriendly ? 'space-y-4' : 'space-y-3'}>
+        <W20DotRow
+          label="Rage"
+          value={trackers.rage}
+          tone="crimson"
+          touchFriendly={touchFriendly}
+          onChange={(rage) => onUpdate({ rage })}
+        />
+        <W20DotRow
+          label="Gnosis"
+          value={trackers.gnosis}
+          tone="amber"
+          touchFriendly={touchFriendly}
+          onChange={(gnosis) => onUpdate({ gnosis })}
+        />
+        <W20DotRow
+          label="Willpower"
+          value={trackers.willpower}
+          tone="indigo"
+          touchFriendly={touchFriendly}
+          onChange={(willpower) => onUpdate({ willpower })}
+        />
+      </div>
+
+      <div className="w20-gold-divider my-3" />
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5 text-[11px] font-display font-bold tracking-wider uppercase text-stone-300">
+          <ShieldAlert className="h-3.5 w-3.5 text-red-400" />
+          Wound Penalty
+        </div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {WOUND_OPTIONS.map((opt) => {
+            const active = trackers.woundPenalty === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => {
+                  diceSoundEngine.playPipClick();
+                  onUpdate({ woundPenalty: opt.value });
+                }}
+                className={`flex flex-col items-center rounded-lg border px-1.5 ${
+                  touchFriendly ? 'min-h-[44px] justify-center py-1.5' : 'py-1'
+                } text-[10px] transition ${
+                  active
+                    ? opt.value === 0
+                      ? 'border-emerald-500/70 bg-emerald-950/70 text-emerald-200'
+                      : 'border-red-500/80 bg-red-950/80 text-red-100 shadow-[0_0_10px_rgba(185,28,28,0.45)]'
+                    : 'border-stone-700/60 bg-zinc-950/80 text-stone-400 hover:border-stone-500'
+                }`}
+              >
+                <span className="font-mono text-xs font-extrabold">{opt.tag}</span>
+                <span className="text-[9px]">{opt.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface PersonalTrackersControlProps {
   trackers: LightGarouTrackers;
   onUpdate: (patch: Partial<LightGarouTrackers>) => void;
+  inlineContentOnly?: boolean;
+  touchFriendly?: boolean;
 }
 
 export const PersonalTrackersControl: React.FC<PersonalTrackersControlProps> = ({
   trackers,
   onUpdate,
+  inlineContentOnly = false,
+  touchFriendly = false,
 }) => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || inlineContentOnly) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
@@ -118,7 +226,17 @@ export const PersonalTrackersControl: React.FC<PersonalTrackersControlProps> = (
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [open]);
+  }, [open, inlineContentOnly]);
+
+  if (inlineContentOnly) {
+    return (
+      <PersonalTrackersPanel
+        trackers={trackers}
+        onUpdate={onUpdate}
+        touchFriendly={touchFriendly}
+      />
+    );
+  }
 
   return (
     <div ref={containerRef} className="relative">
@@ -127,7 +245,7 @@ export const PersonalTrackersControl: React.FC<PersonalTrackersControlProps> = (
         type="button"
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
-        className="w20-obsidian-panel flex items-center gap-2.5 rounded-full px-3 py-1.5 text-[11px] transition hover:border-amber-500/45"
+        className="w20-obsidian-panel flex items-center gap-2 rounded-full px-2.5 py-1.5 text-[11px] transition hover:border-amber-500/45"
         title="Click to adjust personal W20 Rage, Gnosis, Willpower & Wound trackers"
       >
         <span className="flex items-center gap-1 font-mono font-bold text-red-300">
@@ -147,7 +265,7 @@ export const PersonalTrackersControl: React.FC<PersonalTrackersControlProps> = (
             {trackers.woundPenalty}
           </span>
         ) : (
-          <span className="hidden font-mono text-[10px] text-stone-400 sm:inline">0 Wnd</span>
+          <span className="hidden font-mono text-[10px] text-stone-400 xl:inline">0 Wnd</span>
         )}
         <ChevronDown
           className={`h-3.5 w-3.5 text-amber-300/75 transition-transform ${open ? 'rotate-180' : ''}`}
@@ -157,76 +275,13 @@ export const PersonalTrackersControl: React.FC<PersonalTrackersControlProps> = (
       {/* Popover with Clickable 10-Dot Pips + Wound Selector */}
       {open && (
         <div className="w20-obsidian-panel absolute right-0 top-full z-50 mt-2 w-[310px] rounded-xl p-3.5 shadow-2xl">
-          <div className="flex items-center justify-between pb-2">
-            <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
-              Garou Trait Pips
-            </span>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="rounded p-0.5 text-stone-400 hover:bg-zinc-800/80 hover:text-stone-100"
-              aria-label="Close trackers"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div className="w20-gold-divider mb-3" />
-
-          <div className="space-y-3">
-            <W20DotRow
-              label="Rage"
-              value={trackers.rage}
-              tone="crimson"
-              onChange={(rage) => onUpdate({ rage })}
-            />
-            <W20DotRow
-              label="Gnosis"
-              value={trackers.gnosis}
-              tone="amber"
-              onChange={(gnosis) => onUpdate({ gnosis })}
-            />
-            <W20DotRow
-              label="Willpower"
-              value={trackers.willpower}
-              tone="indigo"
-              onChange={(willpower) => onUpdate({ willpower })}
-            />
-          </div>
-
-          <div className="w20-gold-divider my-3" />
-
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-[11px] font-display font-bold tracking-wider uppercase text-stone-300">
-              <ShieldAlert className="h-3.5 w-3.5 text-red-400" />
-              Wound Penalty
-            </div>
-            <div className="grid grid-cols-4 gap-1.5">
-              {WOUND_OPTIONS.map((opt) => {
-                const active = trackers.woundPenalty === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => {
-                      diceSoundEngine.playPipClick();
-                      onUpdate({ woundPenalty: opt.value });
-                    }}
-                    className={`flex flex-col items-center rounded-lg border px-1.5 py-1 text-[10px] transition ${
-                      active
-                        ? opt.value === 0
-                          ? 'border-emerald-500/70 bg-emerald-950/70 text-emerald-200'
-                          : 'border-red-500/80 bg-red-950/80 text-red-100 shadow-[0_0_10px_rgba(185,28,28,0.45)]'
-                        : 'border-stone-700/60 bg-zinc-950/80 text-stone-400 hover:border-stone-500'
-                    }`}
-                  >
-                    <span className="font-mono text-xs font-extrabold">{opt.tag}</span>
-                    <span className="text-[9px]">{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <PersonalTrackersPanel
+            trackers={trackers}
+            onUpdate={onUpdate}
+            touchFriendly={touchFriendly}
+            showHeader
+            onClose={() => setOpen(false)}
+          />
         </div>
       )}
     </div>

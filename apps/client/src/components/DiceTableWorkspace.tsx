@@ -1,38 +1,39 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DiceBox from '@3d-dice/dice-box';
-import type { LightGarouTrackers, RollHistoryEntry, TableParticipant } from '@w20-vtt/protocol';
 import {
-  Dices,
-  Eraser,
-  EyeOff,
-  Flame,
-  Minus,
-  Plus,
-  ScrollText,
-  ShieldAlert,
-  Sparkles,
-  Volume2,
-  VolumeX,
-} from 'lucide-react';
+  computeUserSheetStats,
+  type GarouForm,
+  type ResolvedSheetShortcut,
+  type SheetShortcut,
+  sheetToLightTrackers,
+} from '@w20-vtt/core';
+import type { LightGarouTrackers, RollHistoryEntry, TableParticipant } from '@w20-vtt/protocol';
 import { diceSoundEngine, type DiceSoundPreferences } from '../audio/DiceSoundEngine';
 import type { DiscordSessionContext } from '../discordBootstrap';
+import { useViewportLayout } from '../hooks/useViewportLayout';
+import {
+  buildClientSeatSyncPayload,
+  DEFAULT_UNBOUND_TRACKERS,
+  type SheetRollRequest,
+  useCharacterSheetStore,
+} from '../store/useCharacterSheetStore';
 import { type Queued3DRoll, useVttRoomStore } from '../store/useVttRoomStore';
-import { ParticipantAvatar, RollResultPlaque } from './dice-table/DieFaceTiles';
-import { QuickRollBar, type QuickRollPreset } from './dice-table/QuickRollBar';
+import { CharacterRosterModal } from './character-sheet/CharacterRosterModal';
+import { W20InteractiveSheetModal } from './character-sheet/W20InteractiveSheetModal';
+import { DesktopDiceTableHud } from './dice-table/DesktopDiceTableHud';
+import { MobileDiceTableHud } from './dice-table/MobileDiceTableHud';
+import {
+  type ComposerAttributeKey,
+  type DiceTableHudProps,
+  type QuickRollPreset,
+  resolveComposerSelection,
+  useUnboundQuickRollStore,
+} from './dice-table/QuickRollBar';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
-import { PersonalTrackersControl } from './dice-table/W20DotTracker';
 
 interface DiceTableWorkspaceProps {
   session: DiscordSessionContext;
 }
-
-const POOL_QUICK_JUMPS = [3, 5, 7, 10, 12];
-const DEFAULT_TRACKERS: LightGarouTrackers = {
-  rage: 3,
-  gnosis: 3,
-  willpower: 5,
-  woundPenalty: 0,
-};
 
 function extractSettledDiceValues(raw: unknown, expectedCount: number): number[] | undefined {
   if (!Array.isArray(raw) || expectedCount <= 0) {
@@ -117,6 +118,8 @@ const GarouFeltMedallion: React.FC = () => (
 );
 
 export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session }) => {
+  const { isMobile, mode: layoutMode, cycleMode } = useViewportLayout();
+
   const connectionStatus = useVttRoomStore((s) => s.connectionStatus);
   const lastError = useVttRoomStore((s) => s.lastError);
   const participants = useVttRoomStore((s) => s.participants);
@@ -126,16 +129,116 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const sendCommand = useVttRoomStore((s) => s.sendCommand);
   const dequeue3DRoll = useVttRoomStore((s) => s.dequeue3DRoll);
 
-  const serverSelfTrackers = useMemo(
-    () => participants.find((p) => p.discordUserId === session.userId)?.trackers ?? null,
-    [participants, session.userId]
+  const sheetsById = useCharacterSheetStore((s) => s.sheetsById);
+  const seats = useCharacterSheetStore((s) => s.seats);
+  const activeSeatId = useCharacterSheetStore((s) => s.activeSeatId);
+  const initializeForSession = useCharacterSheetStore((s) => s.initializeForSession);
+  const updateSessionJwt = useCharacterSheetStore((s) => s.updateSessionJwt);
+  const setActiveSeat = useCharacterSheetStore((s) => s.setActiveSeat);
+  const addSeat = useCharacterSheetStore((s) => s.addSeat);
+  const setRosterModalOpen = useCharacterSheetStore((s) => s.setRosterModalOpen);
+  const setSheetModalOpen = useCharacterSheetStore((s) => s.setSheetModalOpen);
+  const updateActiveSeatTrackers = useCharacterSheetStore((s) => s.updateActiveSeatTrackers);
+  const spendActiveSeatWillpower = useCharacterSheetStore((s) => s.spendActiveSeatWillpower);
+  const setActiveSheetForm = useCharacterSheetStore((s) => s.setActiveSheetForm);
+  const pinShortcutToActiveSheet = useCharacterSheetStore((s) => s.pinShortcutToActiveSheet);
+  const removeShortcutFromActiveSheet = useCharacterSheetStore(
+    (s) => s.removeShortcutFromActiveSheet
   );
-  const [localTrackers, setLocalTrackers] = useState<LightGarouTrackers>(DEFAULT_TRACKERS);
+
+  const latestSessionJwtRef = useRef(session.sessionJwt);
+  latestSessionJwtRef.current = session.sessionJwt;
+
+  // Initialize character sheet store when Discord session mounts/changes
   useEffect(() => {
-    if (serverSelfTrackers) {
-      setLocalTrackers(serverSelfTrackers);
+    void initializeForSession({
+      userId: session.userId,
+      username: session.username,
+      sessionJwt: latestSessionJwtRef.current,
+    });
+  }, [session.userId, session.username, initializeForSession]);
+
+  // Keep character sheet store JWT synced on 45-minute refresh
+  useEffect(() => {
+    updateSessionJwt(session.sessionJwt);
+  }, [session.sessionJwt, updateSessionJwt]);
+
+  const activeSeat = useMemo(
+    () =>
+      seats.find((s) => s.seatId === activeSeatId) ??
+      seats[0] ?? {
+        seatId: 'primary',
+        playerName: session.username || 'Player',
+        sheetId: null,
+        syncCode: null,
+        unboundTrackers: { ...DEFAULT_UNBOUND_TRACKERS },
+      },
+    [seats, activeSeatId, session.username]
+  );
+
+  const activeSheet = useMemo(
+    () => (activeSeat.sheetId ? (sheetsById[activeSeat.sheetId] ?? null) : null),
+    [activeSeat.sheetId, sheetsById]
+  );
+
+  const activeTrackers: LightGarouTrackers = useMemo(
+    () => (activeSheet ? sheetToLightTrackers(activeSheet) : activeSeat.unboundTrackers),
+    [activeSheet, activeSeat.unboundTrackers]
+  );
+
+  // Sync local seats & active sheet trackers to GameRoomDO whenever authenticated state changes
+  const seatSyncPayload = useMemo(
+    () => buildClientSeatSyncPayload({ seats, sheetsById }),
+    [seats, sheetsById]
+  );
+  const seatSyncJson = useMemo(() => JSON.stringify(seatSyncPayload), [seatSyncPayload]);
+  const lastSyncedSeatJsonRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (connectionStatus !== 'authenticated') {
+      lastSyncedSeatJsonRef.current = null;
+      return;
     }
-  }, [serverSelfTrackers]);
+    if (lastSyncedSeatJsonRef.current === seatSyncJson) {
+      return;
+    }
+    lastSyncedSeatJsonRef.current = seatSyncJson;
+    sendCommand({ type: 'SYNC_CLIENT_SEATS', seats: seatSyncPayload });
+  }, [connectionStatus, seatSyncJson, seatSyncPayload, sendCommand]);
+
+  // Alt+1 .. Alt+9 hot-seat keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toUpperCase();
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      const digit =
+        event.key >= '1' && event.key <= '9'
+          ? Number.parseInt(event.key, 10)
+          : /^Digit([1-9])$/.test(event.code)
+            ? Number.parseInt(event.code.slice(5), 10)
+            : null;
+      if (digit === null) return;
+
+      const targetSeat = seats[digit - 1];
+      if (targetSeat) {
+        event.preventDefault();
+        setActiveSeat(targetSeat.seatId);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [seats, setActiveSeat]);
 
   // Console state (independent per player)
   const [pool, setPool] = useState(6);
@@ -148,6 +251,10 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const [applyWoundPenalty, setApplyWoundPenalty] = useState(true);
   const [isSecretRoll, setIsSecretRoll] = useState(false);
   const [rollLabel, setRollLabel] = useState('');
+  const [manualControlsOpen, setManualControlsOpen] = useState(false);
+  const [composerAttr, setComposerAttr] = useState<ComposerAttributeKey | ''>('');
+  const [composerAbil, setComposerAbil] = useState('');
+  const lastComposerPoolRef = useRef<number | null>(null);
 
   // Arena & Drawer state
   const [feedOpen, setFeedOpen] = useState(() =>
@@ -165,6 +272,66 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     setSfxPrefs(diceSoundEngine.loadPreferences(session.userId));
   }, [session.userId]);
 
+  // Reset trait composer selection when changing seats so seat-specific abilities don't leak
+  useEffect(() => {
+    setComposerAttr('');
+    setComposerAbil('');
+    lastComposerPoolRef.current = null;
+  }, [activeSeat.seatId]);
+
+  // Keep trait-pair composer pool synced live ONLY when shifting Garou forms
+  const prevComposerSheetFormRef = useRef<{ sheetId: string; form: GarouForm } | null>(null);
+  useEffect(() => {
+    if (!activeSheet) {
+      prevComposerSheetFormRef.current = null;
+      return;
+    }
+    const prev = prevComposerSheetFormRef.current;
+    if (!prev || prev.sheetId !== activeSheet.id) {
+      prevComposerSheetFormRef.current = {
+        sheetId: activeSheet.id,
+        form: activeSheet.activeForm,
+      };
+      return;
+    }
+    if (prev.form === activeSheet.activeForm) {
+      return;
+    }
+    prevComposerSheetFormRef.current = {
+      sheetId: activeSheet.id,
+      form: activeSheet.activeForm,
+    };
+
+    if (!composerAttr && !composerAbil) return;
+    const selection = resolveComposerSelection(activeSheet, composerAttr, composerAbil);
+    if (!selection.resolved) return;
+
+    if (lastComposerPoolRef.current === pool) {
+      setPool(selection.resolved.basePool);
+      lastComposerPoolRef.current = selection.resolved.basePool;
+    }
+    if (composerAttr === 'perception') {
+      const stats = computeUserSheetStats(activeSheet);
+      setDifficulty(Math.max(2, Math.min(10, 6 + stats.formSpec.perceptionDifficultyMod)));
+    }
+  }, [activeSheet, composerAttr, composerAbil, pool]);
+
+  // Clear spendWillpower if temporary Willpower drops to 0
+  useEffect(() => {
+    if (activeTrackers.willpower <= 0 && spendWillpower) {
+      setSpendWillpower(false);
+    }
+  }, [activeTrackers.willpower, spendWillpower]);
+
+  // Close feed automatically when transitioning into mobile layout
+  const prevIsMobileRef = useRef(isMobile);
+  useEffect(() => {
+    if (!prevIsMobileRef.current && isMobile) {
+      setFeedOpen(false);
+    }
+    prevIsMobileRef.current = isMobile;
+  }, [isMobile]);
+
   const arenaWrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const boxRef = useRef<DiceBox | null>(null);
@@ -176,7 +343,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     setRageDiceCount((prev) => Math.min(prev, pool));
   }, [pool]);
 
-  // Initialize full-stage @3d-dice/dice-box
+  // Initialize full-stage @3d-dice/dice-box ONCE outside the isMobile branch
   useEffect(() => {
     let cancelled = false;
     const host = canvasHostRef.current;
@@ -190,7 +357,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         assetPath: '/assets/dice-box/',
         theme: 'default',
         offscreen: false,
-        scale: 6,
+        scale: typeof window !== 'undefined' && window.innerWidth < 640 ? 4.8 : 6,
         enableShadows: true,
         lightIntensity: 1.15,
         gravity: 2,
@@ -328,23 +495,23 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   const updateTrackers = useCallback(
     (patch: Partial<LightGarouTrackers>) => {
-      setLocalTrackers((prev) => ({
-        rage:
-          typeof patch.rage === 'number' ? Math.max(0, Math.min(10, patch.rage)) : prev.rage,
-        gnosis:
-          typeof patch.gnosis === 'number'
-            ? Math.max(0, Math.min(10, patch.gnosis))
-            : prev.gnosis,
-        willpower:
-          typeof patch.willpower === 'number'
-            ? Math.max(0, Math.min(10, patch.willpower))
-            : prev.willpower,
-        woundPenalty:
-          patch.woundPenalty !== undefined ? patch.woundPenalty : prev.woundPenalty,
-      }));
-      sendCommand({ type: 'UPDATE_LIGHT_TRACKERS', trackers: patch });
+      updateActiveSeatTrackers(patch);
+      sendCommand({
+        type: 'UPDATE_LIGHT_TRACKERS',
+        trackers: patch,
+        seatId: activeSeat.seatId,
+        displayName: activeSeat.playerName,
+        characterName: activeSheet ? activeSheet.name : null,
+        activeForm: activeSheet ? activeSheet.activeForm : null,
+      });
     },
-    [sendCommand]
+    [
+      updateActiveSeatTrackers,
+      sendCommand,
+      activeSeat.seatId,
+      activeSeat.playerName,
+      activeSheet,
+    ]
   );
 
   const executeRoll = useCallback(
@@ -368,7 +535,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       const targetSecret = overrides?.isSecretRoll ?? isSecretRoll;
       const targetLabel = (overrides?.label ?? rollLabel).trim();
 
-      const woundMod = targetApplyWounds ? localTrackers.woundPenalty : 0;
+      const woundMod = targetApplyWounds ? activeTrackers.woundPenalty : 0;
       const effectivePool = Math.max(0, targetPool + woundMod);
       const effectiveRage = Math.min(
         effectivePool,
@@ -405,7 +572,12 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
       if (targetWp) {
         setSpendWillpower(false);
+        spendActiveSeatWillpower();
       }
+
+      const rollerDisplayName = activeSheet
+        ? `${activeSheet.name} (${activeSeat.playerName})`
+        : activeSeat.playerName;
 
       sendCommand({
         type: 'ROLL_TABLE_POOL',
@@ -419,6 +591,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         isSecretRoll: targetSecret,
         ...(physicalDiceValues ? { physicalDiceValues } : {}),
         rollClientId,
+        seatId: activeSeat.seatId,
+        rollerDisplayName,
       });
     },
     [
@@ -431,16 +605,21 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       applyWoundPenalty,
       isSecretRoll,
       rollLabel,
-      localTrackers.woundPenalty,
+      activeTrackers.woundPenalty,
       rageDiceCount,
+      spendActiveSeatWillpower,
+      activeSheet,
+      activeSeat.playerName,
+      activeSeat.seatId,
       sendCommand,
     ]
   );
 
   const handleTriggerPreset = useCallback(
     (preset: QuickRollPreset) => {
+      const nextRage = Math.min(preset.pool, preset.rageDiceCount);
       setPool(preset.pool);
-      setRageDiceCount(Math.min(preset.pool, preset.rageDiceCount));
+      setRageDiceCount(nextRage);
       setDifficulty(preset.difficulty);
       setHasSpecialty(preset.hasSpecialty);
       setIsSecretRoll(preset.isSecretRoll);
@@ -448,7 +627,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
       void executeRoll({
         pool: preset.pool,
-        rageDiceCount: Math.min(preset.pool, preset.rageDiceCount),
+        rageDiceCount: nextRage,
         difficulty: preset.difficulty,
         hasSpecialty: preset.hasSpecialty,
         spendWillpower: false,
@@ -458,6 +637,57 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       });
     },
     [applyWoundPenalty, executeRoll]
+  );
+
+  const handleTriggerResolvedShortcut = useCallback(
+    (resolved: ResolvedSheetShortcut) => {
+      const nextRage = Math.min(resolved.basePool, resolved.rageDiceCount);
+      setPool(resolved.basePool);
+      setRageDiceCount(nextRage);
+      setDifficulty(resolved.difficulty);
+      setHasSpecialty(resolved.hasSpecialty);
+      setApplyWoundPenalty(resolved.applyWoundPenalty);
+      setIsSecretRoll(resolved.isSecretRoll);
+      setRollLabel(resolved.label);
+
+      void executeRoll({
+        pool: resolved.basePool,
+        rageDiceCount: nextRage,
+        difficulty: resolved.difficulty,
+        hasSpecialty: resolved.hasSpecialty,
+        spendWillpower: false,
+        applyWoundPenalty: resolved.applyWoundPenalty,
+        label: resolved.label,
+        isSecretRoll: resolved.isSecretRoll,
+      });
+    },
+    [executeRoll]
+  );
+
+  const handleRollFromSheet = useCallback(
+    (req: SheetRollRequest) => {
+      setSheetModalOpen(false);
+      const nextRage = Math.min(req.pool, req.rageDiceCount ?? 0);
+      setPool(req.pool);
+      setRageDiceCount(nextRage);
+      setDifficulty(req.difficulty);
+      setHasSpecialty(req.hasSpecialty);
+      setApplyWoundPenalty(req.applyWoundPenalty);
+      setIsSecretRoll(req.isSecretRoll ?? false);
+      setRollLabel(req.label);
+
+      void executeRoll({
+        pool: req.pool,
+        rageDiceCount: nextRage,
+        difficulty: req.difficulty,
+        hasSpecialty: req.hasSpecialty,
+        spendWillpower: false,
+        applyWoundPenalty: req.applyWoundPenalty,
+        label: req.label,
+        isSecretRoll: req.isSecretRoll ?? false,
+      });
+    },
+    [executeRoll, setSheetModalOpen]
   );
 
   const handleRerollFromHistory = useCallback(
@@ -537,37 +767,269 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     setEditingPool(false);
   }, [poolInputValue]);
 
+  const handleAddSeatAndOpenRoster = useCallback(() => {
+    const newSeatId = addSeat();
+    if (newSeatId) {
+      setActiveSeat(newSeatId);
+    }
+    setRosterModalOpen(true);
+  }, [addSeat, setActiveSeat, setRosterModalOpen]);
+
+  const handleComposerChange = useCallback(
+    (attr: ComposerAttributeKey | '', abil: string) => {
+      setComposerAttr(attr);
+      setComposerAbil(abil);
+      if (!activeSheet) return;
+
+      if (!attr && !abil) {
+        lastComposerPoolRef.current = null;
+        return;
+      }
+
+      const selection = resolveComposerSelection(activeSheet, attr, abil);
+      if (selection.resolved) {
+        const stats = computeUserSheetStats(activeSheet);
+        const targetDiff =
+          attr === 'perception'
+            ? Math.max(2, Math.min(10, 6 + stats.formSpec.perceptionDifficultyMod))
+            : 6;
+
+        setPool(selection.resolved.basePool);
+        lastComposerPoolRef.current = selection.resolved.basePool;
+        setDifficulty(targetDiff);
+        setHasSpecialty(selection.resolved.hasSpecialty);
+        setApplyWoundPenalty(selection.resolved.applyWoundPenalty);
+        setRollLabel(selection.label);
+      }
+    },
+    [activeSheet]
+  );
+
+  const handlePinComposerShortcut = useCallback(() => {
+    if (!activeSheet || (!composerAttr && !composerAbil)) return;
+    const selection = resolveComposerSelection(activeSheet, composerAttr, composerAbil);
+    const flatModifier = selection.resolved ? pool - selection.resolved.basePool : 0;
+    const autoSpecialty = selection.resolved?.hasSpecialty ?? false;
+
+    const shortcut: SheetShortcut = {
+      id: `sc-${crypto.randomUUID().slice(0, 8)}`,
+      name: (rollLabel.trim() || selection.label || `Pool ${pool}d10`).slice(0, 48),
+      source: {
+        kind: 'trait_combo',
+        attribute: composerAttr || null,
+        ability: composerAbil || null,
+        useFormStats: true,
+        applyPerceptionFormDiff: composerAttr === 'perception',
+        ...(flatModifier !== 0 ? { flatModifier } : {}),
+      },
+      difficulty,
+      rageDiceCount,
+      applyWoundPenalty,
+      ...(hasSpecialty && !autoSpecialty ? { forceSpecialty: true } : {}),
+      isSecretRoll,
+    };
+    pinShortcutToActiveSheet(shortcut);
+  }, [
+    activeSheet,
+    composerAttr,
+    composerAbil,
+    pool,
+    rollLabel,
+    difficulty,
+    rageDiceCount,
+    applyWoundPenalty,
+    hasSpecialty,
+    isSecretRoll,
+    pinShortcutToActiveSheet,
+  ]);
+
+  const handlePinCurrentToSheet = useCallback(() => {
+    if (!activeSheet) return;
+    if (composerAttr || composerAbil) {
+      handlePinComposerShortcut();
+      return;
+    }
+
+    const shortcut: SheetShortcut = {
+      id: `sc-${crypto.randomUUID().slice(0, 8)}`,
+      name: (rollLabel.trim() || `Pool ${pool}d10`).slice(0, 48),
+      source: {
+        kind: 'static',
+        pool,
+      },
+      difficulty,
+      rageDiceCount,
+      applyWoundPenalty,
+      ...(hasSpecialty ? { forceSpecialty: true } : {}),
+      isSecretRoll,
+    };
+    pinShortcutToActiveSheet(shortcut);
+  }, [
+    activeSheet,
+    composerAttr,
+    composerAbil,
+    handlePinComposerShortcut,
+    rollLabel,
+    pool,
+    difficulty,
+    rageDiceCount,
+    applyWoundPenalty,
+    hasSpecialty,
+    isSecretRoll,
+    pinShortcutToActiveSheet,
+  ]);
+
+  const handleSaveCurrentUnboundPreset = useCallback(() => {
+    useUnboundQuickRollStore.getState().addPreset(session.userId, activeSeat.seatId, {
+      name: (rollLabel.trim() || `Pool ${pool}d10`).slice(0, 32),
+      pool,
+      rageDiceCount,
+      difficulty,
+      hasSpecialty,
+      isSecretRoll,
+    });
+  }, [
+    session.userId,
+    activeSeat.seatId,
+    rollLabel,
+    pool,
+    rageDiceCount,
+    difficulty,
+    hasSpecialty,
+    isSecretRoll,
+  ]);
+
   const sortedParticipants = useMemo(() => {
     const base: TableParticipant[] =
       participants.length > 0
         ? participants
-        : [
-            {
+        : seats.map((seat) => {
+            const seatSheet = seat.sheetId ? sheetsById[seat.sheetId] : undefined;
+            return {
+              participantKey:
+                seat.seatId === 'primary'
+                  ? session.userId
+                  : `${session.userId}::${seat.seatId}`,
+              seatId: seat.seatId,
               discordUserId: session.userId,
-              displayName: session.username,
-              avatarUrl: session.avatarUrl,
+              displayName: seat.playerName || session.username,
+              characterName: seatSheet ? seatSheet.name : null,
+              activeForm: seatSheet ? seatSheet.activeForm : null,
+              avatarUrl: seat.seatId === 'primary' ? session.avatarUrl : null,
               isConnected: connectionStatus === 'authenticated',
-              trackers: localTrackers,
-            },
-          ];
+              trackers: seatSheet ? sheetToLightTrackers(seatSheet) : seat.unboundTrackers,
+            };
+          });
 
     return [...base].sort((a, b) => {
       if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
-      if (a.discordUserId === session.userId) return -1;
-      if (b.discordUserId === session.userId) return 1;
+      if (a.discordUserId === session.userId && b.discordUserId !== session.userId) return -1;
+      if (b.discordUserId === session.userId && a.discordUserId !== session.userId) return 1;
+      if (a.discordUserId === session.userId && b.discordUserId === session.userId) {
+        if (a.seatId === activeSeat.seatId && b.seatId !== activeSeat.seatId) return -1;
+        if (b.seatId === activeSeat.seatId && a.seatId !== activeSeat.seatId) return 1;
+      }
       return a.displayName.localeCompare(b.displayName);
     });
-  }, [participants, session, connectionStatus, localTrackers]);
+  }, [
+    participants,
+    seats,
+    sheetsById,
+    session.userId,
+    session.username,
+    session.avatarUrl,
+    connectionStatus,
+    activeSeat.seatId,
+  ]);
 
   const effectivePreviewPool = Math.max(
     0,
-    pool + (applyWoundPenalty ? localTrackers.woundPenalty : 0)
+    pool + (applyWoundPenalty ? activeTrackers.woundPenalty : 0)
   );
   const clampedPreviewRage = Math.min(effectivePreviewPool, rageDiceCount);
   const obsidianPreviewCount = Math.max(0, effectivePreviewPool - clampedPreviewRage);
 
+  const activeModifierCount =
+    (difficulty !== 6 ? 1 : 0) +
+    (rageDiceCount > 0 ? 1 : 0) +
+    (hasSpecialty ? 1 : 0) +
+    (spendWillpower ? 1 : 0) +
+    (!applyWoundPenalty ? 1 : 0) +
+    (isSecretRoll ? 1 : 0);
+
+  const hudProps: DiceTableHudProps = {
+    session,
+    connectionStatus,
+    lastError,
+    webglReady,
+    sortedParticipants,
+    speakingDiscordIds,
+    seats,
+    activeSeat,
+    activeSheet,
+    sheetsById,
+    activeTrackers,
+    rollHistoryCount: rollHistory.length,
+    feedOpen,
+    hasDiceOnTable,
+    activeBanner,
+    sfxPrefs,
+    layoutMode,
+    pool,
+    editingPool,
+    poolInputValue,
+    rageDiceCount,
+    difficulty,
+    hasSpecialty,
+    spendWillpower,
+    applyWoundPenalty,
+    isSecretRoll,
+    rollLabel,
+    manualControlsOpen,
+    isThrowing,
+    effectivePreviewPool,
+    clampedPreviewRage,
+    obsidianPreviewCount,
+    activeModifierCount,
+    composerAttr,
+    composerAbil,
+    onCycleLayoutMode: cycleMode,
+    onToggleFeed: () => setFeedOpen((v) => !v),
+    onCloseFeed: () => setFeedOpen(false),
+    onClearTable: handleClearTable,
+    onDismissBanner: () => setActiveBanner(null),
+    onToggleMuteSfx: handleToggleMuteSfx,
+    onSfxVolumeChange: handleSfxVolumeChange,
+    onUpdateTrackers: updateTrackers,
+    onSelectSeat: setActiveSeat,
+    onAddSeatAndOpenRoster: handleAddSeatAndOpenRoster,
+    onOpenRoster: () => setRosterModalOpen(true),
+    onOpenSheet: () => setSheetModalOpen(true),
+    onSetActiveSheetForm: setActiveSheetForm,
+    onSetPool: setPool,
+    onSetEditingPool: setEditingPool,
+    onSetPoolInputValue: setPoolInputValue,
+    onCommitPoolInput: commitPoolInput,
+    onSetRageDiceCount: setRageDiceCount,
+    onSetDifficulty: setDifficulty,
+    onToggleSpecialty: () => setHasSpecialty((v) => !v),
+    onToggleSpendWillpower: () => setSpendWillpower((v) => !v),
+    onToggleApplyWoundPenalty: () => setApplyWoundPenalty((v) => !v),
+    onToggleSecretRoll: () => setIsSecretRoll((v) => !v),
+    onSetRollLabel: setRollLabel,
+    onSetManualControlsOpen: setManualControlsOpen,
+    onExecuteRoll: () => void executeRoll(),
+    onTriggerPreset: handleTriggerPreset,
+    onTriggerResolvedShortcut: handleTriggerResolvedShortcut,
+    onRemoveSheetShortcut: removeShortcutFromActiveSheet,
+    onComposerChange: handleComposerChange,
+    onPinComposerShortcut: handlePinComposerShortcut,
+    onPinCurrentToSheet: handlePinCurrentToSheet,
+    onSaveCurrentUnboundPreset: handleSaveCurrentUnboundPreset,
+  };
+
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-[#070609] text-stone-100 select-none">
+    <div className="relative flex h-dvh w-full overflow-hidden bg-[#070609] text-stone-100 select-none">
       {/* Main Full-Height 3D Felt Stage */}
       <div
         ref={arenaWrapperRef}
@@ -575,453 +1037,56 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       >
         {/* Subtle Umbral Felt Framing & Antique Bronze Corner Brackets */}
         <div className="pointer-events-none absolute inset-3 rounded-3xl border border-amber-500/15 shadow-[inset_0_0_95px_rgba(0,0,0,0.85)]" />
-        <div className="pointer-events-none absolute top-4 left-4 h-5 w-5 border-t-2 border-l-2 border-amber-500/40 rounded-tl-lg" />
-        <div className="pointer-events-none absolute top-4 right-4 h-5 w-5 border-t-2 border-r-2 border-amber-500/40 rounded-tr-lg" />
-        <div className="pointer-events-none absolute bottom-4 left-4 h-5 w-5 border-b-2 border-l-2 border-amber-500/40 rounded-bl-lg" />
-        <div className="pointer-events-none absolute bottom-4 right-4 h-5 w-5 border-b-2 border-r-2 border-amber-500/40 rounded-br-lg" />
+        <div className="pointer-events-none absolute top-4 left-4 h-5 w-5 rounded-tl-lg border-t-2 border-l-2 border-amber-500/40" />
+        <div className="pointer-events-none absolute top-4 right-4 h-5 w-5 rounded-tr-lg border-t-2 border-r-2 border-amber-500/40" />
+        <div className="pointer-events-none absolute bottom-4 left-4 h-5 w-5 rounded-bl-lg border-b-2 border-l-2 border-amber-500/40" />
+        <div className="pointer-events-none absolute bottom-4 right-4 h-5 w-5 rounded-br-lg border-b-2 border-r-2 border-amber-500/40" />
 
-        {/* Etched Garou Moon-Phase & Auspice Medallion */}
+        {/* Single Etched Garou Moon-Phase & Auspice Medallion */}
         <GarouFeltMedallion />
 
         {/* Idle Prompt */}
         {!activeBanner && !hasDiceOnTable && (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center pb-24 text-center opacity-55">
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-4 pb-24 text-center opacity-55">
             <p className="font-display text-xs font-bold tracking-[0.28em] uppercase text-amber-200/80">
               Garou Umbral Felt
             </p>
             <p className="mt-1.5 text-[11px] text-stone-400">
-              Dial your pool below to cast Obsidian &amp; Rage d10s
+              {isMobile
+                ? 'Tap a quick roll or Roll below to cast d10s'
+                : 'Dial your pool below to cast Obsidian & Rage d10s'}
             </p>
           </div>
         )}
 
-        {/* Full-Stage @3d-dice/dice-box Physics Canvas */}
+        {/* Single Full-Stage @3d-dice/dice-box Physics Canvas (never unmounted on layout toggle) */}
         <div
           id="w20-dice-table-canvas"
           ref={canvasHostRef}
           className="pointer-events-none absolute inset-0 h-full w-full [&>canvas]:block [&>canvas]:h-full [&>canvas]:w-full"
         />
 
-        {/* Slim Floating Top Presence & Tracker Bar */}
-        <header className="pointer-events-none absolute inset-x-4 top-3 z-30 flex items-center justify-between gap-3">
-          {/* Left: W20 Crest + Voice Participant Strip */}
-          <div className="w20-obsidian-panel pointer-events-auto flex max-w-[66%] items-center gap-2.5 rounded-full px-3 py-1.5">
-            <div className="flex shrink-0 items-center gap-2 pr-2 border-r border-amber-500/20">
-              <div className="flex h-6 w-6 items-center justify-center rounded-full border border-red-700/70 bg-red-950/80 text-red-300">
-                <Flame className="h-3.5 w-3.5" />
-              </div>
-              <span className="font-display text-xs font-black tracking-widest uppercase text-amber-100">
-                W20
-              </span>
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  connectionStatus === 'authenticated'
-                    ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]'
-                    : 'animate-pulse bg-amber-400'
-                }`}
-                title={`Connection: ${connectionStatus}`}
-              />
-              {!webglReady && (
-                <span className="rounded bg-zinc-800/90 px-1.5 py-0.5 text-[9px] text-stone-400">
-                  2D RNG
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-1.5 overflow-x-auto">
-              {sortedParticipants.map((p) => {
-                const isSpeaking = speakingDiscordIds.has(p.discordUserId);
-                return (
-                  <div
-                    key={p.discordUserId}
-                    className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 transition ${
-                      isSpeaking
-                        ? 'border-emerald-400/75 bg-emerald-950/45'
-                        : 'border-stone-700/60 bg-zinc-950/75'
-                    } ${p.isConnected ? '' : 'opacity-45'}`}
-                  >
-                    <div className="relative">
-                      <ParticipantAvatar
-                        name={p.displayName}
-                        avatarUrl={p.avatarUrl}
-                        isSpeaking={isSpeaking}
-                        isConnected={p.isConnected}
-                        sizeClass="h-6 w-6"
-                      />
-                      {isSpeaking && (
-                        <Volume2 className="absolute -right-1 -bottom-1 h-2.5 w-2.5 rounded-full bg-emerald-400 p-0.5 text-zinc-950" />
-                      )}
-                    </div>
-                    <span className="max-w-[82px] truncate text-[11px] font-semibold text-stone-200">
-                      {p.displayName}
-                    </span>
-                    <div className="hidden items-center gap-1 font-mono text-[9px] text-stone-400 sm:flex">
-                      <span className="text-red-300">R{p.trackers.rage}</span>
-                      <span className="text-amber-200">G{p.trackers.gnosis}</span>
-                      <span className="text-indigo-200">W{p.trackers.willpower}</span>
-                      {p.trackers.woundPenalty !== 0 && (
-                        <span className="rounded bg-red-950 px-1 font-bold text-red-300">
-                          {p.trackers.woundPenalty}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Right: Audio SFX Pill + Personal W20 Dot Trackers Popover + Arena Utilities */}
-          <div className="pointer-events-auto flex shrink-0 items-center gap-2">
-            <div className="w20-obsidian-panel flex items-center gap-1.5 rounded-full px-2.5 py-1.5">
-              <button
-                type="button"
-                onClick={handleToggleMuteSfx}
-                aria-label={sfxPrefs.muted ? 'Unmute dice sound effects' : 'Mute dice sound effects'}
-                title={sfxPrefs.muted ? 'Unmute dice SFX' : 'Mute dice SFX'}
-                className="flex items-center justify-center rounded-full text-stone-200 transition hover:text-amber-200"
-              >
-                {sfxPrefs.muted ? (
-                  <VolumeX className="h-3.5 w-3.5 text-red-400" />
-                ) : (
-                  <Volume2 className="h-3.5 w-3.5 text-amber-300" />
-                )}
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={sfxPrefs.muted ? 0 : Math.round(sfxPrefs.volume * 100)}
-                onChange={(e) => handleSfxVolumeChange(Number(e.target.value))}
-                aria-label="Dice sound volume"
-                className="hidden h-1 w-14 cursor-pointer accent-amber-400 sm:block"
-              />
-            </div>
-
-            <PersonalTrackersControl trackers={localTrackers} onUpdate={updateTrackers} />
-
-            {(hasDiceOnTable || activeBanner) && (
-              <button
-                type="button"
-                onClick={handleClearTable}
-                className="w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold text-stone-200 transition hover:border-amber-400/55"
-              >
-                <Eraser className="h-3.5 w-3.5 text-amber-300" />
-                <span className="hidden sm:inline">Clear Felt</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setFeedOpen((v) => !v)}
-              className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition hover:border-amber-400/55 ${
-                feedOpen ? 'text-amber-200 !border-amber-500/50' : 'text-stone-200'
-              }`}
-            >
-              <ScrollText className="h-3.5 w-3.5 text-amber-300" />
-              <span>Feed ({rollHistory.length})</span>
-            </button>
-          </div>
-        </header>
-
-        {/* Server Error Toast */}
-        {lastError && (
-          <div className="w20-obsidian-panel absolute top-16 left-4 z-30 !border-red-600/80 rounded-xl px-3 py-1.5 text-xs text-red-200">
-            {lastError.message}
-          </div>
+        {/* Separate Mobile vs PC HUD */}
+        {isMobile ? (
+          <MobileDiceTableHud {...hudProps} />
+        ) : (
+          <DesktopDiceTableHud {...hudProps} />
         )}
-
-        {/* Dismissible Floating Roll Result Plaque */}
-        {activeBanner && (
-          <RollResultPlaque banner={activeBanner} onDismiss={() => setActiveBanner(null)} />
-        )}
-
-        {/* Centered Floating Dark Gothic Dice Console */}
-        <section className="w20-obsidian-panel absolute bottom-3 left-1/2 z-30 w-[min(96%,770px)] -translate-x-1/2 rounded-2xl px-4 py-3">
-          {/* Quick-Roll Presets Strip */}
-          <QuickRollBar
-            userId={session.userId}
-            currentPool={pool}
-            currentRageDiceCount={rageDiceCount}
-            currentDifficulty={difficulty}
-            currentHasSpecialty={hasSpecialty}
-            currentIsSecretRoll={isSecretRoll}
-            currentRollLabel={rollLabel}
-            disabled={isThrowing || connectionStatus !== 'authenticated'}
-            onTriggerPreset={handleTriggerPreset}
-          />
-
-          <div className="w20-gold-divider my-2.5" />
-
-          {/* Main Tactical Console Row */}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Tactile Pool Dial + Quick-Jump Chips */}
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-1.5">
-                <span className="font-display text-[10px] font-bold tracking-wider uppercase text-amber-200/80">
-                  Pool
-                </span>
-                <div className="flex items-center gap-1 rounded-xl border border-amber-500/35 bg-zinc-950/90 px-1.5 py-1 shadow-inner">
-                  <button
-                    type="button"
-                    onClick={() => setPool((p) => Math.max(1, p - 1))}
-                    className="rounded-lg bg-zinc-900 p-1 text-stone-300 hover:bg-zinc-800 hover:text-amber-200"
-                    aria-label="Decrease Pool"
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-
-                  {editingPool ? (
-                    <input
-                      type="number"
-                      min={1}
-                      max={30}
-                      value={poolInputValue}
-                      autoFocus
-                      onFocus={(e) => e.currentTarget.select()}
-                      onChange={(e) => setPoolInputValue(e.target.value)}
-                      onBlur={commitPoolInput}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          commitPoolInput();
-                        } else if (e.key === 'Escape') {
-                          setEditingPool(false);
-                        }
-                      }}
-                      className="font-display w-14 bg-transparent text-center text-xl font-black text-amber-100 focus:outline-none"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPoolInputValue(String(pool));
-                        setEditingPool(true);
-                      }}
-                      title="Click to type exact d10 pool (1-30)"
-                      className="flex min-w-[54px] items-baseline justify-center gap-0.5 px-1 text-amber-100 hover:text-amber-300"
-                    >
-                      <span className="font-display text-xl font-black leading-none">{pool}</span>
-                      <span className="font-mono text-[10px] font-bold text-stone-400">d10</span>
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setPool((p) => Math.min(30, p + 1))}
-                    className="rounded-lg bg-zinc-900 p-1 text-stone-300 hover:bg-zinc-800 hover:text-amber-200"
-                    aria-label="Increase Pool"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-
-                {/* Quick-Jump Pool Chips */}
-                <div className="flex items-center gap-1">
-                  {POOL_QUICK_JUMPS.map((val) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setPool(val)}
-                      className={`h-7 min-w-[26px] rounded-md border px-1.5 font-mono text-[11px] font-bold transition ${
-                        pool === val
-                          ? 'border-amber-400/80 bg-red-900/75 text-amber-100 shadow'
-                          : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600 hover:text-stone-200'
-                      }`}
-                    >
-                      {val}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Dual-tone Pool Composition Preview Bar */}
-              <div className="flex items-center gap-2 text-[10px] text-stone-400">
-                <div className="flex items-center gap-0.5">
-                  {Array.from({ length: Math.min(effectivePreviewPool, 18) }, (_, idx) => {
-                    const isRage = idx >= obsidianPreviewCount;
-                    return (
-                      <span
-                        key={idx}
-                        className={`h-1.5 w-2 rounded-xs ${
-                          isRage
-                            ? 'bg-red-600 shadow-[0_0_5px_rgba(220,38,38,0.75)]'
-                            : 'bg-stone-500/80'
-                        }`}
-                      />
-                    );
-                  })}
-                  {effectivePreviewPool > 18 && (
-                    <span className="font-mono text-[9px] text-stone-400">
-                      +{effectivePreviewPool - 18}
-                    </span>
-                  )}
-                </div>
-                {applyWoundPenalty && localTrackers.woundPenalty !== 0 && (
-                  <span className="font-mono text-red-300">
-                    Effective: {effectivePreviewPool}d10 ({localTrackers.woundPenalty} wound)
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Difficulty & Rage Dice Steppers */}
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 rounded-xl border border-stone-700/70 bg-zinc-950/90 px-2 py-1 text-xs">
-                <span className="font-display text-[10px] font-bold uppercase text-stone-400">
-                  Diff
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setDifficulty((d) => Math.max(2, d - 1))}
-                  className="rounded bg-zinc-900 p-0.5 text-stone-300 hover:bg-zinc-800"
-                  aria-label="Decrease Difficulty"
-                >
-                  <Minus className="h-3 w-3" />
-                </button>
-                <span className="font-display w-5 text-center text-sm font-black text-amber-300">
-                  {difficulty}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setDifficulty((d) => Math.min(10, d + 1))}
-                  className="rounded bg-zinc-900 p-0.5 text-stone-300 hover:bg-zinc-800"
-                  aria-label="Increase Difficulty"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1 rounded-xl border border-red-900/65 bg-red-950/30 px-2 py-1 text-xs">
-                <span className="font-display text-[10px] font-bold uppercase text-red-300">
-                  Rage
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setRageDiceCount((r) => Math.max(0, r - 1))}
-                  className="rounded bg-zinc-900 p-0.5 text-stone-300 hover:bg-zinc-800"
-                  aria-label="Decrease Rage Dice"
-                >
-                  <Minus className="h-3 w-3" />
-                </button>
-                <span className="font-display w-5 text-center text-sm font-black text-red-300">
-                  {rageDiceCount}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setRageDiceCount((r) => Math.min(pool, r + 1))}
-                  className="rounded bg-zinc-900 p-0.5 text-stone-300 hover:bg-zinc-800"
-                  aria-label="Increase Rage Dice"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRageDiceCount(Math.min(pool, localTrackers.rage))}
-                  className="ml-0.5 rounded border border-red-700/65 bg-red-950/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-red-200 hover:bg-red-900"
-                  title="Sync Rage dice to your personal Rage rating"
-                >
-                  Sync
-                </button>
-              </div>
-            </div>
-
-            {/* W20 Toggle Pills */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setHasSpecialty((v) => !v)}
-                className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-bold transition ${
-                  hasSpecialty
-                    ? 'border-amber-400/80 bg-amber-950/65 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.28)]'
-                    : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600'
-                }`}
-              >
-                <Sparkles className="h-3 w-3" />
-                Specialty
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSpendWillpower((v) => !v)}
-                className={`rounded-lg border px-2 py-1 text-[11px] font-bold transition ${
-                  spendWillpower
-                    ? 'border-indigo-400/80 bg-indigo-950/70 text-indigo-200 shadow-[0_0_10px_rgba(129,140,248,0.28)]'
-                    : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600'
-                }`}
-              >
-                +1 Willpower
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setApplyWoundPenalty((v) => !v)}
-                className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-bold transition ${
-                  applyWoundPenalty
-                    ? 'border-rose-500/65 bg-rose-950/55 text-rose-200'
-                    : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600'
-                }`}
-              >
-                <ShieldAlert className="h-3 w-3" />
-                Wounds{localTrackers.woundPenalty !== 0 ? ` (${localTrackers.woundPenalty})` : ''}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsSecretRoll((v) => !v)}
-                className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-bold transition ${
-                  isSecretRoll
-                    ? 'border-amber-400/80 bg-amber-950/65 text-amber-200'
-                    : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600'
-                }`}
-              >
-                <EyeOff className="h-3 w-3" />
-                Secret
-              </button>
-            </div>
-
-            {/* Label Input & Crimson Wax-Seal ROLL Button */}
-            <div className="ml-auto flex min-w-[240px] flex-1 items-center gap-2">
-              <input
-                type="text"
-                value={rollLabel}
-                maxLength={120}
-                onChange={(e) => setRollLabel(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    void executeRoll();
-                  }
-                }}
-                placeholder="Label (e.g. Dex + Brawl)"
-                className="min-w-0 flex-1 rounded-xl border border-stone-700/75 bg-zinc-950/90 px-3 py-1.5 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75 focus:outline-none"
-              />
-              <button
-                type="button"
-                disabled={isThrowing || connectionStatus !== 'authenticated'}
-                onClick={() => void executeRoll()}
-                className="w20-crimson-seal font-display flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-black tracking-widest uppercase text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Dices className="h-4 w-4" />
-                {isThrowing
-                  ? 'Casting...'
-                  : `Roll ${effectivePreviewPool}d10${
-                      clampedPreviewRage > 0 ? ` (${clampedPreviewRage}R)` : ''
-                    }`}
-              </button>
-            </div>
-          </div>
-        </section>
       </div>
 
-      {/* Right Collapsible Chronicle of Rolls */}
+      {/* Collapsible Chronicle of Rolls (Bottom Sheet on Mobile, Docked Right Drawer on PC) */}
       <RollFeedDrawer
         open={feedOpen}
+        mobileSheet={isMobile}
         rollHistory={rollHistory}
         disabled={isThrowing || connectionStatus !== 'authenticated'}
         onClose={() => setFeedOpen(false)}
         onReroll={handleRerollFromHistory}
       />
+
+      {/* Single-Instance Roster & Interactive W20 Sheet Modals mounted outside isMobile branch */}
+      <CharacterRosterModal session={session} />
+      <W20InteractiveSheetModal onRollFromSheet={handleRollFromSheet} />
     </div>
   );
 };

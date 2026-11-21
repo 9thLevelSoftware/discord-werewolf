@@ -46,6 +46,11 @@ export async function handleGetR2Asset(request: Request, env: WorkerEnv): Promis
     return errorResponse('Invalid R2 asset path.', 400);
   }
 
+  const category = key.split('/')[0]?.toLowerCase() ?? '';
+  if (!ALLOWED_CATEGORIES.has(category)) {
+    return errorResponse('Asset not found.', 404);
+  }
+
   const object = await env.VTT_MEDIA_BUCKET.get(key);
   if (!object) {
     return errorResponse('Asset not found.', 404);

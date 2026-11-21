@@ -57,6 +57,36 @@ const MAX_FOG_STROKES = 2000;
 interface InternalSocketAttachment extends SocketAttachment {
   authenticated: boolean;
   isSpeaking?: boolean;
+  avatarUrl?: string | null;
+}
+
+function normalizeSeatId(seatId?: string | null): string {
+  const trimmed = seatId?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : 'primary';
+}
+
+function buildParticipantKey(discordUserId: string, seatId?: string | null): string {
+  const normalizedSeat = normalizeSeatId(seatId);
+  return normalizedSeat === 'primary'
+    ? discordUserId
+    : `${discordUserId}::${normalizedSeat}`;
+}
+
+function formatRollerName(
+  participant: Pick<TableParticipant, 'displayName' | 'characterName'>,
+  fallbackDisplayName: string,
+  explicitRollerDisplayName?: string,
+): string {
+  const explicit = explicitRollerDisplayName?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const charName = participant.characterName?.trim();
+  const displayName = participant.displayName || fallbackDisplayName;
+  if (charName) {
+    return `${charName} (${displayName})`;
+  }
+  return displayName;
 }
 
 interface PendingOutboundEvent {
@@ -214,6 +244,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       connectedAt: Date.now(),
       authenticated: false,
       isSpeaking: false,
+      avatarUrl: null,
     };
 
     this.ctx.acceptWebSocket(serverSocket);
@@ -272,6 +303,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
 
     if (envelope.command.type === 'UPDATE_LIGHT_TRACKERS') {
       this.handleUpdateLightTrackers(ws, attachment, envelope.command, envelope.reqId);
+      return;
+    }
+
+    if (envelope.command.type === 'SYNC_CLIENT_SEATS') {
+      this.handleSyncClientSeats(attachment, envelope.command, envelope.reqId);
       return;
     }
 
@@ -498,10 +534,15 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     displayName: string,
     avatarUrl: string | null,
     isConnected = true,
+    seatId = 'primary',
   ): TableParticipant {
     this.roomState.tableParticipants ??= {};
-    const existing = this.roomState.tableParticipants[discordUserId];
+    const normalizedSeatId = normalizeSeatId(seatId);
+    const participantKey = buildParticipantKey(discordUserId, normalizedSeatId);
+    const existing = this.roomState.tableParticipants[participantKey];
     const next: TableParticipant = {
+      participantKey,
+      seatId: normalizedSeatId,
       discordUserId,
       displayName: displayName || existing?.displayName || 'Garou',
       avatarUrl: avatarUrl ?? existing?.avatarUrl ?? null,
@@ -512,9 +553,33 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         willpower: 5,
         woundPenalty: 0,
       },
+      ...(existing?.characterName !== undefined ? { characterName: existing.characterName } : {}),
+      ...(existing?.activeForm !== undefined ? { activeForm: existing.activeForm } : {}),
     };
-    this.roomState.tableParticipants[discordUserId] = next;
+    this.roomState.tableParticipants[participantKey] = next;
     return next;
+  }
+
+  private resolveTargetParticipant(
+    attachment: InternalSocketAttachment,
+    seatId?: string,
+  ): TableParticipant {
+    this.roomState.tableParticipants ??= {};
+    const normalizedSeatId = normalizeSeatId(seatId);
+    const participantKey = buildParticipantKey(attachment.discordUserId, normalizedSeatId);
+    const existing =
+      this.roomState.tableParticipants[participantKey] ??
+      this.roomState.tableParticipants[attachment.discordUserId];
+    if (existing) {
+      return existing;
+    }
+    return this.upsertTableParticipant(
+      attachment.discordUserId,
+      attachment.displayName,
+      attachment.avatarUrl ?? null,
+      true,
+      'primary',
+    );
   }
 
   private handleSocketDisconnect(closingWs: WebSocket): void {
@@ -535,8 +600,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return;
     }
 
-    const participant = this.roomState.tableParticipants[att.discordUserId];
-    if (!participant) {
+    const ownedParticipants = Object.values(this.roomState.tableParticipants).filter(
+      (p) => p.discordUserId === att.discordUserId,
+    );
+    if (ownedParticipants.length === 0) {
       return;
     }
 
@@ -546,18 +613,94 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return otherAtt.authenticated && otherAtt.discordUserId === att.discordUserId;
     });
 
-    if (!stillConnectedElsewhere && participant.isConnected) {
-      participant.isConnected = false;
-      this.persistStateSnapshot();
-      this.sendEphemeralBroadcast(
-        {
-          type: 'PARTICIPANTS_UPDATED',
-          participants: Object.values(this.roomState.tableParticipants),
-        },
-        undefined,
-        closingWs,
-      );
+    if (!stillConnectedElsewhere) {
+      let anyChanged = false;
+      for (const participant of ownedParticipants) {
+        if (participant.isConnected) {
+          participant.isConnected = false;
+          anyChanged = true;
+        }
+      }
+      if (anyChanged) {
+        this.persistStateSnapshot();
+        this.sendEphemeralBroadcast(
+          {
+            type: 'PARTICIPANTS_UPDATED',
+            participants: Object.values(this.roomState.tableParticipants),
+          },
+          undefined,
+          closingWs,
+        );
+      }
     }
+  }
+
+  private handleSyncClientSeats(
+    attachment: InternalSocketAttachment,
+    command: Extract<ClientCommand, { type: 'SYNC_CLIENT_SEATS' }>,
+    reqId: string,
+  ): void {
+    this.roomState.tableParticipants ??= {};
+
+    const primaryAvatarUrl =
+      this.roomState.tableParticipants[attachment.discordUserId]?.avatarUrl ??
+      attachment.avatarUrl ??
+      null;
+
+    const keptKeys = new Set<string>();
+    for (const seat of command.seats) {
+      const normalizedSeatId = normalizeSeatId(seat.seatId);
+      const participantKey = buildParticipantKey(attachment.discordUserId, normalizedSeatId);
+      keptKeys.add(participantKey);
+
+      const existing = this.roomState.tableParticipants[participantKey];
+      const avatarUrl =
+        normalizedSeatId === 'primary'
+          ? primaryAvatarUrl
+          : (existing?.avatarUrl ?? null);
+
+      this.roomState.tableParticipants[participantKey] = {
+        participantKey,
+        seatId: normalizedSeatId,
+        discordUserId: attachment.discordUserId,
+        displayName:
+          seat.displayName.trim() ||
+          existing?.displayName ||
+          attachment.displayName ||
+          'Garou',
+        characterName:
+          seat.characterName !== undefined
+            ? seat.characterName
+            : (existing?.characterName ?? null),
+        activeForm:
+          seat.activeForm !== undefined
+            ? seat.activeForm
+            : (existing?.activeForm ?? null),
+        avatarUrl,
+        isConnected: true,
+        trackers: {
+          rage: Math.max(0, Math.min(10, seat.trackers.rage)),
+          gnosis: Math.max(0, Math.min(10, seat.trackers.gnosis)),
+          willpower: Math.max(0, Math.min(10, seat.trackers.willpower)),
+          woundPenalty: seat.trackers.woundPenalty,
+        },
+      };
+    }
+
+    for (const [key, entry] of Object.entries(this.roomState.tableParticipants)) {
+      if (entry.discordUserId === attachment.discordUserId && !keptKeys.has(key)) {
+        delete this.roomState.tableParticipants[key];
+      }
+    }
+
+    this.persistStateSnapshot();
+    this.sendEphemeralBroadcast(
+      {
+        type: 'PARTICIPANTS_UPDATED',
+        participants: Object.values(this.roomState.tableParticipants),
+      },
+      reqId,
+    );
   }
 
   private handleUpdateLightTrackers(
@@ -566,12 +709,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     command: Extract<ClientCommand, { type: 'UPDATE_LIGHT_TRACKERS' }>,
     reqId: string,
   ): void {
-    const participant = this.upsertTableParticipant(
-      attachment.discordUserId,
-      attachment.displayName,
-      null,
-      true,
-    );
+    const participant = this.resolveTargetParticipant(attachment, command.seatId);
     const nextTrackers: LightGarouTrackers = {
       rage:
         typeof command.trackers.rage === 'number'
@@ -591,6 +729,17 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           : participant.trackers.woundPenalty,
     };
     participant.trackers = nextTrackers;
+    if (command.displayName !== undefined && command.displayName.trim()) {
+      participant.displayName = command.displayName.trim();
+    }
+    if (command.characterName !== undefined) {
+      participant.characterName = command.characterName;
+    }
+    if (command.activeForm !== undefined) {
+      participant.activeForm = command.activeForm;
+    }
+    participant.isConnected = true;
+
     this.persistStateSnapshot();
     this.sendEphemeralBroadcast(
       {
@@ -606,12 +755,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     command: Extract<ClientCommand, { type: 'ROLL_TABLE_POOL' }>,
     reqId: string,
   ): void {
-    const participant = this.upsertTableParticipant(
-      attachment.discordUserId,
-      attachment.displayName,
-      null,
-      true,
-    );
+    const participant = this.resolveTargetParticipant(attachment, command.seatId);
+    participant.isConnected = true;
 
     const woundPenalty = command.applyWoundPenalty ? participant.trackers.woundPenalty : 0;
     const cleanLabel = command.label?.trim() || 'W20 Dice Pool';
@@ -647,12 +792,18 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       willpowerSpent = true;
     }
 
+    const rollerName = formatRollerName(
+      participant,
+      attachment.displayName,
+      command.rollerDisplayName,
+    );
+
     const isSecretRoll = Boolean(command.isSecretRoll);
     const historyEntry: RollHistoryEntry = {
       id: `roll-${this.roomState.seq + 1}-${roll.physicsSeed}`,
       timestamp: Date.now(),
       rollerDiscordId: attachment.discordUserId,
-      rollerName: participant.displayName || attachment.displayName,
+      rollerName,
       rollerAvatarUrl: participant.avatarUrl,
       label: cleanLabel,
       rageDiceCount,
@@ -1041,6 +1192,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       connectedAt: Date.now(),
       authenticated: true,
       isSpeaking: false,
+      avatarUrl: session.avatarUrl,
     };
     ws.serializeAttachment(attachment);
 
@@ -1050,6 +1202,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       session.avatarUrl,
       true,
     );
+    for (const p of Object.values(this.roomState.tableParticipants ?? {})) {
+      if (p.discordUserId === session.discordId) {
+        p.isConnected = true;
+      }
+    }
     this.persistStateSnapshot();
 
     // Attempt 100-event ring buffer delta replay when lastSeenSeq is in range
@@ -1208,6 +1365,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       case 'PING':
       case 'VOICE_SPEAKING_STATE':
       case 'UPDATE_LIGHT_TRACKERS':
+      case 'SYNC_CLIENT_SEATS':
       case 'ROLL_TABLE_POOL':
         return;
 

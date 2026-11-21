@@ -1,6 +1,6 @@
 import React from 'react';
 import type { RollHistoryEntry } from '@w20-vtt/protocol';
-import { ChevronRight, EyeOff, RotateCcw, ScrollText } from 'lucide-react';
+import { ChevronRight, EyeOff, RotateCcw, ScrollText, X } from 'lucide-react';
 import {
   AuthoritativeDieChips,
   ParticipantAvatar,
@@ -11,6 +11,7 @@ interface RollFeedDrawerProps {
   open: boolean;
   rollHistory: RollHistoryEntry[];
   disabled: boolean;
+  mobileSheet?: boolean;
   onClose: () => void;
   onReroll: (entry: RollHistoryEntry) => void;
 }
@@ -19,14 +20,24 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
   open,
   rollHistory,
   disabled,
+  mobileSheet = false,
   onClose,
   onReroll,
 }) => {
   if (!open) return null;
 
-  return (
-    <aside className="w20-obsidian-panel absolute inset-y-0 right-0 z-40 flex w-[330px] shrink-0 flex-col border-y-0 border-r-0 lg:static lg:z-20">
-      <div className="flex items-center justify-between px-3.5 py-3">
+  const asideClasses = mobileSheet
+    ? 'w20-obsidian-panel pb-safe fixed inset-x-0 bottom-0 top-auto z-50 flex max-h-[78dvh] w-full flex-col rounded-t-2xl border-t border-x-0 border-b-0 shadow-2xl'
+    : 'w20-obsidian-panel absolute inset-y-0 right-0 z-40 flex w-[330px] shrink-0 flex-col border-y-0 border-r-0 lg:static lg:z-20';
+
+  const content = (
+    <aside className={asideClasses}>
+      {mobileSheet && (
+        <div className="flex justify-center pt-2 pb-0.5">
+          <span className="h-1 w-10 rounded-full bg-stone-600/75" />
+        </div>
+      )}
+      <div className="flex items-center justify-between px-3.5 py-2.5">
         <div className="flex items-center gap-2">
           <ScrollText className="h-4 w-4 text-amber-300" />
           <h2 className="font-display text-xs font-bold tracking-wider uppercase text-amber-100">
@@ -36,10 +47,10 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-lg p-1 text-stone-400 hover:bg-zinc-800/80 hover:text-stone-100"
+          className="rounded-lg p-1.5 text-stone-400 hover:bg-zinc-800/80 hover:text-stone-100"
           aria-label="Collapse Chronicle of Rolls"
         >
-          <ChevronRight className="h-4 w-4" />
+          {mobileSheet ? <X className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
       </div>
 
@@ -70,18 +81,18 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                 className={`rounded-xl border p-2.5 shadow-inner transition ${cardAccent}`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
                     <ParticipantAvatar
                       name={entry.rollerName}
                       avatarUrl={entry.rollerAvatarUrl}
-                      sizeClass="h-6 w-6"
+                      sizeClass="h-6 w-6 shrink-0"
                     />
                     <div className="min-w-0 leading-tight">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-xs font-bold text-amber-50">
                           {entry.rollerName}
                         </span>
-                        <span className="font-mono text-[10px] text-stone-500">
+                        <span className="shrink-0 font-mono text-[10px] text-stone-500">
                           {formatRollTime(entry.timestamp)}
                         </span>
                       </div>
@@ -96,7 +107,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                     onClick={() => onReroll(entry)}
                     disabled={disabled}
                     title="Load settings & throw again"
-                    className="flex shrink-0 items-center gap-1 rounded-md border border-stone-700/75 bg-zinc-900/90 px-1.5 py-0.5 text-[10px] font-bold text-stone-300 transition hover:border-amber-500/55 hover:text-amber-100 disabled:opacity-40"
+                    className="flex shrink-0 items-center gap-1 rounded-md border border-stone-700/75 bg-zinc-900/90 px-2 py-1 text-[10px] font-bold text-stone-300 transition hover:border-amber-500/55 hover:text-amber-100 disabled:opacity-40"
                   >
                     <RotateCcw className="h-2.5 w-2.5" />
                     Re-roll
@@ -151,5 +162,20 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
         )}
       </div>
     </aside>
+  );
+
+  if (!mobileSheet) {
+    return content;
+  }
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-40 bg-black/65 backdrop-blur-[2px]"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      {content}
+    </>
   );
 };
