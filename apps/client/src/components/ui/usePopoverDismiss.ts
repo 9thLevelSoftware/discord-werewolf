@@ -29,6 +29,8 @@ export function usePopoverDismiss(options: {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      // Cancelling the key press also stops an enclosing modal dialog from closing.
+      event.preventDefault();
       event.stopPropagation();
       onCloseRef.current();
       triggerRef?.current?.focus();

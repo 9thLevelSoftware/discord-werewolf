@@ -44,6 +44,7 @@ import {
   W20_RANK_NAMES,
   W20_TRIBES,
 } from './sheetShared';
+import { NumberStepper } from '../ui';
 
 export type PageOneMobileSection =
   | 'identity'
@@ -116,7 +117,7 @@ function damageGlyph(dmg: DamageType): { symbol: string; classes: string; label:
     default:
       return {
         symbol: '',
-        classes: 'border-stone-600/70 bg-zinc-950 text-stone-500 hover:border-stone-400',
+        classes: 'border-stone-600/70 bg-zinc-950 text-stone-400 hover:border-stone-400',
         label: 'Empty',
       };
   }
@@ -377,27 +378,27 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="font-bold text-amber-100">{gift.name}</span>
-              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-stone-300">
+              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-caption font-semibold text-stone-300">
                 Lv {gift.level}
               </span>
               {(gift.rageCost ?? 0) > 0 && (
-                <span className="rounded bg-red-950/80 px-1.5 py-0.5 text-[10px] text-red-200">
+                <span className="rounded bg-red-950/80 px-1.5 py-0.5 text-caption text-red-200">
                   {gift.rageCost}R
                 </span>
               )}
               {(gift.gnosisCost ?? 0) > 0 && (
-                <span className="rounded bg-cyan-950/80 px-1.5 py-0.5 text-[10px] text-cyan-200">
+                <span className="rounded bg-cyan-950/80 px-1.5 py-0.5 text-caption text-cyan-200">
                   {gift.gnosisCost}G
                 </span>
               )}
               {(gift.willpowerCost ?? 0) > 0 && (
-                <span className="rounded bg-indigo-950/80 px-1.5 py-0.5 text-[10px] text-indigo-200">
+                <span className="rounded bg-indigo-950/80 px-1.5 py-0.5 text-caption text-indigo-200">
                   {gift.willpowerCost}WP
                 </span>
               )}
             </div>
             {gift.rollAttribute && (
-              <div className="mt-0.5 text-[10px] text-emerald-300">
+              <div className="mt-0.5 text-caption text-emerald-300">
                 {formatTraitName(gift.rollAttribute)}
                 {gift.rollAbility ? ` + ${formatTraitName(gift.rollAbility)}` : ''} • Diff{' '}
                 {gift.difficulty ?? 6}
@@ -411,7 +412,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 <button
                   type="button"
                   onClick={() => onRoll(shortcutToRollRequest(sheet, giftShortcut))}
-                  className="flex items-center gap-1 rounded-md bg-red-800/90 px-2 py-1 text-[10px] font-bold text-amber-50 hover:bg-red-700"
+                  className="flex items-center gap-1 rounded-md bg-red-800/90 px-2 py-1 text-caption font-bold text-amber-50 hover:bg-red-700"
                 >
                   <Dices className="h-3 w-3" />
                   Roll
@@ -419,6 +420,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 <button
                   type="button"
                   onClick={() => toggleShortcutPin(giftShortcut)}
+                  aria-label={pinned ? 'Unpin shortcut' : 'Pin shortcut'}
                   title={pinned ? 'Unpin shortcut' : 'Pin shortcut'}
                   className={`rounded-md border p-1 transition ${
                     pinned
@@ -439,13 +441,13 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 }))
               }
               aria-label={`Remove gift ${gift.name}`}
-              className="rounded p-1 text-stone-500 hover:bg-red-950/60 hover:text-red-300"
+              className="rounded p-1 text-stone-400 hover:bg-red-950/60 hover:text-red-300"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
-        {gift.summary && <p className="mt-1 text-[11px] text-stone-400">{gift.summary}</p>}
+        {gift.summary && <p className="mt-1 text-xs text-stone-400">{gift.summary}</p>}
       </div>
     );
   };
@@ -459,7 +461,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
             <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
               Garou Identity
             </h3>
-            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-amber-500/35 bg-amber-950/25 px-2.5 py-1 text-[11px] font-semibold text-amber-200">
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-amber-500/35 bg-amber-950/25 px-2.5 py-1 text-xs font-semibold text-amber-200">
               <input
                 type="checkbox"
                 checked={elderMode}
@@ -474,43 +476,43 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
             {/* Col 1 */}
             <div className="space-y-2">
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Name</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Name</span>
                 <input
                   type="text"
                   maxLength={120}
                   value={sheet.name}
                   onChange={(e) => onUpdateSheet((p) => ({ ...p, name: e.target.value }))}
-                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75 focus:outline-none"
+                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75"
                 />
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Player</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Player</span>
                 <input
                   type="text"
                   maxLength={120}
                   value={sheet.player}
                   onChange={(e) => onUpdateSheet((p) => ({ ...p, player: e.target.value }))}
-                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75 focus:outline-none"
+                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75"
                 />
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Chronicle</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Chronicle</span>
                 <input
                   type="text"
                   maxLength={120}
                   value={sheet.chronicle}
                   onChange={(e) => onUpdateSheet((p) => ({ ...p, chronicle: e.target.value }))}
-                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75 focus:outline-none"
+                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75"
                 />
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Concept</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Concept</span>
                 <input
                   type="text"
                   maxLength={240}
                   value={sheet.concept}
                   onChange={(e) => onUpdateSheet((p) => ({ ...p, concept: e.target.value }))}
-                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75 focus:outline-none"
+                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75"
                 />
               </label>
             </div>
@@ -518,7 +520,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
             {/* Col 2 */}
             <div className="space-y-2">
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Breed</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Breed</span>
                 <select
                   value={sheet.breed}
                   onChange={(e) =>
@@ -534,7 +536,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 </select>
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Auspice</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Auspice</span>
                 <select
                   value={sheet.auspice}
                   onChange={(e) =>
@@ -550,7 +552,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 </select>
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Tribe</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Tribe</span>
                 <select
                   value={isStandardTribe ? sheet.tribe : '__custom__'}
                   onChange={(e) => {
@@ -581,7 +583,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 )}
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Deed Name</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Deed Name</span>
                 <input
                   type="text"
                   maxLength={120}
@@ -600,7 +602,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
             {/* Col 3 */}
             <div className="space-y-2">
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Pack Name</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Pack Name</span>
                 <input
                   type="text"
                   maxLength={120}
@@ -610,7 +612,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 />
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Pack Totem</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Pack Totem</span>
                 <input
                   type="text"
                   maxLength={120}
@@ -620,7 +622,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 />
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold uppercase text-stone-400">Rank</span>
+                <span className="text-caption font-bold uppercase text-stone-400">Rank</span>
                 <select
                   value={sheet.rank}
                   onChange={(e) =>
@@ -640,7 +642,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
               </label>
               {(sheet.breed === 'metis' || Boolean(sheet.metisDeformity)) && (
                 <label className="block">
-                  <span className="text-[10px] font-bold uppercase text-amber-300">
+                  <span className="text-caption font-bold uppercase text-amber-300">
                     Metis Deformity
                   </span>
                   <input
@@ -670,7 +672,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
               Attributes (Active Form: {formatFormName(sheet.activeForm)})
             </h3>
             {isMobile && (
-              <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-amber-200">
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-amber-200">
                 <input
                   type="checkbox"
                   checked={elderMode}
@@ -685,7 +687,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
           <div className={isMobile ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-3 gap-3'}>
             {(['physical', 'social', 'mental'] as AttributeCategory[]).map((cat) => (
               <div key={cat} className="rounded-xl border border-stone-800/90 bg-zinc-900/45 p-3">
-                <div className="mb-2 border-b border-stone-800 pb-1 text-[11px] font-display font-bold uppercase tracking-wider text-stone-300">
+                <div className="mb-2 border-b border-stone-800 pb-1 text-xs font-display font-bold uppercase tracking-wider text-stone-300">
                   {cat}
                 </div>
                 <div className="space-y-3">
@@ -720,7 +722,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                             </span>
                             {eff !== base && (
                               <span
-                                className={`rounded px-1.5 py-0.2 font-mono text-[10px] font-bold ${
+                                className={`rounded px-1.5 py-0.5 font-mono text-caption font-bold ${
                                   delta > 0
                                     ? 'bg-emerald-950/75 text-emerald-300'
                                     : 'bg-amber-950/75 text-amber-300'
@@ -736,7 +738,8 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                             <button
                               type="button"
                               onClick={() => onRoll(shortcutToRollRequest(sheet, shortcut))}
-                              className="flex items-center gap-1 rounded bg-red-800/85 px-1.5 py-0.5 text-[10px] font-bold text-amber-50 hover:bg-red-700"
+                              className="flex items-center gap-1 rounded bg-red-800/85 px-1.5 py-0.5 text-caption font-bold text-amber-50 hover:bg-red-700"
+                              aria-label={`Roll ${formatTraitName(attr)} (${eff}d10)`}
                               title={`Roll ${formatTraitName(attr)} (${eff}d10)`}
                             >
                               <Dices className="h-3 w-3" />
@@ -745,7 +748,9 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                             <button
                               type="button"
                               onClick={() => toggleShortcutPin(shortcut)}
-                              title={pinned ? 'Unpin shortcut' : 'Pin shortcut'}
+                              aria-pressed={pinned}
+                              aria-label={`${pinned ? 'Unpin' : 'Pin'} ${formatTraitName(attr)} roll`}
+                              title={`${pinned ? 'Unpin' : 'Pin'} ${formatTraitName(attr)} roll`}
                               className={`rounded border p-0.5 transition ${
                                 pinned
                                   ? 'border-amber-400 bg-amber-950/60 text-amber-300'
@@ -788,8 +793,9 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               return { ...prev, specialties: nextSpecs };
                             });
                           }}
+                          aria-label={`${formatTraitName(attr)} specialty`}
                           placeholder="Specialty (at 4+ dots)"
-                          className="w-full rounded border border-stone-800/80 bg-zinc-950/80 px-2 py-0.5 text-[10px] text-stone-300 placeholder-stone-600 focus:border-amber-500/50 focus:outline-none"
+                          className="w-full rounded border border-stone-800/80 bg-zinc-950/80 px-2 py-0.5 text-caption text-stone-300 placeholder-stone-500 focus:border-amber-500/50"
                         />
                       </div>
                     );
@@ -808,7 +814,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
             <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
               Abilities
             </h3>
-            <span className="text-[10px] text-stone-400">
+            <span className="text-caption text-stone-400">
               Click Roll on any Ability to pair with an Attribute
             </span>
           </div>
@@ -841,7 +847,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
 
               return (
                 <div key={cat} className="rounded-xl border border-stone-800/90 bg-zinc-900/45 p-3">
-                  <div className="mb-2 border-b border-stone-800 pb-1 text-[11px] font-display font-bold uppercase tracking-wider text-stone-300">
+                  <div className="mb-2 border-b border-stone-800 pb-1 text-xs font-display font-bold uppercase tracking-wider text-stone-300">
                     {cat}
                   </div>
 
@@ -906,7 +912,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                                       ),
                                     }))
                                   }
-                                  className="text-stone-500 hover:text-red-300"
+                                  className="text-stone-400 hover:text-red-300"
                                   aria-label={`Remove ${row.label}`}
                                 >
                                   <X className="h-3 w-3" />
@@ -918,7 +924,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               <button
                                 type="button"
                                 onClick={() => openAbilityPopover(row.key, cat)}
-                                className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold transition ${
+                                className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-caption font-bold transition ${
                                   popoverOpen
                                     ? 'bg-red-700 text-white'
                                     : 'bg-zinc-800 text-stone-200 hover:bg-red-800/85 hover:text-amber-50'
@@ -930,6 +936,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               <button
                                 type="button"
                                 onClick={() => toggleShortcutPin(defaultShortcut)}
+                                aria-label={`Pin ${defaultShortcut.name}`}
                                 title={`Pin ${defaultShortcut.name}`}
                                 className={`rounded border p-0.5 transition ${
                                   defaultPinned
@@ -994,13 +1001,14 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                                 return { ...prev, specialties: nextSpecs };
                               });
                             }}
+                            aria-label={`${row.label} specialty`}
                             placeholder="Specialty"
-                            className="w-full rounded border border-stone-800/80 bg-zinc-950/80 px-2 py-0.5 text-[10px] text-stone-300 placeholder-stone-600 focus:border-amber-500/50 focus:outline-none"
+                            className="w-full rounded border border-stone-800/80 bg-zinc-950/80 px-2 py-0.5 text-caption text-stone-300 placeholder-stone-500 focus:border-amber-500/50"
                           />
 
                           {/* Compact Attribute-Pairing Popover */}
                           {popoverOpen && popoverShortcut && (
-                            <div className="mt-1.5 rounded-lg border border-red-700/70 bg-zinc-950 p-2 text-[11px] shadow-lg">
+                            <div className="mt-1.5 rounded-lg border border-red-700/70 bg-zinc-950 p-2 text-xs shadow-lg">
                               <div className="flex items-center justify-between gap-1 pb-1.5">
                                 <span className="font-bold text-amber-200">
                                   Pair {row.label}
@@ -1015,13 +1023,13 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               </div>
                               <div className="grid grid-cols-2 gap-1.5">
                                 <label className="block">
-                                  <span className="text-[9px] uppercase text-stone-400">
+                                  <span className="text-caption uppercase text-stone-400">
                                     Attribute
                                   </span>
                                   <select
                                     value={pairedAttr}
                                     onChange={(e) => setPairedAttr(e.target.value as AttributeKey)}
-                                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-[11px] capitalize"
+                                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-xs capitalize"
                                   >
                                     {ALL_ATTRIBUTES.map((a) => (
                                       <option key={a} value={a}>
@@ -1031,7 +1039,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                                   </select>
                                 </label>
                                 <label className="block">
-                                  <span className="text-[9px] uppercase text-stone-400">
+                                  <span className="text-caption uppercase text-stone-400">
                                     Difficulty
                                   </span>
                                   <input
@@ -1044,12 +1052,12 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                                         Math.max(2, Math.min(10, Number(e.target.value) || 6))
                                       )
                                     }
-                                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 font-mono text-[11px]"
+                                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 font-mono text-xs"
                                   />
                                 </label>
                               </div>
                               <div className="mt-2 flex items-center justify-between gap-1">
-                                <span className="font-mono text-[10px] text-emerald-300">
+                                <span className="font-mono text-caption text-emerald-300">
                                   {stats.effectiveAttributes[pairedAttr] + lookupSheetAbilityDots(sheet, row.key)}
                                   d10 • Diff{' '}
                                   {Math.max(
@@ -1067,7 +1075,8 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => toggleShortcutPin(popoverShortcut)}
-                                    className="rounded border border-amber-500/45 bg-amber-950/35 px-1.5 py-1 text-[10px] font-bold text-amber-200 hover:bg-amber-900/50"
+                                    className="rounded border border-amber-500/45 bg-amber-950/35 px-1.5 py-1 text-caption font-bold text-amber-200 hover:bg-amber-900/50"
+                                    aria-label="Pin this combo"
                                     title="Pin this combo"
                                   >
                                     ★ Pin
@@ -1078,7 +1087,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                                       onRoll(shortcutToRollRequest(sheet, popoverShortcut));
                                       setPairingAbilityKey(null);
                                     }}
-                                    className="w20-crimson-seal rounded px-2.5 py-1 text-[10px] font-bold text-amber-50"
+                                    className="w20-crimson-seal rounded px-2.5 py-1 text-caption font-bold text-amber-50"
                                   >
                                     Roll
                                   </button>
@@ -1106,13 +1115,16 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                           handleAddCustomAbility(cat);
                         }
                       }}
+                      aria-label={`Add a custom ${cat.slice(0, -1)}`}
                       placeholder={`Custom ${cat.slice(0, -1)}...`}
-                      className="min-w-0 flex-1 rounded border border-stone-700 bg-zinc-950 px-2 py-1 text-[11px] text-stone-200"
+                      className="min-w-0 flex-1 rounded border border-stone-700 bg-zinc-950 px-2 py-1 text-xs text-stone-200"
                     />
                     <button
                       type="button"
                       onClick={() => handleAddCustomAbility(cat)}
-                      className="rounded border border-stone-700 bg-zinc-800 px-2 py-1 text-[10px] font-bold text-stone-200 hover:bg-zinc-700"
+                      aria-label={`Add custom ${cat.slice(0, -1)}`}
+                      title={`Add custom ${cat.slice(0, -1)}`}
+                      className="rounded border border-stone-700 bg-zinc-800 px-2 py-1 text-caption font-bold text-stone-200 hover:bg-zinc-700"
                     >
                       +
                     </button>
@@ -1144,7 +1156,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
               </div>
 
               {sheet.backgrounds.length === 0 ? (
-                <p className="text-[11px] text-stone-500">No Backgrounds added yet.</p>
+                <p className="text-xs text-stone-400">No Backgrounds added yet.</p>
               ) : (
                 <div className="space-y-2">
                   {sheet.backgrounds.map((bg) => (
@@ -1180,7 +1192,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               backgrounds: prev.backgrounds.filter((item) => item.id !== bg.id),
                             }))
                           }
-                          className="text-stone-500 hover:text-red-300"
+                          className="text-stone-400 hover:text-red-300"
                           aria-label={`Remove background ${bg.name}`}
                         >
                           <X className="h-3.5 w-3.5" />
@@ -1204,8 +1216,9 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                         handleAddBackground();
                       }
                     }}
+                    aria-label="Background name"
                     placeholder="Type any Background (e.g. Fate, Caern, Custom)..."
-                    className="min-h-[40px] min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75 focus:outline-none"
+                    className="min-h-[40px] min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75"
                   />
                   <button
                     type="button"
@@ -1220,14 +1233,14 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 {/* Mobile & Desktop Quick-Pick Background Chips */}
                 <div className="space-y-1.5 rounded-lg border border-stone-800/80 bg-zinc-900/40 p-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
+                    <span className="text-caption font-bold uppercase tracking-wider text-stone-400">
                       Quick Add W20 Backgrounds ({quickBgSuggestions.length})
                     </span>
                     {!newBgName.trim() && (
                       <button
                         type="button"
                         onClick={() => setShowExpandedBgChips((v) => !v)}
-                        className="text-[10px] font-semibold text-amber-300 hover:text-amber-200"
+                        className="text-caption font-semibold text-amber-300 hover:text-amber-200"
                       >
                         {showExpandedBgChips ? 'Core Only (12)' : 'Show Expanded (+12)'}
                       </button>
@@ -1240,8 +1253,9 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                           key={entry.key}
                           type="button"
                           onClick={() => handleAddBackground(entry.label)}
+                          aria-label={entry.summary}
                           title={entry.summary}
-                          className="rounded-md border border-stone-700/80 bg-zinc-950/90 px-2 py-1 text-[10px] font-semibold text-stone-200 transition hover:border-amber-400/65 hover:text-amber-100"
+                          className="rounded-md border border-stone-700/80 bg-zinc-950/90 px-2 py-1 text-caption font-semibold text-stone-200 transition hover:border-amber-400/65 hover:text-amber-100"
                         >
                           + {entry.label}
                         </button>
@@ -1268,7 +1282,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                       setShowGiftPicker((v) => !v);
                       setShowCustomGiftForm(false);
                     }}
-                    className={`rounded-lg border px-2 py-1 text-[10px] font-bold transition ${
+                    className={`rounded-lg border px-2 py-1 text-caption font-bold transition ${
                       showGiftPicker
                         ? 'border-emerald-500 bg-emerald-950/60 text-emerald-200'
                         : 'border-stone-700 bg-zinc-900 text-stone-200 hover:border-emerald-500/60'
@@ -1282,7 +1296,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                       setShowCustomGiftForm((v) => !v);
                       setShowGiftPicker(false);
                     }}
-                    className={`rounded-lg border px-2 py-1 text-[10px] font-bold transition ${
+                    className={`rounded-lg border px-2 py-1 text-caption font-bold transition ${
                       showCustomGiftForm
                         ? 'border-amber-500 bg-amber-950/60 text-amber-200'
                         : 'border-stone-700 bg-zinc-900 text-stone-200 hover:border-amber-500/60'
@@ -1303,7 +1317,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                       value={giftSearch}
                       onChange={(e) => setGiftSearch(e.target.value)}
                       placeholder="Search W20 Level 1 Gifts by name, tribe, auspice..."
-                      className="min-w-0 flex-1 bg-transparent text-xs text-stone-100 placeholder-stone-500 focus:outline-none"
+                      className="min-w-0 flex-1 bg-transparent text-xs text-stone-100 placeholder-stone-500"
                     />
                   </div>
                   <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
@@ -1319,17 +1333,17 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               <span className="text-xs font-bold text-stone-100">
                                 {entry.name}
                               </span>
-                              <span className="text-[9px] text-stone-400">
+                              <span className="text-caption text-stone-400">
                                 ({entry.sources.map((s) => formatTraitName(s)).join(', ')})
                               </span>
                             </div>
-                            <p className="mt-0.5 text-[10px] text-stone-400">{entry.summary}</p>
+                            <p className="mt-0.5 text-caption text-stone-400">{entry.summary}</p>
                           </div>
                           <button
                             type="button"
                             disabled={alreadyAdded}
                             onClick={() => handleAddCatalogGift(entry)}
-                            className="shrink-0 rounded-md bg-emerald-700 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-stone-500"
+                            className="shrink-0 rounded-md bg-emerald-700 px-2 py-1 text-caption font-bold text-white hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-stone-400"
                           >
                             {alreadyAdded ? 'Added' : 'Add'}
                           </button>
@@ -1348,7 +1362,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 >
                   <div className="grid grid-cols-3 gap-2">
                     <label className="col-span-2 block">
-                      <span className="text-[10px] text-stone-400">Gift Name *</span>
+                      <span className="text-caption text-stone-400">Gift Name *</span>
                       <input
                         type="text"
                         required
@@ -1360,7 +1374,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                       />
                     </label>
                     <label className="block">
-                      <span className="text-[10px] text-stone-400">Level</span>
+                      <span className="text-caption text-stone-400">Level</span>
                       <input
                         type="number"
                         min={1}
@@ -1374,7 +1388,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
 
                   <div className="grid grid-cols-3 gap-2">
                     <label className="block">
-                      <span className="text-[10px] text-stone-400">Roll Trait</span>
+                      <span className="text-caption text-stone-400">Roll Trait</span>
                       <select
                         value={customGiftRollAttr}
                         onChange={(e) =>
@@ -1382,7 +1396,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                             e.target.value as AttributeKey | 'rage' | 'gnosis' | 'willpower' | ''
                           )
                         }
-                        className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-950 px-1.5 py-1 text-[11px] capitalize"
+                        className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-950 px-1.5 py-1 text-xs capitalize"
                       >
                         <option value="">None (Passive)</option>
                         {ALL_ATTRIBUTES.map((a) => (
@@ -1396,12 +1410,12 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                       </select>
                     </label>
                     <label className="block">
-                      <span className="text-[10px] text-stone-400">Ability (Opt)</span>
+                      <span className="text-caption text-stone-400">Ability (Opt)</span>
                       <select
                         value={customGiftRollAbility}
                         disabled={!customGiftRollAttr}
                         onChange={(e) => setCustomGiftRollAbility(e.target.value)}
-                        className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-950 px-1.5 py-1 text-[11px] disabled:opacity-45"
+                        className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-950 px-1.5 py-1 text-xs disabled:opacity-45"
                       >
                         <option value="">None</option>
                         {ALL_CANONICAL_ABILITIES.map((ab) => (
@@ -1423,12 +1437,12 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                           value={customGiftAbilityText}
                           onChange={(e) => setCustomGiftAbilityText(e.target.value)}
                           placeholder="Type custom Ability..."
-                          className="mt-1 min-h-[34px] w-full rounded border border-amber-500/50 bg-zinc-950 px-2 py-1 text-[11px] text-stone-100"
+                          className="mt-1 min-h-[34px] w-full rounded border border-amber-500/50 bg-zinc-950 px-2 py-1 text-xs text-stone-100"
                         />
                       )}
                     </label>
                     <label className="block">
-                      <span className="text-[10px] text-stone-400">Diff</span>
+                      <span className="text-caption text-stone-400">Diff</span>
                       <input
                         type="number"
                         min={2}
@@ -1442,7 +1456,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
 
                   <div className="grid grid-cols-3 gap-2">
                     <label className="block">
-                      <span className="text-[10px] text-red-300">Rage Cost</span>
+                      <span className="text-caption text-red-300">Rage Cost</span>
                       <input
                         type="number"
                         min={0}
@@ -1453,7 +1467,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                       />
                     </label>
                     <label className="block">
-                      <span className="text-[10px] text-cyan-300">Gnosis Cost</span>
+                      <span className="text-caption text-cyan-300">Gnosis Cost</span>
                       <input
                         type="number"
                         min={0}
@@ -1464,7 +1478,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                       />
                     </label>
                     <label className="block">
-                      <span className="text-[10px] text-indigo-300">WP Cost</span>
+                      <span className="text-caption text-indigo-300">WP Cost</span>
                       <input
                         type="number"
                         min={0}
@@ -1488,13 +1502,13 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     <button
                       type="button"
                       onClick={() => setShowCustomGiftForm(false)}
-                      className="rounded border border-stone-700 px-2.5 py-1 text-[11px] text-stone-300"
+                      className="rounded border border-stone-700 px-2.5 py-1 text-xs text-stone-300"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="rounded bg-amber-600 px-3 py-1 text-[11px] font-bold text-zinc-950 hover:bg-amber-500"
+                      className="rounded bg-amber-600 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-500"
                     >
                       Save Gift
                     </button>
@@ -1503,7 +1517,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
               )}
 
               {sheet.gifts.length === 0 ? (
-                <p className="text-[11px] text-stone-500">
+                <p className="text-xs text-stone-400">
                   No Gifts recorded yet. Add from the W20 catalog or create a custom Gift.
                 </p>
               ) : (
@@ -1531,7 +1545,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     <div key={rKey} className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold capitalize text-stone-200">{rKey}</span>
-                        <span className="font-mono text-[10px] text-stone-400">
+                        <span className="font-mono text-caption text-stone-400">
                           Perm {tracker.permanent} / Temp {tracker.temporary}
                         </span>
                       </div>
@@ -1582,7 +1596,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
               </h3>
               <div className="space-y-2.5 text-xs">
                 <label className="block">
-                  <span className="text-[10px] uppercase text-stone-400">Garou Rank</span>
+                  <span className="text-caption uppercase text-stone-400">Garou Rank</span>
                   <select
                     value={sheet.rank}
                     onChange={(e) =>
@@ -1603,7 +1617,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
 
                 <div className="grid grid-cols-3 gap-2">
                   <label className="block">
-                    <span className="text-[10px] uppercase text-stone-400">Total XP</span>
+                    <span className="text-caption uppercase text-stone-400">Total XP</span>
                     <input
                       type="number"
                       min={0}
@@ -1622,7 +1636,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     />
                   </label>
                   <label className="block">
-                    <span className="text-[10px] uppercase text-stone-400">Spent XP</span>
+                    <span className="text-caption uppercase text-stone-400">Spent XP</span>
                     <input
                       type="number"
                       min={0}
@@ -1641,7 +1655,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     />
                   </label>
                   <div className="flex flex-col justify-end">
-                    <span className="text-[10px] uppercase text-stone-400">Remaining</span>
+                    <span className="text-caption uppercase text-stone-400">Remaining</span>
                     <div
                       className={`mt-0.5 rounded border px-2 py-1 text-center font-mono font-bold ${
                         stats.experienceRemaining < 0
@@ -1691,7 +1705,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                         <span className={`font-display text-xs font-bold uppercase ${labelColor}`}>
                           {label}
                         </span>
-                        <span className="ml-2 font-mono text-[10px] text-stone-400">
+                        <span className="ml-2 font-mono text-caption text-stone-400">
                           {tracker.permanent} Perm / {tracker.temporary} Temp
                         </span>
                       </div>
@@ -1700,12 +1714,17 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                           type="button"
                           disabled={rollPool <= 0}
                           onClick={() => onRoll(shortcutToRollRequest(sheet, traitShortcut))}
+                          aria-label={
+                            rollPool <= 0
+                              ? `${label} pool is 0`
+                              : `Roll ${label} (${rollPool}d10)`
+                          }
                           title={
                             rollPool <= 0
                               ? `${label} pool is 0`
                               : `Roll ${label} (${rollPool}d10)`
                           }
-                          className="flex items-center gap-1 rounded bg-red-800/85 px-2 py-0.5 text-[10px] font-bold text-amber-50 hover:bg-red-700 disabled:opacity-40"
+                          className="flex items-center gap-1 rounded bg-red-800/85 px-2 py-0.5 text-caption font-bold text-amber-50 hover:bg-red-700 disabled:opacity-40"
                         >
                           <Dices className="h-3 w-3" />
                           Roll ({rollPool})
@@ -1713,6 +1732,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                         <button
                           type="button"
                           onClick={() => toggleShortcutPin(traitShortcut)}
+                          aria-label={pinned ? 'Unpin shortcut' : 'Pin shortcut'}
                           title={pinned ? 'Unpin shortcut' : 'Pin shortcut'}
                           className={`rounded border p-0.5 transition ${
                             pinned
@@ -1726,7 +1746,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     </div>
 
                     <div className="space-y-1">
-                      <div className="text-[9px] uppercase tracking-wider text-stone-400">
+                      <div className="text-caption uppercase tracking-wider text-stone-400">
                         Permanent (Circles)
                       </div>
                       <SheetPipTrack
@@ -1746,7 +1766,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     </div>
 
                     <div className="space-y-1">
-                      <div className="text-[9px] uppercase tracking-wider text-stone-400">
+                      <div className="text-caption uppercase tracking-wider text-stone-400">
                         Temporary (Squares)
                       </div>
                       <SheetPipTrack
@@ -1766,43 +1786,24 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     </div>
 
                     {traitKey === 'gnosis' && (
-                      <div className="mt-1.5 flex items-center justify-between rounded border border-stone-800 bg-zinc-950 px-2 py-1 text-[10px]">
+                      <div className="mt-1.5 flex items-center justify-between rounded border border-stone-800 bg-zinc-950 px-2 py-1 text-caption">
                         <span className="text-stone-300">
                           Silver Carried{' '}
                           <span className="text-cyan-300">
                             (Eff. Gnosis {stats.effectiveGnosisPool})
                           </span>
                         </span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={sheet.silverCarriedItems <= 0}
-                            onClick={() =>
-                              onUpdateSheet((p) => ({
-                                ...p,
-                                silverCarriedItems: Math.max(0, p.silverCarriedItems - 1),
-                              }))
-                            }
-                            className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700 disabled:opacity-40"
-                          >
-                            -
-                          </button>
-                          <span className="font-mono font-bold text-amber-200">
-                            {sheet.silverCarriedItems}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onUpdateSheet((p) => ({
-                                ...p,
-                                silverCarriedItems: Math.min(20, p.silverCarriedItems + 1),
-                              }))
-                            }
-                            className="rounded bg-zinc-800 px-1.5 font-bold hover:bg-zinc-700"
-                          >
-                            +
-                          </button>
-                        </div>
+                        <NumberStepper
+                          label="Silver items carried"
+                          value={sheet.silverCarriedItems}
+                          min={0}
+                          max={20}
+                          size="sm"
+                          valueClassName="text-amber-200"
+                          onChange={(next) =>
+                            onUpdateSheet((p) => ({ ...p, silverCarriedItems: next }))
+                          }
+                        />
                       </div>
                     )}
                   </div>
@@ -1819,7 +1820,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 Health
               </h3>
               <span
-                className={`rounded-full px-2 py-0.5 font-mono text-[10px] font-bold ${
+                className={`rounded-full px-2 py-0.5 font-mono text-caption font-bold ${
                   stats.isIncapacitated
                     ? 'border border-red-500 bg-red-950 text-red-200'
                     : stats.woundPenalty < 0
@@ -1831,29 +1832,17 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
               </span>
             </div>
 
-            <div className="mb-2.5 flex items-center justify-between rounded-lg border border-stone-800 bg-zinc-900/60 px-2.5 py-1.5 text-[11px]">
+            <div className="mb-2.5 flex items-center justify-between rounded-lg border border-stone-800 bg-zinc-900/60 px-2.5 py-1.5 text-xs">
               <span className="text-stone-300">Bonus Bruised Boxes</span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={sheet.health.bonusBruisedBoxes <= 0}
-                  onClick={() => handleAdjustBonusBruised(-1)}
-                  className="rounded bg-zinc-800 px-2 py-0.5 font-bold hover:bg-zinc-700 disabled:opacity-40"
-                >
-                  -
-                </button>
-                <span className="font-mono font-bold text-amber-200">
-                  {sheet.health.bonusBruisedBoxes}
-                </span>
-                <button
-                  type="button"
-                  disabled={sheet.health.bonusBruisedBoxes >= 10}
-                  onClick={() => handleAdjustBonusBruised(1)}
-                  className="rounded bg-zinc-800 px-2 py-0.5 font-bold hover:bg-zinc-700 disabled:opacity-40"
-                >
-                  +
-                </button>
-              </div>
+              <NumberStepper
+                label="Bonus Bruised boxes"
+                value={sheet.health.bonusBruisedBoxes}
+                min={0}
+                max={10}
+                size="sm"
+                valueClassName="text-amber-200"
+                onChange={(next) => handleAdjustBonusBruised(next - sheet.health.bonusBruisedBoxes)}
+              />
             </div>
 
             <div className="space-y-1.5">
@@ -1884,7 +1873,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                   >
                     <span className="text-xs font-semibold text-stone-200">{label}</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-stone-400">{visual.label}</span>
+                      <span className="text-caption text-stone-400">{visual.label}</span>
                       <span
                         className={`flex items-center justify-center rounded border font-mono text-sm font-black ${
                           isMobile ? 'h-7 w-7' : 'h-6 w-6'
@@ -1898,7 +1887,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
               })}
             </div>
 
-            <div className="mt-2.5 flex items-center justify-between text-[10px] text-stone-400">
+            <div className="mt-2.5 flex items-center justify-between text-caption text-stone-400">
               <span>Tap box: None → / → X → *</span>
               <button
                 type="button"
