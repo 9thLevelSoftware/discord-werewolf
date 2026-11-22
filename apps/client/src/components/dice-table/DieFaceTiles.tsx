@@ -96,6 +96,7 @@ export const AuthoritativeDieChips: React.FC<{
   rageDiceCount: number;
   compact?: boolean;
 }> = ({ roll, rageDiceCount, compact = false }) => {
+  const isInitiative = roll.rollMode === 'initiative';
   const faces = useMemo(() => buildDecoratedFaces(roll, rageDiceCount), [roll, rageDiceCount]);
   const chipSize = compact ? 'h-7 w-7 text-xs' : 'h-10 w-10 text-sm';
 
@@ -105,7 +106,10 @@ export const AuthoritativeDieChips: React.FC<{
         const isSuccess = die.contributedSuccesses > 0;
         let style =
           'border-stone-700/75 bg-gradient-to-b from-zinc-800/90 to-zinc-950 text-stone-400';
-        if (die.isOne) {
+        if (isInitiative) {
+          style =
+            'border-amber-400/90 bg-gradient-to-b from-amber-900/90 to-zinc-950 text-amber-100 shadow-[0_0_10px_rgba(245,158,11,0.35)]';
+        } else if (die.isOne) {
           style =
             'border-red-500/85 bg-gradient-to-b from-red-950 to-zinc-950 text-red-300 shadow-[0_0_8px_rgba(220,38,38,0.4)]';
         } else if (die.isCanceled) {
@@ -116,38 +120,41 @@ export const AuthoritativeDieChips: React.FC<{
             'border-emerald-500/75 bg-gradient-to-b from-emerald-950/90 to-zinc-950 text-emerald-200 shadow-[0_0_10px_rgba(16,185,129,0.3)]';
         }
 
-        const rageRing = die.isRageDie
-          ? 'ring-1 ring-red-500/80 ring-offset-1 ring-offset-zinc-950'
-          : '';
+        const rageRing =
+          !isInitiative && die.isRageDie
+            ? 'ring-1 ring-red-500/80 ring-offset-1 ring-offset-zinc-950'
+            : '';
 
         return (
           <div
             key={idx}
             className={`font-display relative flex ${chipSize} items-center justify-center rounded-lg border font-bold shadow ${style} ${rageRing}`}
             title={
-              [
-                die.isRageDie ? 'Rage Die' : 'Obsidian Die',
-                die.isOne
-                  ? 'Rolled 1 (Cancels a success)'
-                  : die.isCanceled
-                    ? 'Success canceled by a 1'
-                    : die.contributedSuccesses === 2
-                      ? 'Specialty 10 (2 Successes)'
-                      : die.isBonusExplosionDie
-                        ? 'Specialty Bonus Explosion'
-                        : '',
-              ]
-                .filter(Boolean)
-                .join(' • ')
+              isInitiative
+                ? `Initiative 1d10: ${die.value}`
+                : [
+                    die.isRageDie ? 'Rage Die' : 'Obsidian Die',
+                    die.isOne
+                      ? 'Rolled 1 (Cancels a success)'
+                      : die.isCanceled
+                        ? 'Success canceled by a 1'
+                        : die.contributedSuccesses === 2
+                          ? 'Specialty 10 (2 Successes)'
+                          : die.isBonusExplosionDie
+                            ? 'Specialty Bonus Explosion'
+                            : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' • ')
             }
           >
             {die.value}
-            {die.contributedSuccesses === 2 && !die.isCanceled && (
+            {!isInitiative && die.contributedSuccesses === 2 && !die.isCanceled && (
               <span className="absolute -top-1.5 -right-1.5 rounded border border-amber-300/80 bg-gradient-to-b from-amber-300 to-amber-600 px-1 font-sans text-[8px] font-black text-zinc-950 shadow">
                 x2
               </span>
             )}
-            {die.isRageDie && (
+            {!isInitiative && die.isRageDie && (
               <span className="absolute -bottom-0.5 left-1/2 h-1 w-3 -translate-x-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]" />
             )}
           </div>
@@ -168,25 +175,35 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
   onDismiss,
   compact = false,
 }) => {
-  const accentBorder = banner.roll.isBotch
-    ? '!border-red-500/85'
-    : banner.roll.netSuccesses > 0
-      ? '!border-emerald-500/70'
-      : '';
+  const isInitiative = banner.roll.rollMode === 'initiative';
+  const initDie = banner.roll.dice[0]?.value ?? 0;
+  const initMod = banner.roll.initiativeModifier ?? 0;
+  const initTotal = banner.roll.initiativeTotal ?? initDie + initMod;
+  const modExpr = initMod >= 0 ? `+ ${initMod}` : `- ${Math.abs(initMod)}`;
 
-  const summaryText = banner.roll.isBotch
-    ? compact
-      ? 'Botch!'
-      : 'Catastrophic Botch'
-    : banner.roll.netSuccesses > 0
+  const accentBorder = isInitiative
+    ? '!border-amber-400/80'
+    : banner.roll.isBotch
+      ? '!border-red-500/85'
+      : banner.roll.netSuccesses > 0
+        ? '!border-emerald-500/70'
+        : '';
+
+  const summaryText = isInitiative
+    ? `Initiative: ${initTotal}`
+    : banner.roll.isBotch
       ? compact
-        ? `${banner.roll.netSuccesses} Net (${banner.roll.outcome})`
-        : `${banner.roll.netSuccesses} Net ${
-            banner.roll.netSuccesses === 1 ? 'Success' : 'Successes'
-          } (${banner.roll.outcome})`
-      : compact
-        ? 'Failure (0 Net)'
-        : 'Failure — 0 Net Successes';
+        ? 'Botch!'
+        : 'Catastrophic Botch'
+      : banner.roll.netSuccesses > 0
+        ? compact
+          ? `${banner.roll.netSuccesses} Net (${banner.roll.outcome})`
+          : `${banner.roll.netSuccesses} Net ${
+              banner.roll.netSuccesses === 1 ? 'Success' : 'Successes'
+            } (${banner.roll.outcome})`
+        : compact
+          ? 'Failure (0 Net)'
+          : 'Failure — 0 Net Successes';
 
   return (
     <div
@@ -223,7 +240,9 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
               <span className="max-w-[140px] truncate">{banner.label}</span>
               <span className="text-stone-600">•</span>
               <span className="font-mono text-amber-300/90">
-                Diff {banner.roll.clampedDifficulty}
+                {isInitiative
+                  ? `1d10 [${initDie}] ${modExpr}`
+                  : `Diff ${banner.roll.clampedDifficulty}`}
               </span>
               {banner.isSecretRoll && (
                 <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-500/50 bg-amber-950/80 px-1.5 py-0.5 text-[9px] font-bold text-amber-200">
@@ -235,11 +254,13 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
               className={`font-display mt-0.5 font-black tracking-wide uppercase ${
                 compact ? 'text-sm leading-tight' : 'text-base'
               } ${
-                banner.roll.isBotch
-                  ? 'text-red-300'
-                  : banner.roll.netSuccesses > 0
-                    ? 'text-emerald-300'
-                    : 'text-stone-300'
+                isInitiative
+                  ? 'text-amber-200'
+                  : banner.roll.isBotch
+                    ? 'text-red-300'
+                    : banner.roll.netSuccesses > 0
+                      ? 'text-emerald-300'
+                      : 'text-stone-300'
               }`}
             >
               {summaryText}
@@ -247,7 +268,7 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {banner.roll.automaticSuccesses > 0 && (
+          {!isInitiative && banner.roll.automaticSuccesses > 0 && (
             <span className="rounded-full border border-indigo-400/50 bg-indigo-950/80 px-2 py-0.5 text-[10px] font-bold text-indigo-200">
               +{banner.roll.automaticSuccesses} WP
             </span>

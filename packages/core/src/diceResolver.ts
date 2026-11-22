@@ -30,6 +30,13 @@ export interface DieFaceResult {
   isOne: boolean;
 }
 
+export type TableRollMode = 'pool' | 'initiative';
+
+export interface W20InitiativeRollRequest {
+  label?: string;
+  initiativeModifier: number;
+}
+
 export interface W20RollResult {
   effectivePool: number;
   clampedDifficulty: number;
@@ -41,6 +48,9 @@ export interface W20RollResult {
   isBotch: boolean;
   outcome: RollOutcomeDegree;
   physicsSeed: string;
+  rollMode?: TableRollMode;
+  initiativeModifier?: number;
+  initiativeTotal?: number;
 }
 
 /**
@@ -161,6 +171,46 @@ export function resolveW20DicePool(
     isBotch,
     outcome: classifyOutcome(netSuccesses, isBotch),
     physicsSeed: createPhysicsSeed(),
+    rollMode: 'pool',
+  };
+}
+
+/**
+ * Resolves a canonical W20 Initiative roll (1d10 + Dexterity + Wits + Wound Penalty).
+ * Face values of 1 never botch or cancel, and 10s never double.
+ */
+export function resolveW20InitiativeRoll(
+  req: W20InitiativeRollRequest,
+  rngD10: () => number = rollCsprngD10
+): W20RollResult {
+  const rawDie = rngD10();
+  const dieVal = Number.isFinite(rawDie) ? Math.max(1, Math.min(10, Math.round(rawDie))) : 1;
+  const initiativeModifier = Number.isFinite(req.initiativeModifier)
+    ? Math.trunc(req.initiativeModifier)
+    : 0;
+  const initiativeTotal = dieVal + initiativeModifier;
+
+  return {
+    effectivePool: 1,
+    clampedDifficulty: 6,
+    dice: [
+      {
+        value: dieVal,
+        isBonusExplosionDie: false,
+        contributedSuccesses: 0,
+        isOne: false,
+      },
+    ],
+    rawSuccesses: 0,
+    onesRolled: 0,
+    automaticSuccesses: 0,
+    netSuccesses: initiativeTotal,
+    isBotch: false,
+    outcome: 'marginal',
+    physicsSeed: createPhysicsSeed(),
+    rollMode: 'initiative',
+    initiativeModifier,
+    initiativeTotal,
   };
 }
 

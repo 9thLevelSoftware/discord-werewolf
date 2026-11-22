@@ -15,6 +15,7 @@ import {
   SheetGiftEntry,
   SheetShortcut,
   UserSheetComputedStats,
+  W20_BACKGROUND_CATALOG,
   W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import {
@@ -33,7 +34,6 @@ import {
 import { diceSoundEngine } from '../../audio/DiceSoundEngine';
 import type { SheetRollRequest } from '../../store/useCharacterSheetStore';
 import {
-  CANONICAL_BACKGROUND_SUGGESTIONS,
   formatFormName,
   formatTraitName,
   getDefaultAttributeForAbility,
@@ -49,6 +49,7 @@ export type PageOneMobileSection =
   | 'identity'
   | 'attributes'
   | 'abilities'
+  | 'bg_merits'
   | 'vitals'
   | 'combat_gifts';
 
@@ -154,8 +155,9 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
     knowledges: '',
   });
 
-  // Add background input
+  // Add background input & suggestion drawer
   const [newBgName, setNewBgName] = useState('');
+  const [showExpandedBgChips, setShowExpandedBgChips] = useState(false);
 
   // Gift picker & custom gift form
   const [giftSearch, setGiftSearch] = useState('');
@@ -167,6 +169,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
     AttributeKey | 'rage' | 'gnosis' | 'willpower' | ''
   >('');
   const [customGiftRollAbility, setCustomGiftRollAbility] = useState('');
+  const [customGiftAbilityText, setCustomGiftAbilityText] = useState('');
   const [customGiftDiff, setCustomGiftDiff] = useState(6);
   const [customGiftRageCost, setCustomGiftRageCost] = useState(0);
   const [customGiftGnosisCost, setCustomGiftGnosisCost] = useState(0);
@@ -197,7 +200,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
   const showIdentity = !mobileSection || mobileSection === 'identity';
   const showAttributes = !mobileSection || mobileSection === 'attributes';
   const showAbilities = !mobileSection || mobileSection === 'abilities';
-  const showBackgrounds = !mobileSection || mobileSection === 'vitals';
+  const showBackgrounds = !mobileSection || mobileSection === 'bg_merits';
   const showGifts = !mobileSection || mobileSection === 'combat_gifts';
   const showVitals = !mobileSection || mobileSection === 'vitals';
 
@@ -227,9 +230,16 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
     setCustomAbilDrafts((prev) => ({ ...prev, [category]: '' }));
   };
 
-  const handleAddBackground = () => {
-    const name = newBgName.trim().slice(0, 120);
+  const handleAddBackground = (explicitName?: string) => {
+    const name = (explicitName ?? newBgName).trim().slice(0, 120);
     if (!name) return;
+    const duplicate = sheet.backgrounds.some(
+      (b) => b.name.trim().toLowerCase() === name.toLowerCase()
+    );
+    if (duplicate) {
+      if (!explicitName) setNewBgName('');
+      return;
+    }
     onUpdateSheet((prev) => ({
       ...prev,
       backgrounds: [
@@ -237,8 +247,25 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
         { id: `bg-${crypto.randomUUID().slice(0, 8)}`, name, dots: 1 },
       ].slice(0, 50),
     }));
-    setNewBgName('');
+    if (!explicitName) {
+      setNewBgName('');
+    }
   };
+
+  const quickBgSuggestions = useMemo(() => {
+    const existingNames = new Set(sheet.backgrounds.map((b) => b.name.trim().toLowerCase()));
+    const q = newBgName.trim().toLowerCase();
+    const available = W20_BACKGROUND_CATALOG.filter(
+      (entry) => !existingNames.has(entry.label.toLowerCase())
+    );
+    if (q) {
+      return available.filter(
+        (entry) =>
+          entry.label.toLowerCase().includes(q) || entry.summary.toLowerCase().includes(q)
+      );
+    }
+    return showExpandedBgChips ? available : available.filter((entry) => entry.tier === 'core');
+  }, [sheet.backgrounds, newBgName, showExpandedBgChips]);
 
   const handleAddCatalogGift = (entry: (typeof CANONICAL_GIFT_CATALOG)[number]) => {
     if (sheet.gifts.some((g) => g.id === entry.id)) return;
@@ -264,12 +291,16 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
     e.preventDefault();
     const name = customGiftName.trim().slice(0, 120);
     if (!name) return;
+    const resolvedAbility =
+      customGiftRollAbility === '__custom__'
+        ? customGiftAbilityText.trim().slice(0, 120)
+        : customGiftRollAbility.trim();
     const newGift: SheetGiftEntry = {
       id: `gift-${crypto.randomUUID().slice(0, 8)}`,
       name,
       level: Math.max(1, Math.min(6, Math.floor(customGiftLevel))),
       rollAttribute: customGiftRollAttr || null,
-      rollAbility: customGiftRollAttr && customGiftRollAbility.trim() ? customGiftRollAbility.trim() : null,
+      rollAbility: customGiftRollAttr && resolvedAbility ? resolvedAbility : null,
       difficulty: Math.max(2, Math.min(10, Math.floor(customGiftDiff))),
       rageCost: Math.max(0, Math.min(10, Math.floor(customGiftRageCost))),
       gnosisCost: Math.max(0, Math.min(10, Math.floor(customGiftGnosisCost))),
@@ -281,6 +312,8 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
       gifts: [...prev.gifts, newGift].slice(0, 100),
     }));
     setCustomGiftName('');
+    setCustomGiftRollAbility('');
+    setCustomGiftAbilityText('');
     setCustomGiftSummary('');
     setShowCustomGiftForm(false);
   };
@@ -1158,35 +1191,64 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                 </div>
               )}
 
-              <div className="mt-3 flex gap-1.5">
-                <input
-                  type="text"
-                  list="w20-bg-suggestions"
-                  maxLength={120}
-                  value={newBgName}
-                  onChange={(e) => setNewBgName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddBackground();
-                    }
-                  }}
-                  placeholder="Add Background (e.g. Totem, Pure Breed)..."
-                  className="min-w-0 flex-1 rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100"
-                />
-                <datalist id="w20-bg-suggestions">
-                  {CANONICAL_BACKGROUND_SUGGESTIONS.map((s) => (
-                    <option key={s} value={s} />
-                  ))}
-                </datalist>
-                <button
-                  type="button"
-                  onClick={handleAddBackground}
-                  className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-950/35 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-900/45"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add
-                </button>
+              <div className="mt-3 space-y-2">
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    maxLength={120}
+                    value={newBgName}
+                    onChange={(e) => setNewBgName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddBackground();
+                      }
+                    }}
+                    placeholder="Type any Background (e.g. Fate, Caern, Custom)..."
+                    className="min-h-[40px] min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAddBackground()}
+                    className="flex min-h-[40px] shrink-0 items-center gap-1 rounded-lg border border-amber-500/45 bg-amber-950/40 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-900/50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add
+                  </button>
+                </div>
+
+                {/* Mobile & Desktop Quick-Pick Background Chips */}
+                <div className="space-y-1.5 rounded-lg border border-stone-800/80 bg-zinc-900/40 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
+                      Quick Add W20 Backgrounds ({quickBgSuggestions.length})
+                    </span>
+                    {!newBgName.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setShowExpandedBgChips((v) => !v)}
+                        className="text-[10px] font-semibold text-amber-300 hover:text-amber-200"
+                      >
+                        {showExpandedBgChips ? 'Core Only (12)' : 'Show Expanded (+12)'}
+                      </button>
+                    )}
+                  </div>
+                  {quickBgSuggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {quickBgSuggestions.map((entry) => (
+                        <button
+                          key={entry.key}
+                          type="button"
+                          onClick={() => handleAddBackground(entry.label)}
+                          title={entry.summary}
+                          className="rounded-md border border-stone-700/80 bg-zinc-950/90 px-2 py-1 text-[10px] font-semibold text-stone-200 transition hover:border-amber-400/65 hover:text-amber-100"
+                        >
+                          + {entry.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </section>
           )}
@@ -1352,7 +1414,18 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                             {ca.name}
                           </option>
                         ))}
+                        <option value="__custom__">Other / Type Custom...</option>
                       </select>
+                      {customGiftRollAttr && customGiftRollAbility === '__custom__' && (
+                        <input
+                          type="text"
+                          maxLength={120}
+                          value={customGiftAbilityText}
+                          onChange={(e) => setCustomGiftAbilityText(e.target.value)}
+                          placeholder="Type custom Ability..."
+                          className="mt-1 min-h-[34px] w-full rounded border border-amber-500/50 bg-zinc-950 px-2 py-1 text-[11px] text-stone-100"
+                        />
+                      )}
                     </label>
                     <label className="block">
                       <span className="text-[10px] text-stone-400">Diff</span>

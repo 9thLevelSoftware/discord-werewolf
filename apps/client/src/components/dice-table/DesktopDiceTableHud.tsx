@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   BookmarkPlus,
   Check,
@@ -6,6 +6,7 @@ import {
   Eraser,
   EyeOff,
   Flame,
+  Hash,
   Minus,
   Monitor,
   Pin,
@@ -19,6 +20,8 @@ import {
   Users,
   Volume2,
   VolumeX,
+  X,
+  Zap,
 } from 'lucide-react';
 import { formatFormName, W20_FORMS } from '../character-sheet/sheetShared';
 import { ParticipantAvatar, RollResultPlaque } from './DieFaceTiles';
@@ -184,6 +187,9 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   onSetRollLabel,
   onSetManualControlsOpen,
   onExecuteRoll,
+  initiativeModifier,
+  initiativeFormula,
+  onRollInitiative,
   onTriggerPreset,
   onTriggerResolvedShortcut,
   onRemoveSheetShortcut,
@@ -192,10 +198,34 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   onSaveCurrentUnboundPreset,
 }) => {
   const [savedFlash, setSavedFlash] = useState(false);
+  const [packPopoverOpen, setPackPopoverOpen] = useState(false);
+  const packPopoverRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!packPopoverOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (packPopoverRef.current && !packPopoverRef.current.contains(e.target as Node)) {
+        setPackPopoverOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPackPopoverOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [packPopoverOpen]);
 
   const isSheetTraitsMode = Boolean(activeSheet && rollSourceMode === 'traits');
   const isDisabled = isThrowing || connectionStatus !== 'authenticated';
   const rollBlockedByEmptyTraits = isSheetTraitsMode && (!hasTraitSelection || pool <= 0);
+  const initButtonLabel =
+    activeSheet || initiativeModifier !== 0
+      ? `Init ${initiativeModifier >= 0 ? `+${initiativeModifier}` : initiativeModifier}`
+      : 'Init 1d10';
 
   const layoutLabel =
     layoutMode === 'auto' ? 'Auto' : layoutMode === 'desktop' ? 'PC' : 'Mobile';
@@ -224,8 +254,11 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
     <>
       {/* Slim Floating Top Presence & Tracker Bar */}
       <header className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-center justify-between gap-2">
-        {/* Left: W20 Crest + Voice Participant Strip */}
-        <div className="w20-obsidian-panel pointer-events-auto flex min-w-[200px] max-w-full flex-1 items-center gap-2 rounded-full px-3 py-1.5">
+        {/* Left: W20 Crest + Voice Participant Strip + Full Pack Popover */}
+        <div
+          ref={packPopoverRef}
+          className="w20-obsidian-panel pointer-events-auto relative flex min-w-[200px] max-w-full flex-1 items-center gap-2 rounded-2xl px-3 py-1.5"
+        >
           <div className="flex shrink-0 items-center gap-2 border-r border-amber-500/20 pr-2">
             <div className="flex h-6 w-6 items-center justify-center rounded-full border border-red-700/70 bg-red-950/80 text-red-300">
               <Flame className="h-3.5 w-3.5" />
@@ -248,7 +281,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             )}
           </div>
 
-          <div className="no-scrollbar flex min-w-0 items-center gap-1.5 overflow-x-auto">
+          <div className="w20-thin-scrollbar flex min-w-0 max-h-[68px] flex-1 flex-wrap items-center gap-1.5 overflow-y-auto pr-1">
             {sortedParticipants.map((p) => {
               const isSpeaking = speakingDiscordIds.has(p.discordUserId);
               const label = p.characterName
@@ -312,15 +345,128 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               );
             })}
           </div>
+
+          <button
+            type="button"
+            onClick={() => setPackPopoverOpen((v) => !v)}
+            aria-expanded={packPopoverOpen}
+            title="View all connected players and table seats"
+            className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold transition ${
+              packPopoverOpen
+                ? 'border-amber-400/75 bg-amber-950/55 text-amber-100'
+                : 'border-stone-700/80 bg-zinc-950/85 text-stone-300 hover:border-amber-500/55 hover:text-amber-100'
+            }`}
+          >
+            <Users className="h-3 w-3 text-amber-300" />
+            <span>Pack ({sortedParticipants.length})</span>
+          </button>
+
+          {packPopoverOpen && (
+            <div className="w20-obsidian-panel absolute top-full left-0 z-50 mt-2 w-[min(92vw,420px)] rounded-2xl p-3 shadow-2xl">
+              <div className="flex items-center justify-between pb-2">
+                <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
+                  Table Players &amp; Pack ({sortedParticipants.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPackPopoverOpen(false)}
+                  aria-label="Close Pack list"
+                  className="rounded p-1 text-stone-400 hover:bg-zinc-800 hover:text-stone-100"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="w20-gold-divider mb-2" />
+              <div className="w20-thin-scrollbar max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                {sortedParticipants.map((p) => {
+                  const isSpeaking = speakingDiscordIds.has(p.discordUserId);
+                  const label = p.characterName
+                    ? `${p.characterName} (${p.displayName})`
+                    : p.displayName;
+                  const isLocalSeat =
+                    p.discordUserId === session.userId && Boolean(p.seatId);
+                  const isCurrentActiveSeat =
+                    isLocalSeat && p.seatId === activeSeat.seatId;
+
+                  return (
+                    <div
+                      key={`pop-${p.participantKey ?? p.discordUserId}`}
+                      onClick={
+                        isLocalSeat && p.seatId
+                          ? () => {
+                              onSelectSeat(p.seatId!);
+                              setPackPopoverOpen(false);
+                            }
+                          : undefined
+                      }
+                      className={`flex items-center justify-between gap-2 rounded-xl border px-2.5 py-2 ${
+                        isSpeaking
+                          ? 'border-emerald-400/80 bg-emerald-950/35'
+                          : isCurrentActiveSeat
+                            ? 'border-amber-500/60 bg-red-950/25'
+                            : 'border-stone-800 bg-zinc-950/85'
+                      } ${p.isConnected ? '' : 'opacity-50'} ${
+                        isLocalSeat ? 'cursor-pointer hover:border-amber-400/75' : ''
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <ParticipantAvatar
+                          name={label}
+                          avatarUrl={p.avatarUrl}
+                          isSpeaking={isSpeaking}
+                          isConnected={p.isConnected}
+                          sizeClass="h-7 w-7 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="truncate text-xs font-bold text-amber-50">
+                              {label}
+                            </span>
+                            {p.activeForm && (
+                              <span className="rounded border border-red-800/50 bg-red-950/80 px-1.5 py-0.2 font-display text-[9px] font-bold uppercase text-amber-200">
+                                {formatFormName(p.activeForm)}
+                              </span>
+                            )}
+                            {isCurrentActiveSeat && (
+                              <span className="rounded bg-amber-500/20 px-1.5 py-0.2 text-[9px] font-bold text-amber-200">
+                                Active Seat
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px]">
+                            <span className="text-red-300">R {p.trackers.rage}</span>
+                            <span className="text-amber-200">G {p.trackers.gnosis}</span>
+                            <span className="text-indigo-200">W {p.trackers.willpower}</span>
+                            {p.trackers.woundPenalty !== 0 && (
+                              <span className="rounded bg-red-950 px-1 font-bold text-red-300">
+                                {p.trackers.woundPenalty} Wnd
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <span
+                        className={`shrink-0 text-[9px] font-bold uppercase ${
+                          p.isConnected ? 'text-emerald-400' : 'text-stone-500'
+                        }`}
+                      >
+                        {p.isConnected ? 'Online' : 'Offline'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Hot-Seat Switcher + Sheet + SFX + Trackers + View Mode + Clear + Feed */}
         <div className="pointer-events-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5">
           {/* Hot-Seat Switcher */}
-          <div className="w20-obsidian-panel flex items-center gap-1 rounded-full px-1.5 py-1">
+          <div className="w20-obsidian-panel flex items-center gap-1 rounded-2xl px-1.5 py-1">
             {seats.length >= 2 ? (
               <>
-                <div className="no-scrollbar flex max-w-[260px] items-center gap-1 overflow-x-auto">
+                <div className="w20-thin-scrollbar flex max-w-[380px] max-h-[54px] flex-wrap items-center gap-1 overflow-y-auto">
                   {seats.map((seat, idx) => {
                     const seatSheet = seat.sheetId ? sheetsById[seat.sheetId] : undefined;
                     const isActive = seat.seatId === activeSeat.seatId;
@@ -477,7 +623,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
       )}
 
       {/* Floating Bottom Sheet-Driven Console */}
-      <section className="w20-obsidian-panel pointer-events-auto absolute bottom-3 left-1/2 z-30 w-[min(96%,940px)] -translate-x-1/2 rounded-2xl px-3.5 py-2.5">
+      <section className="w20-obsidian-panel pointer-events-auto absolute bottom-3 left-1/2 z-30 w-[min(97%,1020px)] -translate-x-1/2 rounded-2xl px-3.5 py-2.5">
         {/* Top Slim Strip: 5-Form Switcher + Pinned Sheet Rolls / Quick Rolls */}
         <div className="mb-2 flex items-center gap-2">
           {activeSheet && (
@@ -805,54 +951,75 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
         )}
 
         {/* Primary Always-Visible Row */}
-        <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
-          {activeSheet ? (
-            isSheetTraitsMode && traitSelection ? (
-              <DesktopTraitRollBar
-                sheet={activeSheet}
-                composerAttr={composerAttr}
-                composerAbil={composerAbil}
-                difficulty={difficulty}
-                selection={traitSelection}
-                onChangeSelection={onComposerChange}
-                onChangeDifficulty={onSetDifficulty}
-              />
-            ) : (
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => onSetRollSourceMode('traits')}
-                  className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/55 bg-amber-950/40 px-2.5 text-xs font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/65"
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Use Sheet Traits
-                </button>
-                <CompactRawPoolStepper
-                  pool={pool}
-                  editingPool={editingPool}
-                  poolInputValue={poolInputValue}
-                  onSetPool={onSetPool}
-                  onSetEditingPool={onSetEditingPool}
-                  onSetPoolInputValue={onSetPoolInputValue}
-                  onCommitPoolInput={onCommitPoolInput}
-                />
-                <DifficultyQuickControl
-                  difficulty={difficulty}
-                  onChangeDifficulty={onSetDifficulty}
-                />
-              </div>
-            )
+        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+          {/* 1-Click Segmented Toggle: Skills vs Numbers */}
+          <div
+            role="group"
+            aria-label="Dice Roll Mode: Skills or Numbers"
+            className="flex h-9 shrink-0 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 p-0.5"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                if (!activeSheet) {
+                  onSetRollSourceMode('traits');
+                  onOpenRoster();
+                } else {
+                  onSetRollSourceMode('traits');
+                }
+              }}
+              title={
+                activeSheet
+                  ? 'Roll using Character Sheet Attribute + Skill traits'
+                  : 'Select a Garou sheet to roll by Attribute + Skill'
+              }
+              className={`flex h-full items-center gap-1 rounded-lg px-2.5 text-[11px] font-bold transition ${
+                isSheetTraitsMode
+                  ? 'bg-gradient-to-b from-amber-500/30 to-amber-900/40 text-amber-100 ring-1 ring-amber-400/60'
+                  : 'text-stone-400 hover:text-stone-100'
+              }`}
+            >
+              <Sparkles className="h-3 w-3 text-amber-300" />
+              <span>Skills</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetRollSourceMode('manual')}
+              title="Roll raw d10 pool by direct number count"
+              className={`flex h-full items-center gap-1 rounded-lg px-2.5 text-[11px] font-bold transition ${
+                !isSheetTraitsMode
+                  ? 'bg-gradient-to-b from-red-800/75 to-red-950/90 text-amber-100 ring-1 ring-amber-400/55'
+                  : 'text-stone-400 hover:text-stone-100'
+              }`}
+            >
+              <Hash className="h-3 w-3 text-amber-300" />
+              <span>Numbers</span>
+            </button>
+          </div>
+
+          {isSheetTraitsMode && activeSheet && traitSelection ? (
+            <DesktopTraitRollBar
+              sheet={activeSheet}
+              composerAttr={composerAttr}
+              composerAbil={composerAbil}
+              difficulty={difficulty}
+              selection={traitSelection}
+              onChangeSelection={onComposerChange}
+              onChangeDifficulty={onSetDifficulty}
+            />
           ) : (
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={onOpenRoster}
-                title="Bind a Garou character sheet to roll by Attribute + Skill"
-                className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/60 bg-gradient-to-b from-red-950/80 to-zinc-950 px-3 text-xs font-bold text-amber-100 shadow-[0_0_12px_rgba(185,28,28,0.28)] transition hover:border-amber-400"
-              >
-                <Flame className="h-3.5 w-3.5 text-red-400" />
-                <span>Select Garou Sheet</span>
-              </button>
+              {!activeSheet && (
+                <button
+                  type="button"
+                  onClick={onOpenRoster}
+                  title="Bind a Garou character sheet to roll by Attribute + Skill"
+                  className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/60 bg-gradient-to-b from-red-950/80 to-zinc-950 px-2.5 text-xs font-bold text-amber-100 shadow-[0_0_12px_rgba(185,28,28,0.28)] transition hover:border-amber-400"
+                >
+                  <Flame className="h-3.5 w-3.5 text-red-400" />
+                  <span className="hidden xl:inline">Select Garou</span>
+                </button>
+              )}
               <CompactRawPoolStepper
                 pool={pool}
                 editingPool={editingPool}
@@ -862,12 +1029,41 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                 onSetPoolInputValue={onSetPoolInputValue}
                 onCommitPoolInput={onCommitPoolInput}
               />
+              <div className="hidden items-center gap-1 md:flex">
+                {POOL_QUICK_JUMPS.map((val) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => onSetPool(val)}
+                    title={`Set pool to ${val}d10`}
+                    className={`h-8 min-w-[26px] rounded-lg border px-1.5 font-mono text-[11px] font-bold transition ${
+                      pool === val
+                        ? 'border-amber-400/80 bg-red-900/75 text-amber-100 shadow'
+                        : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600 hover:text-stone-200'
+                    }`}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
               <DifficultyQuickControl
                 difficulty={difficulty}
                 onChangeDifficulty={onSetDifficulty}
               />
             </div>
           )}
+
+          {/* Hardcoded 1-Click Initiative Button */}
+          <button
+            type="button"
+            disabled={isDisabled}
+            onClick={onRollInitiative}
+            title={`Roll W20 Initiative (${initiativeFormula})`}
+            className="flex h-9 shrink-0 items-center gap-1 rounded-xl border border-amber-500/65 bg-gradient-to-b from-amber-950/75 to-zinc-950 px-2.5 text-xs font-extrabold tracking-wide text-amber-100 shadow-[0_0_10px_rgba(245,158,11,0.18)] transition hover:border-amber-400 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Zap className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <span>{initButtonLabel}</span>
+          </button>
 
           {/* Quick Pin Icon Button (when Sheet is active) */}
           {activeSheet && (

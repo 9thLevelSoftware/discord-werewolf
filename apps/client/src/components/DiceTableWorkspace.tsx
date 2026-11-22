@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DiceBox from '@3d-dice/dice-box';
 import {
+  computeUserSheetStats,
   type ResolvedSheetShortcut,
   type SheetShortcut,
   sheetToLightTrackers,
@@ -639,6 +640,106 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     ]
   );
 
+  const initiativeMeta = useMemo(() => {
+    const woundMod = activeApplyWounds ? activeTrackers.woundPenalty : 0;
+    const sitMod = isSheetTraitsMode ? bonusDice : 0;
+    if (activeSheet) {
+      const stats = computeUserSheetStats(activeSheet);
+      const dex = stats.effectiveAttributes.dexterity;
+      const wits = stats.effectiveAttributes.wits;
+      const modifier = dex + wits + woundMod + sitMod;
+      const parts = [
+        `1d10 + Dex ${dex} + Wits ${wits}`,
+        woundMod !== 0 ? `${woundMod} Wnd` : '',
+        sitMod !== 0 ? `${sitMod > 0 ? `+${sitMod}` : sitMod} Mod` : '',
+      ].filter(Boolean);
+      return {
+        modifier,
+        formula: parts.join(' '),
+      };
+    }
+    const modifier = woundMod;
+    return {
+      modifier,
+      formula:
+        modifier === 0
+          ? '1d10'
+          : `1d10 ${modifier > 0 ? `+ ${modifier}` : `- ${Math.abs(modifier)}`} Wnd`,
+    };
+  }, [activeSheet, activeApplyWounds, activeTrackers.woundPenalty, isSheetTraitsMode, bonusDice]);
+
+  const executeInitiativeRoll = useCallback(
+    async (overrides?: {
+      initiativeModifier?: number;
+      label?: string;
+      isSecretRoll?: boolean;
+    }) => {
+      if (isThrowing || connectionStatus !== 'authenticated') return;
+
+      const targetMod = overrides?.initiativeModifier ?? initiativeMeta.modifier;
+      const targetSecret = overrides?.isSecretRoll ?? isSecretRoll;
+      const targetLabel = (overrides?.label ?? 'Initiative').trim() || 'Initiative';
+
+      const rollClientId = crypto.randomUUID();
+      localRollClientIdsRef.current.add(rollClientId);
+
+      setIsThrowing(true);
+      let physicalDiceValues: number[] | undefined;
+
+      diceSoundEngine.playThrowCascade(1, 0);
+
+      try {
+        const groups = buildDiceBoxGroups(1, 0);
+        if (readyRef.current && boxRef.current && groups.length > 0) {
+          const settled = await boxRef.current.roll(groups, {
+            theme: 'default',
+            newStartPoint: true,
+          });
+          diceSoundEngine.stopActiveRollCascade();
+          physicalDiceValues = extractSettledDiceValues(settled, 1);
+          setHasDiceOnTable(true);
+        }
+      } catch {
+        physicalDiceValues = undefined;
+      } finally {
+        setIsThrowing(false);
+      }
+
+      const rollerDisplayName = activeSheet
+        ? `${activeSheet.name} (${activeSeat.playerName})`
+        : activeSeat.playerName;
+
+      sendCommand({
+        type: 'ROLL_TABLE_POOL',
+        pool: 1,
+        rageDiceCount: 0,
+        difficulty: 6,
+        hasSpecialty: false,
+        spendWillpower: false,
+        applyWoundPenalty: activeApplyWounds,
+        rollMode: 'initiative',
+        initiativeModifier: targetMod,
+        label: targetLabel,
+        isSecretRoll: targetSecret,
+        ...(physicalDiceValues ? { physicalDiceValues } : {}),
+        rollClientId,
+        seatId: activeSeat.seatId,
+        rollerDisplayName,
+      });
+    },
+    [
+      isThrowing,
+      connectionStatus,
+      initiativeMeta.modifier,
+      isSecretRoll,
+      activeSheet,
+      activeSeat.playerName,
+      activeSeat.seatId,
+      activeApplyWounds,
+      sendCommand,
+    ]
+  );
+
   const handleSetManualPool: React.Dispatch<React.SetStateAction<number>> = useCallback(
     (updater) => {
       setManualPool((prev) => {
@@ -659,15 +760,9 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     []
   );
 
-  const handleSetRollSourceMode = useCallback(
-    (mode: RollSourceMode) => {
-      if (mode === 'manual' && traitSelection && traitSelection.basePool >= 1) {
-        setManualPool(Math.max(1, Math.min(30, traitSelection.basePool)));
-      }
-      setRollSourceMode(mode);
-    },
-    [traitSelection]
-  );
+  const handleSetRollSourceMode = useCallback((mode: RollSourceMode) => {
+    setRollSourceMode(mode);
+  }, []);
 
   const handleToggleSpecialty = useCallback(() => {
     if (isSheetTraitsMode && traitSelection) {
@@ -763,6 +858,15 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const handleRollFromSheet = useCallback(
     (req: SheetRollRequest) => {
       setSheetModalOpen(false);
+      if (req.rollMode === 'initiative') {
+        void executeInitiativeRoll({
+          initiativeModifier: req.initiativeModifier,
+          label: req.label,
+          isSecretRoll: req.isSecretRoll ?? false,
+        });
+        return;
+      }
+
       const nextRage = Math.min(req.pool, req.rageDiceCount ?? 0);
       if (!isSheetTraitsMode) {
         setManualPool(Math.max(1, Math.min(30, req.pool)));
@@ -785,11 +889,20 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         isSecretRoll: req.isSecretRoll ?? false,
       });
     },
-    [executeRoll, isSheetTraitsMode, setSheetModalOpen]
+    [executeInitiativeRoll, executeRoll, isSheetTraitsMode, setSheetModalOpen]
   );
 
   const handleRerollFromHistory = useCallback(
     (entry: RollHistoryEntry) => {
+      if (entry.roll.rollMode === 'initiative') {
+        void executeInitiativeRoll({
+          initiativeModifier: entry.roll.initiativeModifier ?? 0,
+          label: entry.label,
+          isSecretRoll: entry.isSecretRoll,
+        });
+        return;
+      }
+
       const targetPool = Math.max(1, entry.roll.effectivePool);
       const targetRage = Math.min(targetPool, Math.max(0, entry.rageDiceCount));
       const targetDiff = entry.roll.clampedDifficulty;
@@ -817,7 +930,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         isSecretRoll: entry.isSecretRoll,
       });
     },
-    [executeRoll, isSheetTraitsMode]
+    [executeInitiativeRoll, executeRoll, isSheetTraitsMode]
   );
 
   const handleClearTable = useCallback(() => {
@@ -1038,7 +1151,6 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   const activeModifierCount =
     (isSheetTraitsMode && bonusDice !== 0 ? 1 : 0) +
-    (activeSheet && rollSourceMode === 'manual' ? 1 : 0) +
     (rageDiceCount > 0 ? 1 : 0) +
     (isSheetTraitsMode
       ? specialtyOverride !== null && specialtyOverride !== traitSelection?.autoSpecialty
@@ -1125,6 +1237,9 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     onSetRollLabel: setRollLabel,
     onSetManualControlsOpen: setManualControlsOpen,
     onExecuteRoll: () => void executeRoll(),
+    initiativeModifier: initiativeMeta.modifier,
+    initiativeFormula: initiativeMeta.formula,
+    onRollInitiative: () => void executeInitiativeRoll(),
     onTriggerPreset: handleTriggerPreset,
     onTriggerResolvedShortcut: handleTriggerResolvedShortcut,
     onRemoveSheetShortcut: removeShortcutFromActiveSheet,

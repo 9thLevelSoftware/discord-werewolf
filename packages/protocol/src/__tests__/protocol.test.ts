@@ -663,6 +663,26 @@ describe('@w20-vtt/protocol parseClientEnvelope & schemas', () => {
       expect(extendedRoll.data.command.rollerDisplayName).toBe('Kaelen');
     }
 
+    const initiativeRoll = parseClientEnvelope(
+      makeEnvelope({
+        type: 'ROLL_TABLE_POOL',
+        pool: 1,
+        rageDiceCount: 0,
+        difficulty: 6,
+        hasSpecialty: false,
+        spendWillpower: false,
+        applyWoundPenalty: true,
+        rollMode: 'initiative',
+        initiativeModifier: 7,
+        label: 'Initiative',
+      })
+    );
+    expect(initiativeRoll.success).toBe(true);
+    if (initiativeRoll.success && initiativeRoll.data.command.type === 'ROLL_TABLE_POOL') {
+      expect(initiativeRoll.data.command.rollMode).toBe('initiative');
+      expect(initiativeRoll.data.command.initiativeModifier).toBe(7);
+    }
+
     const extendedTracker = parseClientEnvelope(
       makeEnvelope({
         type: 'UPDATE_LIGHT_TRACKERS',
@@ -732,7 +752,10 @@ describe('@w20-vtt/protocol parseClientEnvelope & schemas', () => {
           summary: 'Creates darkness.',
         },
       ],
-      otherTraits: [{ id: 'merit-1', name: 'Acute Senses', dots: 1 }],
+      otherTraits: [
+        { id: 'merit-1', name: 'Acute Senses', dots: 1 },
+        { id: 'flaw-1', name: 'Dark Fate', dots: 5, kind: 'flaw' as const, category: 'supernatural' as const },
+      ],
       fetishes: [
         {
           id: 'fet-1',

@@ -1012,6 +1012,34 @@ describe('GameRoomDO authoritative W20 engine & projection security', () => {
       expect(primaryDiceEv.event.rollerName).toBe('Pack Leader Alex');
     }
 
+    // Initiative roll (1d10 + modifier): rolling a 1 never botches and Willpower is never spent
+    await sendCommand(room, p1.ws, 0, {
+      type: 'ROLL_TABLE_POOL',
+      seatId: 'seat-2',
+      pool: 1,
+      rageDiceCount: 0,
+      difficulty: 6,
+      hasSpecialty: false,
+      spendWillpower: true,
+      applyWoundPenalty: true,
+      rollMode: 'initiative',
+      initiativeModifier: 7,
+      label: 'Initiative',
+      physicalDiceValues: [1],
+    });
+    const p1InitEvents = p1.ws.drainJson<ServerEnvelope<ServerEvent>>();
+    p2.ws.drainJson();
+    const initEv = p1InitEvents.find((e) => e.event.type === 'DICE_ROLLED_3D');
+    expect(initEv?.event.type).toBe('DICE_ROLLED_3D');
+    if (initEv?.event.type === 'DICE_ROLLED_3D') {
+      expect(initEv.event.roll.rollMode).toBe('initiative');
+      expect(initEv.event.roll.initiativeModifier).toBe(7);
+      expect(initEv.event.roll.initiativeTotal).toBe(8);
+      expect(initEv.event.roll.isBotch).toBe(false);
+      expect(initEv.event.rageDiceCount).toBe(0);
+    }
+    expect(p1InitEvents.some((e) => e.event.type === 'PARTICIPANTS_UPDATED')).toBe(false);
+
     // Syncing again without seat-2 removes stale seat-2 while preserving primary avatarUrl and P2
     await sendCommand(room, p1.ws, 0, {
       type: 'SYNC_CLIENT_SEATS',

@@ -5,27 +5,35 @@ import {
   ATTRIBUTE_GROUPS,
   BrawlingManeuverRow,
   CanonicalAbilityKey,
+  cleanOtherTraitDisplayName,
   DamageType,
   GarouForm,
   getBreedNaturalForm,
+  OtherTraitKind,
+  resolveOtherTraitKind,
   SheetFetishItem,
+  SheetOtherTraitEntry,
   SheetRiteEntry,
   SheetShortcut,
   SheetWeaponEntry,
   UserSheetComputedStats,
   W20_FORM_MATRIX,
+  W20_MERITS_FLAWS_CATALOG,
   W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import {
+  AlertTriangle,
   Dices,
   Flame,
   Plus,
   ScrollText,
   Shield,
+  ShieldCheck,
   Sparkles,
   Star,
   Swords,
   Trash2,
+  Zap,
 } from 'lucide-react';
 import type { SheetRollRequest } from '../../store/useCharacterSheetStore';
 import {
@@ -36,7 +44,7 @@ import {
   W20_FORMS,
 } from './sheetShared';
 
-export type PageTwoMobileSection = 'forms' | 'combat_gifts';
+export type PageTwoMobileSection = 'forms' | 'combat_gifts' | 'bg_merits';
 
 export interface SheetPageTwoTacticalProps {
   sheet: W20UserCharacterSheet;
@@ -171,8 +179,15 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
     setInspectedForm(sheet.activeForm);
   }, [sheet.activeForm]);
 
-  // Add Other Trait
+  // Add Merit / Flaw / Other Trait
   const [newTraitName, setNewTraitName] = useState('');
+  const [newTraitKind, setNewTraitKind] = useState<OtherTraitKind>('merit');
+  const [newTraitDots, setNewTraitDots] = useState(1);
+  const [showPresetMeritsFlaws, setShowPresetMeritsFlaws] = useState(false);
+
+  // Weapon custom ability input tracking
+  const [customAbilityWeaponId, setCustomAbilityWeaponId] = useState<string | null>(null);
+  const [weaponCustomAbilityDraft, setWeaponCustomAbilityDraft] = useState('');
 
   // Add Rite
   const [showRiteForm, setShowRiteForm] = useState(false);
@@ -190,6 +205,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
 
   const showForms = !mobileSection || mobileSection === 'forms';
   const showCombat = !mobileSection || mobileSection === 'combat_gifts';
+  const showOtherTraits = !mobileSection || mobileSection === 'bg_merits';
 
   const isPinned = (id: string) => sheet.shortcuts.some((s) => s.id === id);
   const togglePin = (shortcut: SheetShortcut) => {
@@ -218,8 +234,28 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
             {ca.name}
           </option>
         ))}
+        <option value="__custom__">Other / Type Custom...</option>
       </>
     );
+  };
+
+  const handleWeaponAbilitySelectChange = (weapon: SheetWeaponEntry, val: string) => {
+    if (val === '__custom__') {
+      setCustomAbilityWeaponId(weapon.id);
+      setWeaponCustomAbilityDraft('');
+      return;
+    }
+    setCustomAbilityWeaponId(null);
+    updateWeaponField(weapon.id, { rollAbility: val });
+  };
+
+  const commitCustomWeaponAbility = (weaponId: string) => {
+    const clean = weaponCustomAbilityDraft.trim().slice(0, 120);
+    if (clean) {
+      updateWeaponField(weaponId, { rollAbility: clean });
+    }
+    setCustomAbilityWeaponId(null);
+    setWeaponCustomAbilityDraft('');
   };
 
   const naturalForm = getBreedNaturalForm(sheet.breed);
@@ -501,10 +537,31 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               <Flame className="h-3.5 w-3.5 text-red-400" />
               Five Garou Forms
             </h3>
-            <span className="text-[11px] text-stone-400">
-              Active: <strong className="text-red-300">{formatFormName(sheet.activeForm)}</strong> •
-              Initiative Bonus: <strong className="font-mono text-amber-200">+{stats.initiativeBonus}</strong>
-            </span>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-stone-400">
+              <span>
+                Active:{' '}
+                <strong className="text-red-300">{formatFormName(sheet.activeForm)}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  onRoll({
+                    label: 'Initiative',
+                    pool: 1,
+                    difficulty: 6,
+                    hasSpecialty: false,
+                    applyWoundPenalty: true,
+                    rollMode: 'initiative',
+                    initiativeModifier: stats.initiativeBonus,
+                  })
+                }
+                title={`Roll 1d10 ${stats.initiativeBonus >= 0 ? `+ ${stats.initiativeBonus}` : `- ${Math.abs(stats.initiativeBonus)}`} Initiative`}
+                className="flex items-center gap-1 rounded-lg border border-amber-500/55 bg-amber-950/45 px-2.5 py-1 text-[11px] font-bold text-amber-100 transition hover:border-amber-400 hover:bg-amber-900/55"
+              >
+                <Zap className="h-3 w-3 text-amber-300" />
+                Roll Init (1d10{stats.initiativeBonus >= 0 ? `+${stats.initiativeBonus}` : stats.initiativeBonus})
+              </button>
+            </div>
           </div>
 
           {isMobile ? (
@@ -758,14 +815,35 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                         <label className="block">
                           <span className="text-[9px] text-stone-400">Ability</span>
                           <select
-                            value={weapon.rollAbility}
-                            onChange={(e) =>
-                              updateWeaponField(weapon.id, { rollAbility: e.target.value })
+                            value={
+                              customAbilityWeaponId === weapon.id
+                                ? '__custom__'
+                                : weapon.rollAbility
                             }
+                            onChange={(e) => handleWeaponAbilitySelectChange(weapon, e.target.value)}
                             className="w-full rounded border border-stone-700 bg-zinc-950 px-1 py-1"
                           >
                             {renderWeaponAbilityOptions(weapon.rollAbility)}
                           </select>
+                          {customAbilityWeaponId === weapon.id && (
+                            <div className="mt-1 flex gap-1">
+                              <input
+                                type="text"
+                                maxLength={120}
+                                value={weaponCustomAbilityDraft}
+                                onChange={(e) => setWeaponCustomAbilityDraft(e.target.value)}
+                                placeholder="Custom ability..."
+                                className="min-w-0 flex-1 rounded border border-amber-500/50 bg-zinc-950 px-1.5 py-0.5 text-[10px]"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => commitCustomWeaponAbility(weapon.id)}
+                                className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950"
+                              >
+                                OK
+                              </button>
+                            </div>
+                          )}
                         </label>
                         <label className="block">
                           <span className="text-[9px] text-stone-400">Diff</span>
@@ -969,14 +1047,43 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                               </select>
                               <span>+</span>
                               <select
-                                value={weapon.rollAbility}
+                                value={
+                                  customAbilityWeaponId === weapon.id
+                                    ? '__custom__'
+                                    : weapon.rollAbility
+                                }
                                 onChange={(e) =>
-                                  updateWeaponField(weapon.id, { rollAbility: e.target.value })
+                                  handleWeaponAbilitySelectChange(weapon, e.target.value)
                                 }
                                 className="rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-[11px]"
                               >
                                 {renderWeaponAbilityOptions(weapon.rollAbility)}
                               </select>
+                              {customAbilityWeaponId === weapon.id && (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    maxLength={120}
+                                    value={weaponCustomAbilityDraft}
+                                    onChange={(e) => setWeaponCustomAbilityDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        commitCustomWeaponAbility(weapon.id);
+                                      }
+                                    }}
+                                    placeholder="Custom ability..."
+                                    className="w-24 rounded border border-amber-500/50 bg-zinc-950 px-1.5 py-0.5 text-[11px]"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => commitCustomWeaponAbility(weapon.id)}
+                                    className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950"
+                                  >
+                                    OK
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td className="py-2 pr-2">
@@ -1329,10 +1436,20 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
             )}
           </section>
 
-          {/* 3. FETISHES, RITES, OTHER TRAITS */}
-          <div className={isMobile ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-3 gap-4'}>
-            {/* Fetishes */}
-            <section className="rounded-xl border border-amber-500/20 bg-zinc-950/75 p-3.5">
+        </>
+      )}
+
+      {/* 3. FETISHES, RITES & DIFFERENTIATED MERITS / FLAWS / OTHER TRAITS */}
+      {(showCombat || showOtherTraits) && (
+        <div
+          className={
+            !showCombat || isMobile ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-3 gap-4'
+          }
+        >
+          {showCombat && (
+            <>
+              {/* Fetishes */}
+              <section className="rounded-xl border border-amber-500/20 bg-zinc-950/75 p-3.5">
               <div className="mb-2.5 flex items-center justify-between border-b border-stone-800 pb-2">
                 <h3 className="flex items-center gap-1.5 font-display text-xs font-bold tracking-wider uppercase text-amber-200">
                   <Sparkles className="h-3.5 w-3.5 text-cyan-300" />
@@ -1604,108 +1721,324 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 </div>
               )}
             </section>
+            </>
+          )}
 
-            {/* Other Traits */}
-            <section className="rounded-xl border border-amber-500/20 bg-zinc-950/75 p-3.5">
-              <div className="mb-2.5 border-b border-stone-800 pb-2">
-                <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
-                  Other Traits (Merits / Flaws / Lore)
-                </h3>
-              </div>
+          {/* Differentiated Merits, Flaws & Other Traits */}
+          {showOtherTraits && (() => {
+            const meritEntries = sheet.otherTraits.filter(
+              (ot) => resolveOtherTraitKind(ot) === 'merit'
+            );
+            const flawEntries = sheet.otherTraits.filter(
+              (ot) => resolveOtherTraitKind(ot) === 'flaw'
+            );
+            const otherEntries = sheet.otherTraits.filter(
+              (ot) => resolveOtherTraitKind(ot) === 'other'
+            );
 
-              {sheet.otherTraits.length === 0 ? (
-                <p className="text-[11px] text-stone-500">No Other Traits recorded.</p>
-              ) : (
-                <div className="space-y-2">
-                  {sheet.otherTraits.map((ot) => (
-                    <div
-                      key={ot.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-stone-800 bg-zinc-900/50 px-2.5 py-1.5 text-xs"
+            const addOtherTrait = (explicit?: {
+              name: string;
+              kind: OtherTraitKind;
+              dots: number;
+              category?: SheetOtherTraitEntry['category'];
+            }) => {
+              const clean = (explicit?.name ?? newTraitName).trim().slice(0, 120);
+              if (!clean) return;
+              const kind = explicit?.kind ?? newTraitKind;
+              const dots = Math.max(0, Math.min(10, Math.floor(explicit?.dots ?? newTraitDots)));
+              onUpdateSheet((prev) => ({
+                ...prev,
+                otherTraits: [
+                  ...prev.otherTraits,
+                  {
+                    id: `${kind}-${crypto.randomUUID().slice(0, 8)}`,
+                    name: clean,
+                    dots,
+                    kind,
+                    ...(explicit?.category ? { category: explicit.category } : {}),
+                  },
+                ].slice(0, 50),
+              }));
+              if (!explicit) {
+                setNewTraitName('');
+              }
+            };
+
+            const renderEntryRow = (ot: SheetOtherTraitEntry, resolvedKind: OtherTraitKind) => {
+              const tone =
+                resolvedKind === 'merit'
+                  ? 'emerald'
+                  : resolvedKind === 'flaw'
+                    ? 'crimson'
+                    : 'amber';
+              const rowClasses =
+                resolvedKind === 'merit'
+                  ? 'border-emerald-700/45 bg-emerald-950/20'
+                  : resolvedKind === 'flaw'
+                    ? 'border-rose-700/45 bg-rose-950/20'
+                    : 'border-stone-800 bg-zinc-900/50';
+              const badgeClasses =
+                resolvedKind === 'merit'
+                  ? 'border-emerald-500/45 bg-emerald-950/80 text-emerald-200'
+                  : resolvedKind === 'flaw'
+                    ? 'border-rose-500/45 bg-rose-950/80 text-rose-200'
+                    : 'border-amber-500/35 bg-amber-950/60 text-amber-200';
+              const badgeText =
+                resolvedKind === 'merit'
+                  ? `Merit • ${ot.dots}pt`
+                  : resolvedKind === 'flaw'
+                    ? `Flaw • ${ot.dots}pt`
+                    : `Trait • ${ot.dots}`;
+
+              return (
+                <div
+                  key={ot.id}
+                  className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-xs ${rowClasses}`}
+                >
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider ${badgeClasses}`}
                     >
-                      <span className="font-semibold text-stone-200">{ot.name}</span>
-                      <div className="flex items-center gap-2">
-                        <SheetPipTrack
-                          label={ot.name}
-                          value={ot.dots}
-                          max={Math.max(5, ot.dots)}
-                          shape="circle"
-                          tone="amber"
-                          isMobile={isMobile}
-                          onChange={(val) =>
-                            onUpdateSheet((prev) => ({
-                              ...prev,
-                              otherTraits: prev.otherTraits.map((item) =>
-                                item.id === ot.id
-                                  ? { ...item, dots: Math.max(0, Math.min(10, val)) }
-                                  : item
-                              ),
-                            }))
-                          }
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateSheet((prev) => ({
-                              ...prev,
-                              otherTraits: prev.otherTraits.filter((item) => item.id !== ot.id),
-                            }))
-                          }
-                          className="text-stone-500 hover:text-red-300"
-                          aria-label={`Remove ${ot.name}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                      {badgeText}
+                    </span>
+                    <span className="truncate font-semibold text-stone-100">
+                      {cleanOtherTraitDisplayName(ot.name)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <SheetPipTrack
+                      label={cleanOtherTraitDisplayName(ot.name)}
+                      value={ot.dots}
+                      max={Math.max(5, ot.dots)}
+                      shape="circle"
+                      tone={tone}
+                      isMobile={isMobile}
+                      onChange={(val) =>
+                        onUpdateSheet((prev) => ({
+                          ...prev,
+                          otherTraits: prev.otherTraits.map((item) =>
+                            item.id === ot.id
+                              ? { ...item, dots: Math.max(0, Math.min(10, val)) }
+                              : item
+                          ),
+                        }))
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateSheet((prev) => ({
+                          ...prev,
+                          otherTraits: prev.otherTraits.filter((item) => item.id !== ot.id),
+                        }))
+                      }
+                      className="text-stone-500 hover:text-red-300"
+                      aria-label={`Remove ${ot.name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            };
+
+            const catalogForKind = W20_MERITS_FLAWS_CATALOG.filter(
+              (m) => newTraitKind === 'other' || m.kind === newTraitKind
+            );
+
+            return (
+              <section className="rounded-xl border border-amber-500/20 bg-zinc-950/75 p-3.5">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-stone-800 pb-2">
+                  <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
+                    Merits, Flaws &amp; Other Traits
+                  </h3>
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold">
+                    <span className="rounded bg-emerald-950/80 px-1.5 py-0.5 text-emerald-300 border border-emerald-700/50">
+                      {meritEntries.length} Merit{meritEntries.length === 1 ? '' : 's'}
+                    </span>
+                    <span className="rounded bg-rose-950/80 px-1.5 py-0.5 text-rose-300 border border-rose-700/50">
+                      {flawEntries.length} Flaw{flawEntries.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Visually Separated Lists */}
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/10 p-2.5">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      <span>Merits (Boons)</span>
+                    </div>
+                    {meritEntries.length === 0 ? (
+                      <p className="text-[11px] text-stone-500">No Merits recorded.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {meritEntries.map((ot) => renderEntryRow(ot, 'merit'))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-rose-800/45 bg-rose-950/10 p-2.5">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-rose-300">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      <span>Flaws (Drawbacks)</span>
+                    </div>
+                    {flawEntries.length === 0 ? (
+                      <p className="text-[11px] text-stone-500">No Flaws recorded.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {flawEntries.map((ot) => renderEntryRow(ot, 'flaw'))}
+                      </div>
+                    )}
+                  </div>
+
+                  {otherEntries.length > 0 && (
+                    <div className="rounded-lg border border-stone-800 bg-zinc-900/40 p-2.5">
+                      <div className="mb-1.5 text-[10px] font-extrabold uppercase tracking-wider text-amber-200">
+                        Other Traits &amp; Lore
+                      </div>
+                      <div className="space-y-1.5">
+                        {otherEntries.map((ot) => renderEntryRow(ot, 'other'))}
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
 
-              <div className="mt-3 flex gap-1.5">
-                <input
-                  type="text"
-                  maxLength={120}
-                  value={newTraitName}
-                  onChange={(e) => setNewTraitName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && newTraitName.trim()) {
-                      e.preventDefault();
-                      const clean = newTraitName.trim().slice(0, 120);
-                      onUpdateSheet((prev) => ({
-                        ...prev,
-                        otherTraits: [
-                          ...prev.otherTraits,
-                          { id: `trait-${crypto.randomUUID().slice(0, 8)}`, name: clean, dots: 1 },
-                        ].slice(0, 50),
-                      }));
-                      setNewTraitName('');
-                    }
-                  }}
-                  placeholder="Add trait / Merit / Flaw..."
-                  className="min-w-0 flex-1 rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs text-stone-100"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const clean = newTraitName.trim().slice(0, 120);
-                    if (!clean) return;
-                    onUpdateSheet((prev) => ({
-                      ...prev,
-                      otherTraits: [
-                        ...prev.otherTraits,
-                        { id: `trait-${crypto.randomUUID().slice(0, 8)}`, name: clean, dots: 1 },
-                      ].slice(0, 50),
-                    }));
-                    setNewTraitName('');
-                  }}
-                  className="rounded border border-amber-500/40 bg-amber-950/35 px-2.5 py-1 text-xs font-bold text-amber-200 hover:bg-amber-900/45"
-                >
-                  Add
-                </button>
-              </div>
-            </section>
-          </div>
-        </>
+                {/* Differentiated Free-Text + Preset Adder (Mobile & Desktop friendly) */}
+                <div className="mt-3 space-y-2 rounded-lg border border-stone-800 bg-zinc-900/60 p-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div
+                      role="group"
+                      aria-label="New Entry Classification"
+                      className="grid grid-cols-3 gap-1 rounded-lg border border-stone-800 bg-zinc-950 p-0.5 text-[10px] font-bold"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setNewTraitKind('merit')}
+                        className={`rounded-md px-2 py-1 transition ${
+                          newTraitKind === 'merit'
+                            ? 'bg-emerald-700/80 text-white'
+                            : 'text-stone-400 hover:text-stone-200'
+                        }`}
+                      >
+                        Merit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewTraitKind('flaw')}
+                        className={`rounded-md px-2 py-1 transition ${
+                          newTraitKind === 'flaw'
+                            ? 'bg-rose-700/80 text-white'
+                            : 'text-stone-400 hover:text-stone-200'
+                        }`}
+                      >
+                        Flaw
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewTraitKind('other')}
+                        className={`rounded-md px-2 py-1 transition ${
+                          newTraitKind === 'other'
+                            ? 'bg-amber-700/80 text-amber-50'
+                            : 'text-stone-400 hover:text-stone-200'
+                        }`}
+                      >
+                        Other
+                      </button>
+                    </div>
+
+                    {newTraitKind !== 'other' && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPresetMeritsFlaws((v) => !v)}
+                        className="text-[10px] font-semibold text-amber-300 underline decoration-amber-500/40 underline-offset-2 hover:text-amber-200"
+                      >
+                        {showPresetMeritsFlaws
+                          ? 'Hide W20 Presets'
+                          : `Browse W20 ${newTraitKind === 'merit' ? 'Merits' : 'Flaws'}`}
+                      </button>
+                    )}
+                  </div>
+
+                  {showPresetMeritsFlaws && newTraitKind !== 'other' && (
+                    <div className="flex max-h-36 flex-wrap gap-1 overflow-y-auto rounded border border-stone-800 bg-zinc-950/90 p-2">
+                      {catalogForKind.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() =>
+                            addOtherTrait({
+                              name: item.name,
+                              kind: item.kind,
+                              dots: item.pointValue,
+                              category: item.category,
+                            })
+                          }
+                          title={item.summary}
+                          className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${
+                            item.kind === 'merit'
+                              ? 'border-emerald-800/60 bg-emerald-950/35 text-emerald-200 hover:border-emerald-400'
+                              : 'border-rose-800/60 bg-rose-950/35 text-rose-200 hover:border-rose-400'
+                          }`}
+                        >
+                          + {item.name} ({item.pointValue}pt)
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-1.5">
+                    <input
+                      type="text"
+                      maxLength={120}
+                      value={newTraitName}
+                      onChange={(e) => setNewTraitName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newTraitName.trim()) {
+                          e.preventDefault();
+                          addOtherTrait();
+                        }
+                      }}
+                      placeholder={
+                        newTraitKind === 'merit'
+                          ? 'Type Merit name...'
+                          : newTraitKind === 'flaw'
+                            ? 'Type Flaw name...'
+                            : 'Type Other Trait or Lore...'
+                      }
+                      className="min-h-[40px] min-w-[140px] flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-stone-100 placeholder-stone-500"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={7}
+                      value={newTraitDots}
+                      onChange={(e) =>
+                        setNewTraitDots(Math.max(1, Math.min(7, Number(e.target.value) || 1)))
+                      }
+                      aria-label="Points or Dots"
+                      title="Points / Dots (1-7)"
+                      className="min-h-[40px] w-14 rounded-lg border border-stone-700 bg-zinc-950 px-2 py-1 text-center font-mono text-xs text-stone-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addOtherTrait()}
+                      className={`min-h-[40px] rounded-lg border px-3 py-1.5 text-xs font-bold ${
+                        newTraitKind === 'merit'
+                          ? 'border-emerald-500/50 bg-emerald-950/50 text-emerald-200 hover:bg-emerald-900/50'
+                          : newTraitKind === 'flaw'
+                            ? 'border-rose-500/50 bg-rose-950/50 text-rose-200 hover:bg-rose-900/50'
+                            : 'border-amber-500/45 bg-amber-950/40 text-amber-200 hover:bg-amber-900/45'
+                      }`}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </section>
+            );
+          })()}
+        </div>
       )}
     </div>
   );

@@ -14,6 +14,7 @@ import {
   resolveDefenderReactionAndDamage,
   resolveFrenzyCheck,
   resolveW20DicePool,
+  resolveW20InitiativeRoll,
   rollCsprngD10,
   rollRoundInitiative,
   submitReverseDeclaration,
@@ -758,8 +759,9 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const participant = this.resolveTargetParticipant(attachment, command.seatId);
     participant.isConnected = true;
 
+    const isInitiative = command.rollMode === 'initiative';
     const woundPenalty = command.applyWoundPenalty ? participant.trackers.woundPenalty : 0;
-    const cleanLabel = command.label?.trim() || 'W20 Dice Pool';
+    const cleanLabel = command.label?.trim() || (isInitiative ? 'Initiative' : 'W20 Dice Pool');
     const supplied = command.physicalDiceValues ?? [];
     let idx = 0;
     const rng = () => {
@@ -771,23 +773,36 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return rollCsprngD10();
     };
 
-    const roll = resolveW20DicePool(
-      {
-        label: cleanLabel,
-        basePool: command.pool,
-        woundPenalty,
-        applyWoundPenalty: command.applyWoundPenalty,
-        baseDifficulty: command.difficulty,
-        hasApplicableSpecialty: command.hasSpecialty,
-        spendWillpower: command.spendWillpower,
-        specialtyMode: 'w20_double',
-      },
-      rng,
-    );
+    const roll = isInitiative
+      ? resolveW20InitiativeRoll(
+          {
+            label: cleanLabel,
+            initiativeModifier:
+              command.initiativeModifier !== undefined
+                ? command.initiativeModifier
+                : woundPenalty,
+          },
+          rng,
+        )
+      : resolveW20DicePool(
+          {
+            label: cleanLabel,
+            basePool: command.pool,
+            woundPenalty,
+            applyWoundPenalty: command.applyWoundPenalty,
+            baseDifficulty: command.difficulty,
+            hasApplicableSpecialty: command.hasSpecialty,
+            spendWillpower: command.spendWillpower,
+            specialtyMode: 'w20_double',
+          },
+          rng,
+        );
 
-    const rageDiceCount = Math.min(roll.effectivePool, Math.max(0, command.rageDiceCount));
+    const rageDiceCount = isInitiative
+      ? 0
+      : Math.min(roll.effectivePool, Math.max(0, command.rageDiceCount));
     let willpowerSpent = false;
-    if (command.spendWillpower && participant.trackers.willpower > 0) {
+    if (!isInitiative && command.spendWillpower && participant.trackers.willpower > 0) {
       participant.trackers.willpower -= 1;
       willpowerSpent = true;
     }
@@ -1316,11 +1331,16 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     }
 
     if (!audit.isSecretStRoll && isAllowedWebhookUrl(this.roomState.diceLogWebhookUrl)) {
-      const embedColor = audit.roll.isBotch
-        ? 0x991b1b
-        : audit.roll.netSuccesses > 0
-          ? 0x10b981
-          : 0x71717a;
+      const isInitiative = audit.roll.rollMode === 'initiative';
+      const initMod = audit.roll.initiativeModifier ?? 0;
+      const initTotal = audit.roll.initiativeTotal ?? audit.roll.netSuccesses;
+      const embedColor = isInitiative
+        ? 0xf59e0b
+        : audit.roll.isBotch
+          ? 0x991b1b
+          : audit.roll.netSuccesses > 0
+            ? 0x10b981
+            : 0x71717a;
       tasks.push(
         fetch(this.roomState.diceLogWebhookUrl, {
           method: 'POST',
@@ -1330,15 +1350,30 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
               {
                 title: `${audit.rollerName}: ${audit.label}`,
                 color: embedColor,
-                description: `**${audit.roll.outcome.toUpperCase()}** — **${audit.roll.netSuccesses}** net successes (Diff ${audit.roll.clampedDifficulty})`,
-                fields: [
-                  {
-                    name: 'Dice',
-                    value: `[${audit.roll.dice.map((d) => d.value).join(', ')}]`,
-                    inline: true,
-                  },
-                  { name: 'Pool', value: `${audit.roll.effectivePool}d10`, inline: true },
-                ],
+                description: isInitiative
+                  ? `**INITIATIVE: ${initTotal}** (1d10 + ${initMod})`
+                  : `**${audit.roll.outcome.toUpperCase()}** — **${audit.roll.netSuccesses}** net successes (Diff ${audit.roll.clampedDifficulty})`,
+                fields: isInitiative
+                  ? [
+                      {
+                        name: '1d10',
+                        value: `[${audit.roll.dice[0]?.value ?? 0}]`,
+                        inline: true,
+                      },
+                      {
+                        name: 'Modifier',
+                        value: `${initMod >= 0 ? '+' : ''}${initMod}`,
+                        inline: true,
+                      },
+                    ]
+                  : [
+                      {
+                        name: 'Dice',
+                        value: `[${audit.roll.dice.map((d) => d.value).join(', ')}]`,
+                        inline: true,
+                      },
+                      { name: 'Pool', value: `${audit.roll.effectivePool}d10`, inline: true },
+                    ],
                 footer: { text: `Seed: ${audit.roll.physicsSeed}` },
               },
             ],

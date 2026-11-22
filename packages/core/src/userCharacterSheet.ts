@@ -4,6 +4,7 @@ import {
   STARTING_RAGE_BY_AUSPICE,
   STARTING_WILLPOWER_BY_TRIBE,
   validateW20CharacterCreation,
+  W20_BACKGROUND_CATALOG,
   W20CharacterCreationDraft,
 } from './characterCreation';
 import { computeWoundState, FormModifierSpec, getBreedNaturalForm, W20_FORM_MATRIX } from './forms';
@@ -18,6 +19,7 @@ import {
   GarouForm,
   GarouTribe,
   HealthState,
+  MeritFlawCategory,
 } from './types';
 
 export interface CustomAbilityEntry {
@@ -63,10 +65,40 @@ export interface SheetRiteEntry {
   summary: string;
 }
 
+export type OtherTraitKind = 'merit' | 'flaw' | 'other';
+
 export interface SheetOtherTraitEntry {
   id: string;
   name: string;
   dots: number;
+  kind?: OtherTraitKind;
+  category?: MeritFlawCategory;
+}
+
+/**
+ * Resolves the semantic classification ('merit' | 'flaw' | 'other') for an OtherTrait entry,
+ * falling back to legacy "(Merit)" / "(Flaw)" suffixes on older saved sheets.
+ */
+export function resolveOtherTraitKind(
+  entry: Pick<SheetOtherTraitEntry, 'name' | 'kind'>
+): OtherTraitKind {
+  if (entry.kind === 'merit' || entry.kind === 'flaw' || entry.kind === 'other') {
+    return entry.kind;
+  }
+  if (/\(merit\)|\bmerit\b/i.test(entry.name)) {
+    return 'merit';
+  }
+  if (/\(flaw\)|\bflaw\b/i.test(entry.name)) {
+    return 'flaw';
+  }
+  return 'other';
+}
+
+/**
+ * Removes redundant trailing "(Merit)" / "(Flaw)" suffixes so differentiated UI badges remain crisp.
+ */
+export function cleanOtherTraitDisplayName(name: string): string {
+  return name.replace(/\s*\((?:merit|flaw)\)\s*$/i, '').trim() || name.trim();
 }
 
 export interface SheetWeaponEntry {
@@ -1656,11 +1688,15 @@ export function draftToUserCharacterSheet(
 
   const backgrounds: SheetBackgroundEntry[] = Object.entries(preview.backgrounds)
     .filter(([, dots]) => dots > 0)
-    .map(([key, dots]) => ({
-      id: key,
-      name: formatTraitLabel(key),
-      dots,
-    }));
+    .map(([key, dots]) => {
+      const customLabel = draft.customBackgroundLabels?.[key]?.trim();
+      const catalogEntry = W20_BACKGROUND_CATALOG.find((b) => b.key === key);
+      return {
+        id: key,
+        name: customLabel || catalogEntry?.label || formatTraitLabel(key),
+        dots,
+      };
+    });
 
   const gifts: SheetGiftEntry[] = draft.selectedGifts.map((sel) => {
     const match = CANONICAL_GIFT_CATALOG.find(
@@ -1691,8 +1727,10 @@ export function draftToUserCharacterSheet(
 
   const otherTraits: SheetOtherTraitEntry[] = draft.meritsAndFlaws.map((mf) => ({
     id: mf.id,
-    name: `${mf.name} (${mf.kind === 'merit' ? 'Merit' : 'Flaw'})`,
+    name: mf.name,
     dots: mf.pointValue,
+    kind: mf.kind,
+    ...(mf.category ? { category: mf.category } : {}),
   }));
 
   const sheet: W20UserCharacterSheet = {

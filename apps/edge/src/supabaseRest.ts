@@ -653,7 +653,10 @@ export class SupabaseRestClient {
     }
 
     if (selectedGiftIds.length > 0) {
-      const uniqueGifts = Array.from(new Set(selectedGiftIds.filter(Boolean)));
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const uniqueGifts = Array.from(
+        new Set(selectedGiftIds.filter((id) => Boolean(id) && uuidRe.test(id))),
+      );
       if (uniqueGifts.length > 0) {
         await this.insertCharacterGifts(created.id, uniqueGifts);
       }

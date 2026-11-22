@@ -221,7 +221,11 @@ export class DiceSoundEngine {
     }
   }
 
-  playOutcomeAccent(roll: { isBotch: boolean; netSuccesses: number }): void {
+  playOutcomeAccent(roll: {
+    isBotch: boolean;
+    netSuccesses: number;
+    rollMode?: 'pool' | 'initiative';
+  }): void {
     this.unlock();
     if (this.preferences.muted || !this.ctx || !this.compressor) {
       return;
@@ -229,6 +233,25 @@ export class DiceSoundEngine {
 
     const ctx = this.ctx;
     const now = ctx.currentTime + 0.01;
+
+    if (roll.rollMode === 'initiative') {
+      const notes = [440, 587.33];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.03);
+
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now + idx * 0.03);
+        gain.gain.linearRampToValueAtTime(0.09, now + idx * 0.03 + 0.014);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+
+        osc.connect(gain).connect(this.compressor!);
+        osc.start(now + idx * 0.03);
+        osc.stop(now + 0.32);
+      });
+      return;
+    }
 
     if (roll.isBotch) {
       // Deep, ominous low umbral dissonance

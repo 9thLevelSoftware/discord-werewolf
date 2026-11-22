@@ -7,6 +7,7 @@ import {
   EyeOff,
   FileText,
   Flame,
+  Hash,
   HeartPulse,
   Minus,
   Monitor,
@@ -22,6 +23,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Zap,
 } from 'lucide-react';
 import { formatFormName, W20_FORMS } from '../character-sheet/sheetShared';
 import { ParticipantAvatar, RollResultPlaque } from './DieFaceTiles';
@@ -262,6 +264,9 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
   onToggleSecretRoll,
   onSetRollLabel,
   onExecuteRoll,
+  initiativeModifier,
+  initiativeFormula,
+  onRollInitiative,
   onTriggerPreset,
   onTriggerResolvedShortcut,
   onRemoveSheetShortcut,
@@ -501,10 +506,57 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             </div>
           </div>
 
-          {/* Row 2: Always-Visible Trait + Skill + Diff Strip (or Unbound Select Garou + Pool + Diff) */}
-          {activeSheet ? (
-            isSheetTraitsMode && traitSelection ? (
-              <div className="flex min-w-0 items-center gap-1">
+          {/* Row 2: Persistent 1-Click Skills/Numbers Toggle + Trait+Skill or Numbers Pool + Diff */}
+          <div className="flex min-w-0 items-center gap-1">
+            {/* Compact 2-Way Segmented Toggle: Skills vs Numbers */}
+            <div
+              role="group"
+              aria-label="Dice Roll Mode: Skills or Numbers"
+              className="flex h-[38px] shrink-0 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 p-0.5"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  if (!activeSheet) {
+                    onSetRollSourceMode('traits');
+                    onOpenRoster();
+                  } else {
+                    onSetRollSourceMode('traits');
+                  }
+                }}
+                aria-label="Skills mode"
+                title={
+                  activeSheet
+                    ? 'Roll by Character Sheet Skills & Attributes'
+                    : 'Select a Garou sheet for Skill rolls'
+                }
+                className={`flex h-full items-center gap-0.5 rounded-lg px-2 text-[10px] font-bold transition ${
+                  isSheetTraitsMode
+                    ? 'bg-gradient-to-b from-amber-500/30 to-amber-900/45 text-amber-100 ring-1 ring-amber-400/60'
+                    : 'text-stone-400'
+                }`}
+              >
+                <Sparkles className="h-3 w-3 text-amber-300" />
+                <span>Skills</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onSetRollSourceMode('manual')}
+                aria-label="Numbers mode"
+                title="Roll raw d10 pool by number"
+                className={`flex h-full items-center gap-0.5 rounded-lg px-2 text-[10px] font-bold transition ${
+                  !isSheetTraitsMode
+                    ? 'bg-gradient-to-b from-red-800/80 to-red-950 text-amber-100 ring-1 ring-amber-400/55'
+                    : 'text-stone-400'
+                }`}
+              >
+                <Hash className="h-3 w-3 text-amber-300" />
+                <span>#</span>
+              </button>
+            </div>
+
+            {isSheetTraitsMode && activeSheet && traitSelection ? (
+              <>
                 <button
                   type="button"
                   onClick={() => openTraitsSheet('attr')}
@@ -556,105 +608,81 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                     </span>
                   )}
                 </button>
-
-                <MobileCompactDiffStepper
-                  difficulty={difficulty}
-                  onSetDifficulty={onSetDifficulty}
-                />
-              </div>
+              </>
             ) : (
-              <div className="flex min-w-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => onSetRollSourceMode('traits')}
-                  className="flex h-[38px] shrink-0 items-center gap-1 rounded-xl border border-amber-500/55 bg-amber-950/40 px-2 text-[11px] font-bold text-amber-200 active:scale-95"
-                >
-                  <Sparkles className="h-3 w-3" />
-                  <span>Traits</span>
-                </button>
-
-                <div className="flex h-[38px] min-w-0 flex-1 items-center justify-between gap-1 rounded-xl border border-stone-700/80 bg-zinc-950/90 px-1">
-                  <button
-                    type="button"
-                    onClick={() => onSetPool((p) => Math.max(1, p - 1))}
-                    aria-label="Decrease Pool"
-                    className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 text-stone-300"
-                  >
-                    <Minus className="h-3 w-3" />
-                  </button>
-                  <span className="font-display text-xs font-black text-amber-100">
-                    {pool}d10
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onSetPool((p) => Math.min(30, p + 1))}
-                    aria-label="Increase Pool"
-                    className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 text-stone-300"
-                  >
-                    <Plus className="h-3 w-3" />
-                  </button>
-                </div>
-
-                <MobileCompactDiffStepper
-                  difficulty={difficulty}
-                  onSetDifficulty={onSetDifficulty}
-                />
-              </div>
-            )
-          ) : (
-            <div className="flex min-w-0 items-center gap-1">
-              <button
-                type="button"
-                onClick={onOpenRoster}
-                className="flex h-[38px] min-w-0 flex-1 items-center justify-center gap-1 rounded-xl border border-amber-500/55 bg-gradient-to-b from-red-950/80 to-zinc-950 px-2 text-[11px] font-bold text-amber-100 active:scale-95"
-              >
-                <Flame className="h-3.5 w-3.5 shrink-0 text-red-400" />
-                <span className="truncate">Select Garou</span>
-              </button>
-
-              <div className="flex h-[38px] shrink-0 items-center gap-0.5 rounded-xl border border-stone-700/80 bg-zinc-950/90 px-0.5">
+              <div className="flex h-[38px] min-w-0 flex-1 items-center justify-between gap-1 rounded-xl border border-stone-700/80 bg-zinc-950/90 px-1">
                 <button
                   type="button"
                   onClick={() => onSetPool((p) => Math.max(1, p - 1))}
                   aria-label="Decrease Pool"
-                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 text-stone-300"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-stone-300 active:scale-95"
                 >
                   <Minus className="h-3 w-3" />
                 </button>
-                <span className="font-display min-w-[30px] text-center text-xs font-black text-amber-100">
-                  {pool}d
-                </span>
+                {editingPool ? (
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={poolInputValue}
+                    autoFocus
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => onSetPoolInputValue(e.target.value)}
+                    onBlur={onCommitPoolInput}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        onCommitPoolInput();
+                      } else if (e.key === 'Escape') {
+                        onSetEditingPool(false);
+                      }
+                    }}
+                    className="font-display w-12 bg-transparent text-center text-xs font-black text-amber-100 focus:outline-none"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSetPoolInputValue(String(pool));
+                      onSetEditingPool(true);
+                    }}
+                    title="Tap to type exact d10 pool"
+                    className="font-display min-w-[44px] text-center text-xs font-black text-amber-100"
+                  >
+                    {pool}d10
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onSetPool((p) => Math.min(30, p + 1))}
                   aria-label="Increase Pool"
-                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 text-stone-300"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-stone-300 active:scale-95"
                 >
                   <Plus className="h-3 w-3" />
                 </button>
               </div>
+            )}
 
-              <MobileCompactDiffStepper
-                difficulty={difficulty}
-                onSetDifficulty={onSetDifficulty}
-              />
-            </div>
-          )}
+            <MobileCompactDiffStepper
+              difficulty={difficulty}
+              onSetDifficulty={onSetDifficulty}
+            />
+          </div>
 
-          {/* Row 3: 4 Clean Thumb Controls */}
-          <div className="flex items-center gap-1.5">
+          {/* Row 3: 5 Clean Thumb Controls */}
+          <div className="flex items-center gap-1">
             {/* 1. Sheet / Roster */}
             <button
               type="button"
               onClick={activeSheet ? onOpenSheet : onOpenRoster}
-              className="flex min-h-[44px] min-w-[48px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-stone-700/80 bg-zinc-950/90 px-2 text-stone-200 transition active:scale-95"
+              className="flex min-h-[44px] min-w-[44px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-stone-700/80 bg-zinc-950/90 px-1.5 text-stone-200 transition active:scale-95"
             >
               {activeSheet ? (
                 <FileText className="h-4 w-4 text-amber-300" />
               ) : (
                 <Users className="h-4 w-4 text-amber-300" />
               )}
-              <span className="text-[10px] font-bold leading-none">
+              <span className="text-[9.5px] font-bold leading-none">
                 {activeSheet ? 'Sheet' : 'Roster'}
               </span>
             </button>
@@ -663,22 +691,22 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             <button
               type="button"
               onClick={() => openMobileSheet('vitals')}
-              className={`flex min-h-[44px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border px-2 transition active:scale-95 ${
+              className={`flex min-h-[44px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border px-1.5 transition active:scale-95 ${
                 activeMobileSheet === 'vitals'
                   ? 'border-amber-400/80 bg-amber-950/50'
                   : 'border-stone-700/80 bg-zinc-950/90'
               }`}
             >
-              <div className="flex items-center gap-1 font-mono text-[10px] font-extrabold leading-none">
+              <div className="flex items-center gap-1 font-mono text-[9.5px] font-extrabold leading-none">
                 <span className="text-red-300">R{activeTrackers.rage}</span>
                 <span className="text-amber-200">G{activeTrackers.gnosis}</span>
                 <span className="text-indigo-200">W{activeTrackers.willpower}</span>
               </div>
-              <span className="flex items-center gap-1 text-[9.5px] font-bold leading-none text-stone-400">
+              <span className="flex items-center gap-0.5 text-[9px] font-bold leading-none text-stone-400">
                 <HeartPulse className="h-2.5 w-2.5 text-red-400" />
                 {activeTrackers.woundPenalty !== 0 ? (
                   <span className="font-mono text-red-300">
-                    {activeTrackers.woundPenalty} Wnd
+                    {activeTrackers.woundPenalty}
                   </span>
                 ) : (
                   'Vitals'
@@ -686,12 +714,28 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               </span>
             </button>
 
-            {/* 3. Primary Roll CTA */}
+            {/* 3. Hardcoded Initiative Button */}
+            <button
+              type="button"
+              disabled={isDisabled}
+              onClick={onRollInitiative}
+              title={`Roll W20 Initiative (${initiativeFormula})`}
+              className="flex min-h-[44px] min-w-[46px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-amber-500/60 bg-amber-950/35 px-1.5 text-amber-100 transition active:scale-95 disabled:opacity-45"
+            >
+              <Zap className="h-3.5 w-3.5 text-amber-300" />
+              <span className="font-mono text-[9.5px] font-extrabold leading-none">
+                {activeSheet || initiativeModifier !== 0
+                  ? `${initiativeModifier >= 0 ? `+${initiativeModifier}` : initiativeModifier}`
+                  : 'Init'}
+              </span>
+            </button>
+
+            {/* 4. Primary Roll CTA */}
             <button
               type="button"
               disabled={isDisabled || rollBlockedByEmptyTraits}
               onClick={onExecuteRoll}
-              className="w20-crimson-seal font-display flex min-h-[44px] min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl px-2.5 text-xs font-black tracking-wider uppercase text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w20-crimson-seal font-display flex min-h-[44px] min-w-0 flex-1 items-center justify-center gap-1 rounded-xl px-2 text-xs font-black tracking-wider uppercase text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Dices className="h-4 w-4 shrink-0" />
               <span className="truncate">{rollCtaText}</span>
@@ -700,18 +744,18 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               )}
             </button>
 
-            {/* 4. Mods Button */}
+            {/* 5. Mods Button */}
             <button
               type="button"
               onClick={() => openMobileSheet('tune')}
-              className={`relative flex min-h-[44px] min-w-[48px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border px-2 transition active:scale-95 ${
+              className={`relative flex min-h-[44px] min-w-[44px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border px-1.5 transition active:scale-95 ${
                 activeMobileSheet === 'tune'
                   ? 'border-amber-400/80 bg-amber-950/55 text-amber-100'
                   : 'border-stone-700/80 bg-zinc-950/90 text-stone-200'
               }`}
             >
               <SlidersHorizontal className="h-4 w-4 text-amber-300" />
-              <span className="text-[10px] font-bold leading-none">Mods</span>
+              <span className="text-[9.5px] font-bold leading-none">Mods</span>
               {activeModifierCount > 0 && (
                 <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-[9px] font-black text-zinc-950">
                   {activeModifierCount}
