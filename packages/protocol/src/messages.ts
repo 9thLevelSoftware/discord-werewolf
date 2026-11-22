@@ -95,6 +95,21 @@ export interface TableParticipant {
   activeForm?: GarouForm | null;
 }
 
+/**
+ * One line of the shared initiative order in a dice room: the latest non-secret
+ * initiative roll for one seat. A player with several seats has one entry per seat.
+ */
+export interface TableInitiativeEntry {
+  /** Same key as TableParticipant.participantKey: user id, or `userId::seatId`. */
+  participantKey: string;
+  discordUserId: string;
+  seatId: string;
+  displayName: string;
+  /** 1d10 + modifier. */
+  total: number;
+  rolledAt: number;
+}
+
 export interface RollHistoryEntry {
   id: string;
   timestamp: number;
@@ -197,6 +212,10 @@ export type ClientCommand =
   | {
       type: 'SYNC_CLIENT_SEATS';
       seats: ClientSeatSyncItem[];
+    }
+  | {
+      /** Empties the shared initiative order, ready for the next round or scene. */
+      type: 'CLEAR_TABLE_INITIATIVE';
     }
   | {
       type: 'CHARACTER_UPDATE_TRACKER';
@@ -391,6 +410,7 @@ export interface RoomSnapshotView {
   combat: CombatEncounterView | null;
   participants?: TableParticipant[];
   rollHistory?: RollHistoryEntry[];
+  tableInitiative?: TableInitiativeEntry[];
 }
 
 export type CommandRejectionCode =
@@ -429,6 +449,10 @@ export type ServerEvent =
   | {
       type: 'PARTICIPANTS_UPDATED';
       participants: TableParticipant[];
+    }
+  | {
+      type: 'TABLE_INITIATIVE_UPDATED';
+      entries: TableInitiativeEntry[];
     }
   | {
       type: 'COMBAT_STATE_UPDATED';

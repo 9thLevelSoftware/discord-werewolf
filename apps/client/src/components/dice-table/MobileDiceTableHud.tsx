@@ -38,6 +38,7 @@ import {
   SavePinButton,
   useSavedFlash,
 } from './console/consoleShared';
+import { InitiativeOrderPanel } from './InitiativeOrderPanel';
 import { MobileTraitPickerContent } from './TraitRollBuilder';
 import { PersonalTrackersPanel } from './W20DotTracker';
 
@@ -97,6 +98,8 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
   connectionStatus,
   lastError,
   sortedParticipants,
+  tableInitiative,
+  onClearTableInitiative,
   speakingDiscordIds,
   seats,
   activeSeat,
@@ -668,6 +671,15 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
           onClose={() => setActiveMobileSheet(null)}
         >
           <div className="space-y-4">
+            <InitiativeOrderPanel
+              entries={tableInitiative}
+              currentUserId={session.userId}
+              onClear={onClearTableInitiative}
+              touch
+            />
+
+            <div className="w20-gold-divider" />
+
             {/* Local Hot-Seats */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">

@@ -1330,4 +1330,100 @@ describe('GameRoomDO authoritative W20 engine & projection security', () => {
     expect(new Set(p1RollLabels)).toEqual(new Set(['Kaelen Brawl', 'Whisper Alertness']));
     expect(p2RollLabels).toEqual(p1RollLabels);
   });
+
+  it('keeps a shared initiative order per seat: re-rolls replace, secret rolls stay out, anyone can clear', async () => {
+    const env = createMockEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ROOM = 'dice-room-initiative';
+
+    const connect = async (discordId: string, name: string) => {
+      const jwt = await mintJwtForUser(discordId, name, [GUILD_ID], env.SUPABASE_JWT_SECRET);
+      const res = await room.fetch(
+        new Request(`https://vtt.example/ws/room/${ROOM}`, { headers: { Upgrade: 'websocket' } }),
+      );
+      expect(res.status).toBe(101);
+      const ws = state.acceptedSockets[state.acceptedSockets.length - 1]!;
+      await sendCommand(room, ws, 0, {
+        type: 'HELLO_AUTH',
+        sessionJwt: jwt,
+        campaignId: ROOM,
+        characterId: null,
+        lastSeenSeq: null,
+      });
+      return { ws, jwt };
+    };
+
+    const rollInit = (
+      ws: MockWebSocket,
+      die: number,
+      modifier: number,
+      extra: { seatId?: string; isSecretRoll?: boolean } = {},
+    ) =>
+      sendCommand(room, ws, 0, {
+        type: 'ROLL_TABLE_POOL',
+        pool: 1,
+        rageDiceCount: 0,
+        difficulty: 6,
+        hasSpecialty: false,
+        spendWillpower: false,
+        applyWoundPenalty: false,
+        rollMode: 'initiative',
+        initiativeModifier: modifier,
+        label: 'Initiative',
+        physicalDiceValues: [die],
+        ...extra,
+      });
+
+    const lastOrder = (ws: MockWebSocket) => {
+      const updates = ws
+        .drainJson<ServerEnvelope<ServerEvent>>()
+        .filter((e) => e.event.type === 'TABLE_INITIATIVE_UPDATED');
+      const last = updates[updates.length - 1];
+      return last && last.event.type === 'TABLE_INITIATIVE_UPDATED' ? last.event.entries : null;
+    };
+
+    const p1 = await connect('init-p1', 'PlayerOne');
+    const p2 = await connect('init-p2', 'PlayerTwo');
+    p1.ws.drainJson();
+    p2.ws.drainJson();
+
+    // Two seats for player one, one for player two.
+    await rollInit(p1.ws, 4, 5);
+    await rollInit(p1.ws, 9, 2, { seatId: 'seat-b' });
+    await rollInit(p2.ws, 6, 6);
+
+    const afterThree = lastOrder(p2.ws);
+    expect(afterThree?.map((e) => `${e.participantKey}=${e.total}`).sort()).toEqual(
+      ['init-p1=9', 'init-p1::seat-b=11', 'init-p2=12'].sort(),
+    );
+    p1.ws.drainJson();
+
+    // A re-roll replaces that seat's entry instead of adding another.
+    await rollInit(p1.ws, 10, 5);
+    const afterReroll = lastOrder(p2.ws);
+    expect(afterReroll).toHaveLength(3);
+    expect(afterReroll?.find((e) => e.participantKey === 'init-p1')?.total).toBe(15);
+    p1.ws.drainJson();
+
+    // A secret initiative roll changes nothing for anyone.
+    await rollInit(p2.ws, 1, 0, { isSecretRoll: true });
+    expect(lastOrder(p1.ws)).toBeNull();
+    p2.ws.drainJson();
+
+    // Someone joining later gets the order in their snapshot.
+    const late = await connect('init-p3', 'PlayerThree');
+    const snapshot = late.ws.drainJson<ServerEnvelope<ServerEvent>>()[0]!;
+    expect(snapshot.event.type).toBe('SYNC_SNAPSHOT');
+    if (snapshot.event.type === 'SYNC_SNAPSHOT') {
+      expect(snapshot.event.snapshot.tableInitiative).toHaveLength(3);
+    }
+    p1.ws.drainJson();
+    p2.ws.drainJson();
+
+    // Any player can clear it, and everyone is told.
+    await sendCommand(room, p2.ws, 0, { type: 'CLEAR_TABLE_INITIATIVE' });
+    expect(lastOrder(p1.ws)).toEqual([]);
+    expect(lastOrder(late.ws)).toEqual([]);
+  });
 });

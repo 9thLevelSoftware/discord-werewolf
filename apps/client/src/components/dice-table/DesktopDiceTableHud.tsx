@@ -629,7 +629,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
         {/* Primary Always-Visible Row: composer on the left, actions on the right.
             When they cannot share a line, the actions wrap below as one group. */}
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
-          <div className="flex flex-1 items-center gap-2.5">
+          <div className="flex max-w-full flex-1 flex-wrap items-center gap-2.5">
           {/* 1-Click Segmented Toggle: Skills vs Numbers */}
           <div
             role="group"
@@ -733,7 +733,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
 
           </div>
 
-          <div className="ml-auto flex shrink-0 items-center gap-2.5">
+          <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2.5">
           {/* Hardcoded 1-Click Initiative Button */}
           <button
             type="button"

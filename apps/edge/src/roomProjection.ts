@@ -16,6 +16,7 @@ import type {
   ParticipantRole,
   ProjectedMapToken,
   RollHistoryEntry,
+  TableInitiativeEntry,
   RoomSnapshotView,
   ServerEnvelope,
   ServerEvent,
@@ -57,6 +58,8 @@ export interface PersistedRoomState {
   combat: CombatEncounterState | null;
   tableParticipants?: Record<string, TableParticipant>;
   rollHistory?: RollHistoryEntry[];
+  /** Shared initiative order for dice rooms. Separate from the campaign combat machine. */
+  tableInitiative?: TableInitiativeEntry[];
 }
 
 export interface BufferedRoomEvent {
@@ -91,6 +94,7 @@ export function createEmptyRoomState(): PersistedRoomState {
     combat: null,
     tableParticipants: {},
     rollHistory: [],
+    tableInitiative: [],
   };
 }
 
@@ -226,6 +230,7 @@ export function buildProjectedSnapshot(
         attachment.role === 'storyteller' ||
         entry.rollerDiscordId === attachment.discordUserId,
     ),
+    tableInitiative: state.tableInitiative ?? [],
   };
 }
 

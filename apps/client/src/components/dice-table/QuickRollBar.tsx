@@ -5,7 +5,11 @@ import {
   resolveSheetShortcut,
   type W20UserCharacterSheet,
 } from '@w20-vtt/core';
-import type { LightGarouTrackers, TableParticipant } from '@w20-vtt/protocol';
+import type {
+  LightGarouTrackers,
+  TableInitiativeEntry,
+  TableParticipant,
+} from '@w20-vtt/protocol';
 import {
   BookmarkPlus,
   Check,
@@ -48,6 +52,8 @@ export interface DiceTableHudProps {
   lastError: { code: string; message: string } | null;
   webglReady: boolean;
   sortedParticipants: TableParticipant[];
+  tableInitiative: TableInitiativeEntry[];
+  onClearTableInitiative: () => void;
   speakingDiscordIds: Set<string>;
   seats: LocalTableSeat[];
   activeSeat: LocalTableSeat;

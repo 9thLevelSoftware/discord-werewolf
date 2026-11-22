@@ -23,6 +23,7 @@ import type {
   ProjectedMapToken,
   RollHistoryEntry,
   ServerEnvelope,
+  TableInitiativeEntry,
   TableParticipant,
   WhisperCardPayload,
 } from '@w20-vtt/protocol';
@@ -109,6 +110,9 @@ interface VttRoomStoreState {
   diceQueue: Queued3DRoll[];
   participants: TableParticipant[];
   rollHistory: RollHistoryEntry[];
+  /** Shared initiative order for this dice room (unsorted; see rankInitiative). */
+  tableInitiative: TableInitiativeEntry[];
+  clearTableInitiative: () => void;
 
   // Store Actions
   connectRoom: (params: ConnectRoomParams) => void;
@@ -282,6 +286,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
     diceQueue: [],
     participants: [],
     rollHistory: [],
+    tableInitiative: [],
 
     connectRoom: (params) => {
       connectionGeneration += 1;
@@ -325,6 +330,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               diceQueue: [],
               participants: [],
               rollHistory: [],
+              tableInitiative: [],
             }),
       }));
 
@@ -401,6 +407,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               speakingDiscordIds: new Set(snapshot.speakingDiscordIds),
               participants: snapshot.participants ?? [],
               rollHistory: snapshot.rollHistory ?? [],
+              tableInitiative: snapshot.tableInitiative ?? [],
               lastError: null,
             });
             flushPendingOutboundCommands(get);
@@ -434,6 +441,11 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               optimisticTokenCoords: {},
               lastError: { code: event.code, message: event.message },
             });
+            break;
+          }
+
+          case 'TABLE_INITIATIVE_UPDATED': {
+            set({ tableInitiative: event.entries });
             break;
           }
 
@@ -717,6 +729,10 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
 
     clearLastError: () => set({ lastError: null }),
 
+    clearTableInitiative: () => {
+      get().sendCommand({ type: 'CLEAR_TABLE_INITIATIVE' });
+    },
+
     disconnectRoom: () => {
       connectionGeneration += 1;
       reconnectAttempt = 0;
@@ -744,6 +760,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
         diceQueue: [],
         participants: [],
         rollHistory: [],
+        tableInitiative: [],
       });
     },
 

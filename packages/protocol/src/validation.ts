@@ -413,6 +413,9 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('PING'),
   }),
   z.object({
+    type: z.literal('CLEAR_TABLE_INITIATIVE'),
+  }),
+  z.object({
     type: z.literal('VOICE_SPEAKING_STATE'),
     isSpeaking: z.boolean(),
   }),

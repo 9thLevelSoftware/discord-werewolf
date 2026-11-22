@@ -29,6 +29,7 @@ import {
   useCharacterSheetStore,
 } from '../../store/useCharacterSheetStore';
 import { Button, ConfirmButton, IconButton, Modal } from '../ui';
+import { useUiPref } from '../../store/useUiPrefsStore';
 import { CharacterCreationWizard } from '../CharacterCreationWizard';
 import {
   formatFormName,
@@ -79,7 +80,10 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
   const exportSheetJson = useCharacterSheetStore((s) => s.exportSheetJson);
   const importSheetJson = useCharacterSheetStore((s) => s.importSheetJson);
 
-  const [mobileTab, setMobileTab] = useState<MobileRosterTab>('saved');
+  const [storedMobileTab, setStoredMobileTab] = useUiPref('rosterMobileTab');
+  const mobileTab: MobileRosterTab =
+    storedMobileTab === 'create' || storedMobileTab === 'sync' ? storedMobileTab : 'saved';
+  const setMobileTab = (tab: MobileRosterTab) => setStoredMobileTab(tab);
 
   // Inline Blank Fillable Sheet form
   const [blankName, setBlankName] = useState('');

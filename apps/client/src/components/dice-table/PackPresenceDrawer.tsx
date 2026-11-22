@@ -1,7 +1,8 @@
 import React from 'react';
 import type { W20UserCharacterSheet } from '@w20-vtt/core';
-import type { TableParticipant } from '@w20-vtt/protocol';
+import type { TableInitiativeEntry, TableParticipant } from '@w20-vtt/protocol';
 import { Button, IconButton } from '../ui';
+import { InitiativeOrderPanel } from './InitiativeOrderPanel';
 import { ChevronLeft, FileText, Flame, Plus, Users, Volume2 } from 'lucide-react';
 import type { LocalTableSeat } from '../../store/useCharacterSheetStore';
 import { formatFormName } from '../character-sheet/sheetShared';
@@ -11,6 +12,8 @@ interface PackPresenceDrawerProps {
   open: boolean;
   currentUserId: string;
   sortedParticipants: TableParticipant[];
+  tableInitiative: TableInitiativeEntry[];
+  onClearTableInitiative: () => void;
   speakingDiscordIds: Set<string>;
   seats: LocalTableSeat[];
   activeSeatId: string;
@@ -26,6 +29,8 @@ export const PackPresenceDrawer: React.FC<PackPresenceDrawerProps> = ({
   open,
   currentUserId,
   sortedParticipants,
+  tableInitiative,
+  onClearTableInitiative,
   speakingDiscordIds,
   seats,
   activeSeatId,
@@ -66,6 +71,14 @@ export const PackPresenceDrawer: React.FC<PackPresenceDrawerProps> = ({
       <div className="w20-gold-divider" />
 
       <div className="w20-thin-scrollbar flex-1 space-y-4 overflow-y-auto p-3">
+        <InitiativeOrderPanel
+          entries={tableInitiative}
+          currentUserId={currentUserId}
+          onClear={onClearTableInitiative}
+        />
+
+        <div className="w20-gold-divider" />
+
         {/* Voice Table Participants */}
         <section className="space-y-2">
           <div className="flex items-center justify-between">
