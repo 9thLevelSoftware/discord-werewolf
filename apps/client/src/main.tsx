@@ -8,8 +8,24 @@ if (!rootElement) {
   throw new Error('Root element #root not found in index.html');
 }
 
-createRoot(rootElement).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+const root = createRoot(rootElement);
+
+// Development only: /?ui=1 shows the shared UI primitives instead of the app.
+const showUiGallery =
+  import.meta.env.DEV && new URLSearchParams(window.location.search).has('ui');
+
+if (import.meta.env.DEV && showUiGallery) {
+  void import('./components/ui/UiGallery').then(({ UiGallery }) => {
+    root.render(
+      <StrictMode>
+        <UiGallery />
+      </StrictMode>
+    );
+  });
+} else {
+  root.render(
+    <StrictMode>
+      <App />
+    </StrictMode>
+  );
+}
