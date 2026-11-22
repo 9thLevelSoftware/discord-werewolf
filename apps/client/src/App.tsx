@@ -9,6 +9,7 @@ import { soundscapeEngine } from './audio/SyncedSoundscapeEngine';
 import { diceSoundEngine } from './audio/DiceSoundEngine';
 import { useVttRoomStore } from './store/useVttRoomStore';
 import { DiceTableWorkspace } from './components/DiceTableWorkspace';
+import { ToastViewport } from './components/ui';
 
 const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000;
 
@@ -122,6 +123,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-[#070609] text-stone-100">
+      <ToastViewport />
       {refreshWarning && (
         <div className="w20-obsidian-panel fixed top-2 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 !border-amber-500/60 rounded-xl px-3 py-1.5 text-xs text-amber-200">
           <span>Session refresh warning: {refreshWarning}</span>
