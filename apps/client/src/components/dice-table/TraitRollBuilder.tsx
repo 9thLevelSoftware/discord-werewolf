@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { W20UserCharacterSheet } from '@w20-vtt/core';
+import { usePopoverDismiss } from '../ui/usePopoverDismiss';
 import {
   Check,
   ChevronDown,
@@ -52,26 +53,14 @@ export const DifficultyQuickControl: React.FC<DifficultyQuickControlProps> = ({
 }) => {
   const [pickerOpen, setPickerOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const pickerTriggerRef = useRef<HTMLButtonElement | null>(null);
 
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const handlePointerDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setPickerOpen(false);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setPickerOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [pickerOpen]);
+  usePopoverDismiss({
+    open: pickerOpen,
+    onClose: () => setPickerOpen(false),
+    containerRef: rootRef,
+    triggerRef: pickerTriggerRef,
+  });
 
   const formPerceptionDiff = Math.max(2, Math.min(10, 6 + perceptionFormMod));
 
@@ -83,7 +72,7 @@ export const DifficultyQuickControl: React.FC<DifficultyQuickControlProps> = ({
         }`}
       >
         {!compact && (
-          <span className="font-display pl-0.5 text-[9.5px] font-bold tracking-wider uppercase text-amber-200/75">
+          <span className="font-display pl-0.5 text-xs font-bold tracking-wider uppercase text-amber-200/75">
             Diff
           </span>
         )}
@@ -99,9 +88,12 @@ export const DifficultyQuickControl: React.FC<DifficultyQuickControlProps> = ({
         </button>
         <button
           type="button"
+          ref={pickerTriggerRef}
           onClick={() => setPickerOpen((v) => !v)}
           aria-expanded={pickerOpen}
-          title="Click for quick Difficulty presets (3-10)"
+          aria-haspopup="dialog"
+          aria-label={`Difficulty ${difficulty}. Open difficulty presets`}
+          title="Difficulty presets"
           className={`font-display flex items-center justify-center rounded-lg px-1 text-center font-black transition hover:bg-zinc-900 ${
             difficulty !== 6 ? 'text-amber-300' : 'text-amber-100'
           } ${compact ? 'h-7 min-w-[30px] text-xs' : 'h-6 min-w-[26px] text-sm'}`}
@@ -121,9 +113,13 @@ export const DifficultyQuickControl: React.FC<DifficultyQuickControlProps> = ({
       </div>
 
       {pickerOpen && (
-        <div className="w20-obsidian-panel absolute right-0 bottom-full z-50 mb-2 w-max max-w-[90vw] rounded-xl p-2 shadow-2xl">
+        <div
+          role="dialog"
+          aria-label="Difficulty presets"
+          className="w20-obsidian-panel absolute right-0 bottom-full z-modal mb-2 w-max max-w-[90vw] rounded-xl p-2 shadow-2xl"
+        >
           <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-            <span className="font-display text-[9.5px] font-bold tracking-wider uppercase text-amber-200/80">
+            <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200/80">
               Target Difficulty
             </span>
             {perceptionFormMod !== 0 && (
@@ -133,7 +129,7 @@ export const DifficultyQuickControl: React.FC<DifficultyQuickControlProps> = ({
                   onChangeDifficulty(formPerceptionDiff);
                   setPickerOpen(false);
                 }}
-                className="rounded-md border border-emerald-500/45 bg-emerald-950/50 px-1.5 py-0.5 text-[9.5px] font-bold text-emerald-200 hover:border-emerald-400"
+                className="rounded-md border border-emerald-500/45 bg-emerald-950/50 px-1.5 py-0.5 text-xs font-bold text-emerald-200 hover:border-emerald-400"
               >
                 Form Per ({formPerceptionDiff})
               </button>
@@ -146,9 +142,12 @@ export const DifficultyQuickControl: React.FC<DifficultyQuickControlProps> = ({
                 <button
                   key={val}
                   type="button"
+                  aria-pressed={active}
+                  aria-label={`Difficulty ${val}`}
                   onClick={() => {
                     onChangeDifficulty(val);
                     setPickerOpen(false);
+                    pickerTriggerRef.current?.focus();
                   }}
                   className={`h-7 min-w-[28px] rounded-lg border px-1.5 font-mono text-xs font-bold transition ${
                     active
@@ -191,29 +190,18 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
   const [openPopover, setOpenPopover] = useState<'attr' | 'skill' | null>(null);
   const [abilQuery, setAbilQuery] = useState('');
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const attrTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const skillTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const traitOptions = useMemo(() => getSheetTraitOptions(sheet), [sheet]);
   const abilityOptions = useMemo(() => getSheetAbilityOptions(sheet), [sheet]);
 
-  useEffect(() => {
-    if (!openPopover) return;
-    const handlePointerDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpenPopover(null);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setOpenPopover(null);
-      }
-    };
-    document.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [openPopover]);
+  usePopoverDismiss({
+    open: openPopover !== null,
+    onClose: () => setOpenPopover(null),
+    containerRef,
+    triggerRef: openPopover === 'skill' ? skillTriggerRef : attrTriggerRef,
+  });
 
   useEffect(() => {
     setOpenPopover(null);
@@ -249,20 +237,22 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
   const formPerceptionDiff = Math.max(2, Math.min(10, 6 + selection.perceptionFormMod));
 
   return (
-    <div ref={containerRef} className="relative flex min-w-[340px] flex-1 items-center gap-2">
+    <div ref={containerRef} className="relative flex min-w-[430px] flex-1 items-center gap-2">
       {/* Attribute / Inner Trait Pill + Popover */}
-      <div className="relative flex min-w-[145px] flex-1 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
+      <div className="relative flex min-w-[130px] flex-1 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
         <button
           type="button"
+          ref={attrTriggerRef}
           onClick={() => setOpenPopover((prev) => (prev === 'attr' ? null : 'attr'))}
           aria-expanded={openPopover === 'attr'}
+          aria-haspopup="dialog"
           title="Choose Attribute or Inner Trait from your character sheet"
           className={`flex h-9 min-w-0 flex-1 items-center justify-between gap-2 px-3 text-left transition ${
             openPopover === 'attr' ? 'text-amber-100' : 'text-stone-100'
           }`}
         >
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className="font-display shrink-0 text-[9px] font-bold tracking-wider uppercase text-amber-300/75">
+            <span className="font-display shrink-0 text-xs font-bold tracking-wider uppercase text-amber-300/75">
               Attr
             </span>
             {attrOpt ? (
@@ -270,7 +260,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                 <span className="truncate text-xs font-bold text-amber-50">
                   {attrOpt.label}
                 </span>
-                <span className="flex shrink-0 items-center gap-0.5 rounded-md border border-amber-500/40 bg-amber-950/60 px-1.5 py-0.5 font-mono text-[10px] font-black text-amber-200">
+                <span className="flex shrink-0 items-center gap-0.5 rounded-md border border-amber-500/40 bg-amber-950/60 px-1.5 py-0.5 font-mono text-xs font-black text-amber-200">
                   {attrOpt.effectiveDots}
                   {attrOpt.formDelta !== 0 && (
                     <span
@@ -302,20 +292,24 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
             onClick={() => onChangeSelection('', composerAbil)}
             aria-label="Clear Attribute"
             title="Clear Attribute (roll Skill alone)"
-            className="mr-1 flex h-6 w-5 shrink-0 items-center justify-center rounded-md text-stone-500 hover:bg-zinc-900 hover:text-stone-200"
+            className="mr-1 flex h-6 w-5 shrink-0 items-center justify-center rounded-md text-stone-400 hover:bg-zinc-900 hover:text-stone-200"
           >
             <X className="h-3 w-3" />
           </button>
         )}
 
         {openPopover === 'attr' && (
-          <div className="w20-obsidian-panel absolute bottom-full left-0 z-50 mb-2 w-[min(92vw,560px)] rounded-2xl p-3 shadow-2xl">
+          <div
+            role="dialog"
+            aria-label="Choose an Attribute or Inner Trait"
+            className="w20-obsidian-panel absolute bottom-full left-0 z-modal mb-2 w-[min(92vw,560px)] rounded-2xl p-3 shadow-2xl"
+          >
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span className="font-display text-[11px] font-bold tracking-wider uppercase text-amber-100">
+                <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-100">
                   Attribute or Inner Trait
                 </span>
-                <span className="rounded-md border border-red-800/50 bg-red-950/70 px-1.5 py-0.5 font-display text-[9px] font-bold uppercase text-amber-200">
+                <span className="rounded-md border border-red-800/50 bg-red-950/70 px-1.5 py-0.5 font-display text-xs font-bold uppercase text-amber-200">
                   Form: {formatFormName(sheet.activeForm)}
                 </span>
               </div>
@@ -325,7 +319,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                   onChangeSelection('', composerAbil);
                   setOpenPopover(null);
                 }}
-                className={`rounded-lg border px-2 py-1 text-[10px] font-bold transition ${
+                className={`rounded-lg border px-2 py-1 text-xs font-bold transition ${
                   composerAttr === ''
                     ? 'border-amber-400/80 bg-amber-950/50 text-amber-100'
                     : 'border-stone-700/80 bg-zinc-900/90 text-stone-300 hover:border-stone-500'
@@ -340,7 +334,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                 const groupItems = traitOptions.filter((t) => t.group === grp.group);
                 return (
                   <div key={grp.group} className="space-y-1">
-                    <div className="font-display border-b border-amber-500/20 pb-0.5 text-[9.5px] font-bold tracking-wider uppercase text-amber-300/80">
+                    <div className="font-display border-b border-amber-500/20 pb-0.5 text-xs font-bold tracking-wider uppercase text-amber-300/80">
                       {grp.group}
                     </div>
                     <div className="space-y-1">
@@ -371,11 +365,11 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                                 <Sparkles className="h-2.5 w-2.5 shrink-0 text-amber-400" />
                               )}
                             </span>
-                            <span className="flex shrink-0 items-center gap-0.5 font-mono text-[11px] font-bold">
+                            <span className="flex shrink-0 items-center gap-0.5 font-mono text-xs font-bold">
                               <span className="text-amber-300">{item.effectiveDots}</span>
                               {item.formDelta !== 0 && (
                                 <span
-                                  className={`text-[9px] ${
+                                  className={`text-xs ${
                                     item.formDelta > 0 ? 'text-emerald-400' : 'text-rose-400'
                                   }`}
                                 >
@@ -398,21 +392,23 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
       <span className="font-display shrink-0 text-xs font-black text-amber-400/75">+</span>
 
       {/* Skill / Ability Pill + Searchable Popover */}
-      <div className="relative flex min-w-[165px] flex-1 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
+      <div className="relative flex min-w-[150px] flex-1 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
         <button
           type="button"
           onClick={() => {
             setAbilQuery('');
             setOpenPopover((prev) => (prev === 'skill' ? null : 'skill'));
           }}
+          ref={skillTriggerRef}
           aria-expanded={openPopover === 'skill'}
+          aria-haspopup="dialog"
           title="Choose Talent, Skill, or Knowledge from your character sheet"
           className={`flex h-9 min-w-0 flex-1 items-center justify-between gap-2 px-3 text-left transition ${
             openPopover === 'skill' ? 'text-amber-100' : 'text-stone-100'
           }`}
         >
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className="font-display shrink-0 text-[9px] font-bold tracking-wider uppercase text-amber-300/75">
+            <span className="font-display shrink-0 text-xs font-bold tracking-wider uppercase text-amber-300/75">
               Skill
             </span>
             {abilOpt ? (
@@ -421,7 +417,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                   {abilOpt.label}
                 </span>
                 <span
-                  className={`shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-black ${
+                  className={`shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-xs font-black ${
                     abilOpt.dots > 0
                       ? 'border-amber-500/40 bg-amber-950/60 text-amber-200'
                       : 'border-stone-700 bg-zinc-900 text-stone-400'
@@ -449,14 +445,18 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
             onClick={() => onChangeSelection(composerAttr, '')}
             aria-label="Clear Skill or Ability"
             title="Clear Skill (roll pure Attribute / Inner Trait)"
-            className="mr-1 flex h-6 w-5 shrink-0 items-center justify-center rounded-md text-stone-500 hover:bg-zinc-900 hover:text-stone-200"
+            className="mr-1 flex h-6 w-5 shrink-0 items-center justify-center rounded-md text-stone-400 hover:bg-zinc-900 hover:text-stone-200"
           >
             <X className="h-3 w-3" />
           </button>
         )}
 
         {openPopover === 'skill' && (
-          <div className="w20-obsidian-panel absolute bottom-full left-0 z-50 mb-2 w-[min(94vw,660px)] rounded-2xl p-3 shadow-2xl">
+          <div
+            role="dialog"
+            aria-label="Choose a Skill or Ability"
+            className="w20-obsidian-panel absolute bottom-full left-0 z-modal mb-2 w-[min(94vw,660px)] rounded-2xl p-3 shadow-2xl"
+          >
             <div className="mb-2.5 flex flex-wrap items-center gap-2">
               <div className="relative min-w-[180px] flex-1">
                 <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
@@ -473,8 +473,9 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                       setAbilQuery('');
                     }
                   }}
+                  aria-label="Filter abilities"
                   placeholder="Type to filter Abilities (e.g. Firearms, Alertness)..."
-                  className="h-8 w-full rounded-xl border border-stone-700/80 bg-zinc-950/95 pr-2.5 pl-8 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75 focus:outline-none"
+                  className="h-8 w-full rounded-xl border border-stone-700/80 bg-zinc-950/95 pr-2.5 pl-8 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75"
                 />
               </div>
               <button
@@ -484,7 +485,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                   setOpenPopover(null);
                   setAbilQuery('');
                 }}
-                className={`h-8 shrink-0 rounded-xl border px-2.5 text-[10.5px] font-bold transition ${
+                className={`h-8 shrink-0 rounded-xl border px-2.5 text-xs font-bold transition ${
                   composerAbil === ''
                     ? 'border-amber-400/80 bg-amber-950/50 text-amber-100'
                     : 'border-stone-700/80 bg-zinc-900/90 text-stone-300 hover:border-stone-500'
@@ -507,7 +508,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                       if (items.length === 0) return null;
                       return (
                         <div key={grp.group} className="space-y-1">
-                          <div className="font-display border-b border-amber-500/20 pb-0.5 text-[9.5px] font-bold tracking-wider uppercase text-amber-300/80">
+                          <div className="font-display border-b border-amber-500/20 pb-0.5 text-xs font-bold tracking-wider uppercase text-amber-300/80">
                             {grp.group}
                           </div>
                           <div className="space-y-1">
@@ -543,10 +544,10 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                                     )}
                                   </span>
                                   <span
-                                    className={`shrink-0 rounded px-1.5 py-0.2 font-mono text-[10.5px] font-bold ${
+                                    className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-xs font-bold ${
                                       trained
                                         ? 'bg-amber-950/80 text-amber-300'
-                                        : 'text-stone-500'
+                                        : 'text-stone-400'
                                     }`}
                                   >
                                     {item.dots}
@@ -562,7 +563,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
 
                   {filteredAbilities.some((a) => a.category === 'custom') && (
                     <div className="space-y-1">
-                      <div className="font-display border-b border-amber-500/20 pb-0.5 text-[9.5px] font-bold tracking-wider uppercase text-amber-300/80">
+                      <div className="font-display border-b border-amber-500/20 pb-0.5 text-xs font-bold tracking-wider uppercase text-amber-300/80">
                         Custom Abilities
                       </div>
                       <div className="flex flex-wrap gap-1.5">
@@ -589,7 +590,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                                 {item.specialty && (
                                   <Sparkles className="h-2.5 w-2.5 text-amber-400" />
                                 )}
-                                <span className="font-mono text-[10.5px] font-bold text-amber-300">
+                                <span className="font-mono text-xs font-bold text-amber-300">
                                   {item.dots}
                                 </span>
                               </button>
@@ -614,9 +615,9 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
 
       {/* Live Derived Formula & Specialty Readout */}
       {selection.hasSelection && (
-        <div className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-stone-800/90 bg-zinc-950/80 px-2.5 py-1.5 lg:flex">
+        <div className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-stone-800/90 bg-zinc-950/80 px-2.5 py-1.5 @min-[1150px]:flex">
           <span
-            className="font-mono text-[10.5px] text-stone-300"
+            className="font-mono text-xs text-stone-300"
             title={selection.formulaSummary}
           >
             {selection.compactFormula} ={' '}
@@ -631,7 +632,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
           {selection.effectiveHasSpecialty && (
             <span
               title={selection.specialtyReason ?? 'Specialty active (10s explode)'}
-              className="flex items-center gap-0.5 rounded bg-amber-950/80 px-1 py-0.5 text-[9px] font-bold text-amber-300"
+              className="flex items-center gap-0.5 rounded bg-amber-950/80 px-1 py-0.5 text-xs font-bold text-amber-300"
             >
               <Sparkles className="h-2.5 w-2.5" />
               Spec
@@ -640,7 +641,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
           {selection.untrainedHint && (
             <span
               title={selection.untrainedHint}
-              className="rounded bg-zinc-900 px-1 py-0.5 font-mono text-[9px] text-stone-400"
+              className="rounded bg-zinc-900 px-1 py-0.5 font-mono text-xs text-stone-400"
             >
               0-dot
             </span>
@@ -650,7 +651,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
               type="button"
               onClick={() => onChangeDifficulty(formPerceptionDiff)}
               title={`In ${formatFormName(sheet.activeForm)}, Perception Difficulty is ${selection.perceptionFormMod} (Diff ${formPerceptionDiff}). Click to apply.`}
-              className="rounded border border-emerald-500/40 bg-emerald-950/45 px-1 py-0.5 font-mono text-[9px] font-bold text-emerald-300 hover:border-emerald-400"
+              className="rounded border border-emerald-500/40 bg-emerald-950/45 px-1 py-0.5 font-mono text-xs font-bold text-emerald-300 hover:border-emerald-400"
             >
               Per {selection.perceptionFormMod}
             </button>
@@ -753,16 +754,16 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
             {selection.effectivePool}d10 • Diff {difficulty}
           </span>
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-stone-400">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-stone-400">
           <span className="font-mono">{selection.formulaSummary}</span>
           {selection.effectiveHasSpecialty && (
-            <span className="inline-flex items-center gap-0.5 rounded bg-amber-950/80 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-300">
+            <span className="inline-flex items-center gap-0.5 rounded bg-amber-950/80 px-1.5 py-0.5 text-xs font-bold text-amber-300">
               <Sparkles className="h-2.5 w-2.5" />
               Spec
             </span>
           )}
           {selection.effectiveApplyWounds && selection.woundPenalty !== 0 && (
-            <span className="rounded bg-red-950/80 px-1.5 py-0.5 font-mono text-[9.5px] font-bold text-red-300">
+            <span className="rounded bg-red-950/80 px-1.5 py-0.5 font-mono text-xs font-bold text-red-300">
               {selection.woundPenalty} Wnd
             </span>
           )}
@@ -770,7 +771,7 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
             <button
               type="button"
               onClick={() => onChangeDifficulty(formPerceptionDiff)}
-              className="rounded border border-emerald-500/45 bg-emerald-950/50 px-1.5 py-0.5 font-mono text-[9.5px] font-bold text-emerald-300"
+              className="rounded border border-emerald-500/45 bg-emerald-950/50 px-1.5 py-0.5 font-mono text-xs font-bold text-emerald-300"
             >
               Apply Form Per ({formPerceptionDiff})
             </button>
@@ -835,7 +836,7 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
             const items = traitOptions.filter((t) => t.group === grp.group);
             return (
               <div key={grp.group} className="space-y-1.5">
-                <span className="font-display block text-[10px] font-bold tracking-wider uppercase text-amber-300/80">
+                <span className="font-display block text-xs font-bold tracking-wider uppercase text-amber-300/80">
                   {grp.group}
                 </span>
                 <div className="grid grid-cols-3 gap-1.5">
@@ -856,13 +857,13 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
                         }`}
                       >
                         <div className="flex w-full items-center justify-between gap-1">
-                          <span className="truncate text-[11px] font-bold">{item.shortLabel}</span>
+                          <span className="truncate text-xs font-bold">{item.shortLabel}</span>
                           <span className="font-mono text-xs font-black text-amber-300">
                             {item.effectiveDots}
                           </span>
                         </div>
                         {item.specialty && (
-                          <span className="mt-0.5 flex items-center gap-0.5 truncate text-[9px] text-amber-400">
+                          <span className="mt-0.5 flex items-center gap-0.5 truncate text-xs text-amber-400">
                             <Sparkles className="h-2.5 w-2.5 shrink-0" />
                             Spec
                           </span>
@@ -885,7 +886,7 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter skills & abilities..."
-              className="min-h-[38px] w-full rounded-xl border border-stone-700/80 bg-zinc-950/90 pr-8 pl-8 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75 focus:outline-none"
+              className="min-h-[38px] w-full rounded-xl border border-stone-700/80 bg-zinc-950/90 pr-8 pl-8 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75"
             />
             {query && (
               <button
@@ -915,7 +916,7 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
                 key={key}
                 type="button"
                 onClick={() => setSkillFilter(key)}
-                className={`shrink-0 rounded-full border px-2.5 py-1 text-[10.5px] font-bold ${
+                className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-bold ${
                   skillFilter === key
                     ? 'border-amber-400/80 bg-amber-950/60 text-amber-100'
                     : 'border-stone-800 bg-zinc-950 text-stone-400'
@@ -962,8 +963,8 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
                     )}
                   </span>
                   <span
-                    className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] font-bold ${
-                      trained ? 'bg-amber-950/80 text-amber-300' : 'text-stone-500'
+                    className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-xs font-bold ${
+                      trained ? 'bg-amber-950/80 text-amber-300' : 'text-stone-400'
                     }`}
                   >
                     {item.dots}
@@ -979,7 +980,7 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
       <div className="w20-gold-divider" />
       <div className="flex flex-wrap items-center gap-2 pt-0.5">
         <div className="flex items-center gap-1 rounded-xl border border-stone-700/80 bg-zinc-950 px-1.5 py-1">
-          <span className="font-display pl-1 text-[9.5px] font-bold uppercase text-stone-400">
+          <span className="font-display pl-1 text-xs font-bold uppercase text-stone-400">
             Diff
           </span>
           <button

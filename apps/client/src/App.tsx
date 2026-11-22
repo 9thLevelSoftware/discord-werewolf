@@ -122,15 +122,15 @@ export const App: React.FC = () => {
   }, [session?.userId]);
 
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-[#070609] text-stone-100">
+    <div className="relative h-dvh w-full overflow-hidden bg-obsidian-950 text-stone-100">
       <ToastViewport />
       {refreshWarning && (
-        <div className="w20-obsidian-panel fixed top-2 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 !border-amber-500/60 rounded-xl px-3 py-1.5 text-xs text-amber-200">
+        <div className="w20-obsidian-panel fixed top-2 left-1/2 z-modal flex -translate-x-1/2 items-center gap-2 !border-amber-500/60 rounded-xl px-3 py-1.5 text-xs text-amber-200">
           <span>Session refresh warning: {refreshWarning}</span>
           <button
             type="button"
             onClick={() => setRefreshWarning(null)}
-            className="rounded bg-amber-900/70 px-1.5 py-0.5 text-[10px] font-semibold hover:bg-amber-800"
+            className="rounded bg-amber-900/70 px-1.5 py-0.5 text-xs font-semibold hover:bg-amber-800"
           >
             Dismiss
           </button>
@@ -138,7 +138,7 @@ export const App: React.FC = () => {
       )}
 
       {bootState === 'loading' ? (
-        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(ellipse_at_center,_rgba(127,29,29,0.2)_0%,_#070609_70%)] p-6">
+        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(ellipse_at_center,_rgba(127,29,29,0.2)_0%,_var(--color-obsidian-950)_70%)] p-6">
           <div className="w20-obsidian-panel flex max-w-md flex-col items-center rounded-2xl p-8 text-center">
             <Loader2 className="h-10 w-10 animate-spin text-red-500" />
             <h1 className="font-display mt-4 text-lg font-extrabold tracking-widest uppercase text-amber-100">
@@ -150,7 +150,7 @@ export const App: React.FC = () => {
           </div>
         </div>
       ) : bootState === 'error' || !session ? (
-        <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-[radial-gradient(ellipse_at_center,_rgba(127,29,29,0.2)_0%,_#070609_70%)] p-4">
+        <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-[radial-gradient(ellipse_at_center,_rgba(127,29,29,0.2)_0%,_var(--color-obsidian-950)_70%)] p-4">
           <div className="w20-obsidian-panel w-full max-w-lg rounded-2xl !border-red-800/70 p-6">
             <div className="flex items-start gap-3">
               <div className="rounded-lg border border-red-800/70 bg-red-950/90 p-2.5 text-red-400">

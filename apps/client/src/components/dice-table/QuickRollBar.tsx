@@ -365,13 +365,13 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
     setDraftName('');
   };
 
-  const pillTextClass = compact ? 'text-[10.5px]' : 'text-[11px]';
+  const pillTextClass = compact ? 'text-xs' : 'text-xs';
   const pillBtnClass = compact ? 'py-1 pl-2 pr-1 min-h-[30px]' : 'py-1 pl-2.5 pr-1.5';
 
   return (
     <div className="flex min-w-0 items-start gap-1.5">
       {!compact && (
-        <span className="font-display shrink-0 pt-1.5 text-[10px] font-bold tracking-wider uppercase text-amber-300/75">
+        <span className="font-display shrink-0 pt-1.5 text-xs font-bold tracking-wider uppercase text-amber-300/75">
           {activeSheet ? 'Pinned Rolls' : 'Quick Rolls'}
         </span>
       )}
@@ -400,7 +400,7 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
       >
         {activeSheet ? (
           resolvedShortcuts.length === 0 ? (
-            <span className="shrink-0 text-[10px] italic text-stone-500">
+            <span className="shrink-0 text-xs italic text-stone-400">
               No pinned rolls — click Pin to save any Trait + Skill setup
             </span>
           ) : (
@@ -431,19 +431,19 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
                       {sc.name}
                     </span>
                     <span
-                      className={`font-mono text-[10px] font-bold ${
+                      className={`font-mono text-xs font-bold ${
                         resolved.effectivePool <= 0 ? 'text-red-400' : 'text-amber-300'
                       }`}
                     >
                       {resolved.effectivePool}d10
                     </span>
                     {resolved.difficulty !== 6 && (
-                      <span className="font-mono text-[9px] text-stone-400">
+                      <span className="font-mono text-xs text-stone-400">
                         D{resolved.difficulty}
                       </span>
                     )}
                     {resolved.rageDiceCount > 0 && (
-                      <span className="font-mono text-[9px] text-red-400">
+                      <span className="font-mono text-xs text-red-400">
                         {resolved.rageDiceCount}R
                       </span>
                     )}
@@ -454,7 +454,7 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
                     type="button"
                     onClick={() => onRemoveSheetShortcut(sc.id)}
                     aria-label={`Remove ${sc.name}`}
-                    className="mr-1 rounded-full p-0.5 text-stone-500 hover:bg-red-950/70 hover:text-red-300"
+                    className="mr-1 rounded-full p-0.5 text-stone-400 hover:bg-red-950/70 hover:text-red-300"
                   >
                     <X className="h-2.5 w-2.5" />
                   </button>
@@ -479,16 +479,16 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
                   <span className="max-w-[130px] truncate font-semibold text-stone-100">
                     {preset.name}
                   </span>
-                  <span className="font-mono text-[10px] font-bold text-amber-300">
+                  <span className="font-mono text-xs font-bold text-amber-300">
                     {preset.pool}d10
                   </span>
                   {preset.difficulty !== 6 && (
-                    <span className="font-mono text-[9px] text-stone-400">
+                    <span className="font-mono text-xs text-stone-400">
                       D{preset.difficulty}
                     </span>
                   )}
                   {preset.rageDiceCount > 0 && (
-                    <span className="font-mono text-[9px] text-red-400">
+                    <span className="font-mono text-xs text-red-400">
                       {preset.rageDiceCount}R
                     </span>
                   )}
@@ -499,7 +499,7 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
                   type="button"
                   onClick={() => removePreset(userId, seatId, preset.id)}
                   aria-label={`Remove ${preset.name}`}
-                  className="mr-1 rounded-full p-0.5 text-stone-500 hover:bg-red-950/70 hover:text-red-300"
+                  className="mr-1 rounded-full p-0.5 text-stone-400 hover:bg-red-950/70 hover:text-red-300"
                 >
                   <X className="h-2.5 w-2.5" />
                 </button>
@@ -511,6 +511,7 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
                 <div className="flex shrink-0 items-center gap-1 rounded-full border border-amber-500/65 bg-zinc-950 px-2 py-0.5">
                   <input
                     type="text"
+                    aria-label="Preset name"
                     value={draftName}
                     maxLength={32}
                     autoFocus
@@ -525,7 +526,7 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
                       }
                     }}
                     placeholder="Preset name..."
-                    className="w-28 bg-transparent text-[11px] text-stone-100 placeholder-stone-500 focus:outline-none"
+                    className="w-28 bg-transparent text-xs text-stone-100 placeholder-stone-500"
                   />
                   <button
                     type="button"
@@ -551,7 +552,7 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
                 <button
                   type="button"
                   onClick={handleSaveClick}
-                  className="flex shrink-0 items-center gap-1 rounded-full border border-dashed border-amber-500/45 bg-amber-950/20 px-2.5 py-1 text-[10px] font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/40"
+                  className="flex shrink-0 items-center gap-1 rounded-full border border-dashed border-amber-500/45 bg-amber-950/20 px-2.5 py-1 text-xs font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/40"
                   title="Save current Dice Console setup as a personal Quick Roll"
                 >
                   <BookmarkPlus className="h-3 w-3" />
@@ -580,7 +581,7 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
           aria-expanded={expanded}
           title={expanded ? 'Collapse to 1 row' : `Show all ${itemCount} pinned rolls`}
           className={`flex shrink-0 items-center gap-0.5 rounded-full border px-2 font-bold transition ${
-            compact ? 'min-h-[30px] text-[10px]' : 'mt-0.5 h-6 text-[10px]'
+            compact ? 'min-h-[30px] text-xs' : 'mt-0.5 h-6 text-xs'
           } ${
             expanded
               ? 'border-amber-500/60 bg-amber-950/45 text-amber-200'

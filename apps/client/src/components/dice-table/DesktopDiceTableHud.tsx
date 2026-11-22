@@ -1,19 +1,15 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import {
-  BookmarkPlus,
   Check,
   Dices,
   Eraser,
-  EyeOff,
   Flame,
   Hash,
   Minus,
   Monitor,
   Pin,
   Plus,
-  RotateCcw,
   ScrollText,
-  ShieldAlert,
   SlidersHorizontal,
   Smartphone,
   Sparkles,
@@ -23,13 +19,23 @@ import {
   Zap,
 } from 'lucide-react';
 import { formatFormName, W20_FORMS } from '../character-sheet/sheetShared';
+import {
+  BonusDiceStepper,
+  ConnectionDot,
+  DicePreviewStrip,
+  getRollCtaText,
+  getRollGate,
+  RageDiceStepper,
+  RollModifierToggles,
+  SavePinButton,
+  useSavedFlash,
+} from './console/consoleShared';
 import { ActiveThrowPill, RollResultPlaque } from './DieFaceTiles';
 import {
   type DiceTableHudProps,
   POOL_QUICK_JUMPS,
   QuickRollBar,
 } from './QuickRollBar';
-import { MAX_LOCAL_QUEUED_ROLLS } from './rollQueueController';
 import { DesktopTraitRollBar, DifficultyQuickControl } from './TraitRollBuilder';
 import { PersonalTrackersControl } from './W20DotTracker';
 
@@ -56,7 +62,7 @@ const CompactRawPoolStepper: React.FC<CompactRawPoolStepperProps> = ({
 }) => (
   <div className="flex shrink-0 items-center gap-1.5">
     {showLabel && (
-      <span className="font-display text-[10px] font-bold tracking-wider uppercase text-amber-200/80">
+      <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200/80">
         Pool
       </span>
     )}
@@ -73,6 +79,7 @@ const CompactRawPoolStepper: React.FC<CompactRawPoolStepperProps> = ({
       {editingPool ? (
         <input
           type="number"
+          aria-label="Dice pool (1 to 30)"
           min={1}
           max={30}
           value={poolInputValue}
@@ -88,7 +95,7 @@ const CompactRawPoolStepper: React.FC<CompactRawPoolStepperProps> = ({
               onSetEditingPool(false);
             }
           }}
-          className="font-display w-12 bg-transparent text-center text-base font-black text-amber-100 focus:outline-none"
+          className="font-display w-12 bg-transparent text-center text-base font-black text-amber-100"
         />
       ) : (
         <button
@@ -97,11 +104,12 @@ const CompactRawPoolStepper: React.FC<CompactRawPoolStepperProps> = ({
             onSetPoolInputValue(String(pool));
             onSetEditingPool(true);
           }}
-          title="Click to type exact d10 pool (1-30)"
+          aria-label={`Dice pool ${pool}. Type an exact number`}
+          title="Type an exact pool (1 to 30)"
           className="flex min-w-[44px] items-baseline justify-center gap-0.5 px-1 text-amber-100 hover:text-amber-300"
         >
           <span className="font-display text-base font-black leading-none">{pool}</span>
-          <span className="font-mono text-[10px] font-bold text-stone-400">d10</span>
+          <span className="font-mono text-xs font-bold text-stone-400">d10</span>
         </button>
       )}
 
@@ -200,13 +208,33 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   onPinCurrentToSheet,
   onSaveCurrentUnboundPreset,
 }) => {
-  const [savedFlash, setSavedFlash] = useState(false);
+  const [savedFlash, flashSaved] = useSavedFlash();
+
+  // The top bar wraps onto extra rows when space is tight. Measure it so the roll
+  // plaque, throw pill and error message always sit below it instead of under it.
+  const headerRef = useRef<HTMLElement | null>(null);
+  const [headerHeight, setHeaderHeight] = useState(40);
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const update = () => setHeaderHeight(el.offsetHeight);
+    update();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  // 12px top inset of the bar + its height + an 8px gap.
+  const belowHeaderTop = 12 + headerHeight + 8;
 
   const isSheetTraitsMode = Boolean(activeSheet && rollSourceMode === 'traits');
-  const isDisabled =
-    (connectionStatus !== 'authenticated' && connectionStatus !== 'reconnecting') ||
-    rollStageStatus.localPendingCount >= MAX_LOCAL_QUEUED_ROLLS;
-  const rollBlockedByEmptyTraits = isSheetTraitsMode && (!hasTraitSelection || pool <= 0);
+  const { isDisabled, rollBlockedByEmptyTraits } = getRollGate({
+    connectionStatus,
+    localPendingCount: rollStageStatus.localPendingCount,
+    isSheetTraitsMode,
+    hasTraitSelection,
+    pool,
+  });
   const anySpeaking = sortedParticipants.some((p) => speakingDiscordIds.has(p.discordUserId));
   const initButtonLabel =
     activeSheet || initiativeModifier !== 0
@@ -222,23 +250,25 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
     } else {
       onSaveCurrentUnboundPreset();
     }
-    setSavedFlash(true);
-    window.setTimeout(() => setSavedFlash(false), 1400);
+    flashSaved();
   };
 
-  const primaryRollCtaText =
-    isSheetTraitsMode && !hasTraitSelection
-      ? 'Select Trait'
-      : isSheetTraitsMode && pool <= 0
-        ? '0 Dice'
-        : `Roll ${effectivePreviewPool}d10${
-            difficulty !== 6 ? ` • D${difficulty}` : ''
-          }${clampedPreviewRage > 0 ? ` (${clampedPreviewRage}R)` : ''}`;
+  const primaryRollCtaText = getRollCtaText({
+    isSheetTraitsMode,
+    hasTraitSelection,
+    pool,
+    effectivePreviewPool,
+    difficulty,
+    clampedPreviewRage,
+  });
 
   return (
     <>
       {/* Slim Floating Top Presence & Tracker Bar */}
-      <header className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-center justify-between gap-2">
+      <header
+        ref={headerRef}
+        className="pointer-events-none absolute inset-x-3 top-3 z-hud flex flex-wrap items-center justify-between gap-2"
+      >
         {/* Left: Compact W20 Crest + Left Pack Drawer Toggle Pill */}
         <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
           <div className="w20-obsidian-panel flex items-center gap-2 rounded-full px-3 py-1.5">
@@ -248,16 +278,9 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             <span className="font-display text-xs font-black tracking-widest uppercase text-amber-100">
               W20
             </span>
-            <span
-              className={`h-2 w-2 rounded-full ${
-                connectionStatus === 'authenticated'
-                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]'
-                  : 'animate-pulse bg-amber-400'
-              }`}
-              title={`Connection: ${connectionStatus}`}
-            />
+            <ConnectionDot status={connectionStatus} />
             {!webglReady && (
-              <span className="rounded bg-zinc-800/90 px-1.5 py-0.5 text-[9px] text-stone-400">
+              <span className="rounded bg-zinc-800/90 px-1.5 py-0.5 text-xs text-stone-400">
                 2D RNG
               </span>
             )}
@@ -268,7 +291,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             onClick={onTogglePack}
             aria-expanded={packOpen}
             title="Toggle Pack & Table Players drawer"
-            className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition hover:border-amber-400/55 ${
+            className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition hover:border-amber-400/55 ${
               packOpen
                 ? '!border-amber-500/50 text-amber-200'
                 : anySpeaking
@@ -301,13 +324,13 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                         type="button"
                         onClick={() => onSelectSeat(seat.seatId)}
                         title={`Switch to Seat ${idx + 1}: ${seatLabel} (Alt+${idx + 1})`}
-                        className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold transition ${
+                        className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold transition ${
                           isActive
                             ? 'border border-amber-400/75 bg-red-950/75 text-amber-100 shadow-[0_0_8px_rgba(245,158,11,0.28)]'
                             : 'border border-transparent text-stone-400 hover:bg-zinc-900 hover:text-stone-200'
                         }`}
                       >
-                        <span className="font-mono text-[10px] text-amber-300/80">
+                        <span className="font-mono text-xs text-amber-300/80">
                           {idx + 1}.
                         </span>
                         <span className="max-w-[84px] truncate">{seatLabel}</span>
@@ -318,7 +341,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                 <button
                   type="button"
                   onClick={onOpenRoster}
-                  className="flex shrink-0 items-center gap-1 rounded-full border border-stone-700/75 bg-zinc-900/90 px-2 py-0.5 text-[10px] font-bold text-stone-200 transition hover:border-amber-400/60 hover:text-amber-100"
+                  className="flex shrink-0 items-center gap-1 rounded-full border border-stone-700/75 bg-zinc-900/90 px-2 py-0.5 text-xs font-bold text-stone-200 transition hover:border-amber-400/60 hover:text-amber-100"
                   title="Manage table seats & Garou roster"
                 >
                   <Users className="h-3 w-3 text-amber-300" />
@@ -330,7 +353,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                 <button
                   type="button"
                   onClick={activeSheet ? onOpenSheet : onOpenRoster}
-                  className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold text-amber-100 transition hover:bg-zinc-900/80"
+                  className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-bold text-amber-100 transition hover:bg-zinc-900/80"
                   title={
                     activeSheet
                       ? `Open ${activeSheet.name}'s interactive W20 sheet`
@@ -345,7 +368,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                 <button
                   type="button"
                   onClick={onAddSeatAndOpenRoster}
-                  className="flex items-center gap-1 rounded-full border border-amber-500/45 bg-amber-950/35 px-2 py-0.5 text-[10px] font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/60"
+                  className="flex items-center gap-1 rounded-full border border-amber-500/45 bg-amber-950/35 px-2 py-0.5 text-xs font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/60"
                   title="Add another hot-seat Garou to this table"
                 >
                   <Plus className="h-3 w-3" />
@@ -358,7 +381,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               <button
                 type="button"
                 onClick={onOpenSheet}
-                className="flex shrink-0 items-center gap-1 rounded-full border border-red-700/65 bg-red-950/65 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-100 transition hover:border-amber-400/75 hover:bg-red-900/70"
+                className="flex shrink-0 items-center gap-1 rounded-full border border-red-700/65 bg-red-950/65 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider text-amber-100 transition hover:border-amber-400/75 hover:bg-red-900/70"
                 title="Open Interactive W20 Character Sheet"
               >
                 Sheet
@@ -400,7 +423,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             type="button"
             onClick={onCycleLayoutMode}
             title={`Layout View Mode: ${layoutLabel} (click to cycle Auto / Mobile / PC)`}
-            className="w20-obsidian-panel flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-bold text-stone-200 transition hover:border-amber-400/55 hover:text-amber-100"
+            className="w20-obsidian-panel flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-bold text-stone-200 transition hover:border-amber-400/55 hover:text-amber-100"
           >
             {layoutMode === 'mobile' ? (
               <Smartphone className="h-3.5 w-3.5 text-amber-300" />
@@ -414,7 +437,9 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             <button
               type="button"
               onClick={onClearTable}
-              className="w20-obsidian-panel flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] font-bold text-stone-200 transition hover:border-amber-400/55"
+              aria-label="Clear dice from the felt"
+              title="Clear dice from the felt"
+              className="w20-obsidian-panel flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-bold text-stone-200 transition hover:border-amber-400/55"
             >
               <Eraser className="h-3.5 w-3.5 text-amber-300" />
               <span className="hidden xl:inline">Clear Felt</span>
@@ -424,7 +449,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
           <button
             type="button"
             onClick={onToggleFeed}
-            className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition hover:border-amber-400/55 ${
+            className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition hover:border-amber-400/55 ${
               feedOpen ? '!border-amber-500/50 text-amber-200' : 'text-stone-200'
             }`}
           >
@@ -436,7 +461,11 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
 
       {/* Server Error Toast */}
       {lastError && (
-        <div className="w20-obsidian-panel absolute top-16 left-4 z-30 !border-red-600/80 rounded-xl px-3 py-1.5 text-xs text-red-200">
+        <div
+          role="alert"
+          style={{ top: belowHeaderTop }}
+          className="w20-obsidian-panel absolute left-4 z-hud !border-red-600/80 rounded-xl px-3 py-1.5 text-xs text-red-200"
+        >
           {lastError.message}
         </div>
       )}
@@ -446,6 +475,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
         <ActiveThrowPill
           activeThrowLabel={rollStageStatus.activeThrowLabel}
           queuedCount={rollStageStatus.queuedCount}
+          topOffset={belowHeaderTop}
         />
       )}
 
@@ -456,11 +486,12 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
           onDismiss={onDismissBanner}
           queuedCount={rollStageStatus.queuedCount}
           nextQueuedLabel={rollStageStatus.nextQueuedLabel}
+          topOffset={belowHeaderTop}
         />
       )}
 
       {/* Floating Full-Width Bottom Sheet-Driven Console */}
-      <section className="w20-obsidian-panel pointer-events-auto absolute inset-x-3 bottom-3 z-30 rounded-2xl px-4 py-2.5">
+      <section className="@container w20-obsidian-panel pointer-events-auto absolute inset-x-3 bottom-3 z-hud rounded-2xl px-4 py-2.5">
         {/* Top Slim Strip: 5-Form Switcher + Pinned Sheet Rolls / Quick Rolls */}
         <div className="mb-2 flex items-center gap-2">
           {activeSheet && (
@@ -476,7 +507,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                     key={form}
                     type="button"
                     onClick={() => onSetActiveSheetForm(form)}
-                    className={`rounded-lg px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition ${
+                    className={`rounded-lg px-2 py-1 text-xs font-bold uppercase tracking-wider transition ${
                       active
                         ? 'bg-gradient-to-b from-red-800 to-red-950 text-amber-100 shadow-[0_0_8px_rgba(185,28,28,0.5)] ring-1 ring-amber-400/50'
                         : 'text-stone-400 hover:text-stone-100'
@@ -515,55 +546,11 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             <div className="flex flex-wrap items-center gap-2.5">
               {/* Either Situational Bonus Dice (Traits Mode) or Raw Pool + Quick Jumps (Manual / Unbound Mode) */}
               {isSheetTraitsMode ? (
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-display text-[10px] font-bold tracking-wider uppercase text-amber-200/80">
-                      Bonus / Penalty
-                    </span>
-                    <div className="flex h-8 items-center gap-1 rounded-xl border border-amber-500/35 bg-zinc-950/90 px-1.5 shadow-inner">
-                      <button
-                        type="button"
-                        onClick={() => onSetBonusDice((b) => Math.max(-15, b - 1))}
-                        className="rounded-lg bg-zinc-900 p-1 text-stone-300 hover:bg-zinc-800 hover:text-amber-200"
-                        aria-label="Decrease Bonus Dice"
-                      >
-                        <Minus className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onSetBonusDice(0)}
-                        title="Click to reset situational bonus dice to 0"
-                        className={`font-display min-w-[42px] px-1 text-center text-sm font-black ${
-                          bonusDice > 0
-                            ? 'text-emerald-300'
-                            : bonusDice < 0
-                              ? 'text-rose-300'
-                              : 'text-stone-300'
-                        }`}
-                      >
-                        {bonusDice > 0 ? `+${bonusDice}` : bonusDice}d
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onSetBonusDice((b) => Math.min(15, b + 1))}
-                        className="rounded-lg bg-zinc-900 p-1 text-stone-300 hover:bg-zinc-800 hover:text-amber-200"
-                        aria-label="Increase Bonus Dice"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    {bonusDice !== 0 && (
-                      <button
-                        type="button"
-                        onClick={() => onSetBonusDice(0)}
-                        aria-label="Reset bonus dice"
-                        className="rounded-lg border border-stone-700 bg-zinc-900 p-1 text-stone-400 hover:text-stone-100"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                </div>
+                <BonusDiceStepper
+                  layout="inline"
+                  bonusDice={bonusDice}
+                  onSetBonusDice={onSetBonusDice}
+                />
               ) : (
                 <div className="flex flex-wrap items-center gap-1.5">
                   <CompactRawPoolStepper
@@ -581,7 +568,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                         key={val}
                         type="button"
                         onClick={() => onSetPool(val)}
-                        className={`h-7 min-w-[26px] rounded-md border px-1.5 font-mono text-[11px] font-bold transition ${
+                        className={`h-7 min-w-[26px] rounded-md border px-1.5 font-mono text-xs font-bold transition ${
                           pool === val
                             ? 'border-amber-400/80 bg-red-900/75 text-amber-100 shadow'
                             : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600 hover:text-stone-200'
@@ -595,136 +582,39 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               )}
 
               {/* Rage Dice Stepper + Sync */}
-              <div className="flex h-8 items-center gap-1 rounded-xl border border-red-900/65 bg-red-950/30 px-2 text-xs">
-                <span className="font-display text-[10px] font-bold uppercase text-red-300">
-                  Rage
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onSetRageDiceCount((r) => Math.max(0, r - 1))}
-                  className="rounded bg-zinc-900 p-0.5 text-stone-300 hover:bg-zinc-800"
-                  aria-label="Decrease Rage Dice"
-                >
-                  <Minus className="h-3 w-3" />
-                </button>
-                <span className="font-display w-5 text-center text-sm font-black text-red-300">
-                  {rageDiceCount}
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onSetRageDiceCount((r) => Math.min(Math.max(0, Math.min(30, pool)), r + 1))
-                  }
-                  className="rounded bg-zinc-900 p-0.5 text-stone-300 hover:bg-zinc-800"
-                  aria-label="Increase Rage Dice"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onSetRageDiceCount(Math.min(Math.max(0, Math.min(30, pool)), activeTrackers.rage))
-                  }
-                  className="ml-0.5 rounded border border-red-700/65 bg-red-950/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-red-200 hover:bg-red-900"
-                  title="Sync Rage dice to active Garou temporary Rage"
-                >
-                  Sync
-                </button>
-              </div>
+              <RageDiceStepper
+                layout="inline"
+                rageDiceCount={rageDiceCount}
+                pool={pool}
+                trackerRage={activeTrackers.rage}
+                onSetRageDiceCount={onSetRageDiceCount}
+              />
 
               {/* Modifiers: Specialty, +1 Willpower, Wounds, Secret */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={onToggleSpecialty}
-                  title={specialtyReason ?? 'Exploding 10s (specialty matches roll)'}
-                  className={`flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-bold transition ${
-                    hasSpecialty
-                      ? 'border-amber-400/80 bg-amber-950/65 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.28)]'
-                      : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600'
-                  }`}
-                >
-                  <Sparkles className="h-3 w-3" />
-                  <span>Specialty</span>
-                  {isSheetTraitsMode && isAutoSpecialty && hasSpecialty && (
-                    <span className="rounded bg-amber-400/20 px-1 text-[9px] font-extrabold text-amber-200">
-                      Sheet
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={activeTrackers.willpower <= 0 && !spendWillpower}
-                  onClick={onToggleSpendWillpower}
-                  title={
-                    activeTrackers.willpower <= 0
-                      ? 'No temporary Willpower remaining'
-                      : 'Spend 1 temporary Willpower for +1 automatic success'
-                  }
-                  className={`h-8 rounded-lg border px-2 text-[11px] font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                    spendWillpower
-                      ? 'border-indigo-400/80 bg-indigo-950/70 text-indigo-200 shadow-[0_0_10px_rgba(129,140,248,0.28)]'
-                      : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600'
-                  }`}
-                >
-                  +1 Willpower
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onToggleApplyWoundPenalty}
-                  className={`flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-bold transition ${
-                    applyWoundPenalty
-                      ? 'border-rose-500/65 bg-rose-950/55 text-rose-200'
-                      : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600'
-                  }`}
-                >
-                  <ShieldAlert className="h-3 w-3" />
-                  Wounds
-                  {activeTrackers.woundPenalty !== 0
-                    ? ` (${activeTrackers.woundPenalty})`
-                    : ''}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onToggleSecretRoll}
-                  className={`flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] font-bold transition ${
-                    isSecretRoll
-                      ? 'border-amber-400/80 bg-amber-950/65 text-amber-200'
-                      : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600'
-                  }`}
-                >
-                  <EyeOff className="h-3 w-3" />
-                  Secret
-                </button>
-              </div>
+              <RollModifierToggles
+                layout="row"
+                hasSpecialty={hasSpecialty}
+                specialtyFromSheet={isSheetTraitsMode && isAutoSpecialty}
+                specialtyReason={specialtyReason}
+                spendWillpower={spendWillpower}
+                applyWoundPenalty={applyWoundPenalty}
+                isSecretRoll={isSecretRoll}
+                willpowerRemaining={activeTrackers.willpower}
+                woundPenalty={activeTrackers.woundPenalty}
+                onToggleSpecialty={onToggleSpecialty}
+                onToggleSpendWillpower={onToggleSpendWillpower}
+                onToggleApplyWoundPenalty={onToggleApplyWoundPenalty}
+                onToggleSecretRoll={onToggleSecretRoll}
+              />
             </div>
 
             {/* Dual-tone Obsidian / Rage Dice Preview Strip */}
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-stone-400">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-400">
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-0.5">
-                  {Array.from({ length: Math.min(effectivePreviewPool, 20) }, (_, idx) => {
-                    const isRage = idx >= obsidianPreviewCount;
-                    return (
-                      <span
-                        key={idx}
-                        className={`h-1.5 w-2 rounded-xs ${
-                          isRage
-                            ? 'bg-red-600 shadow-[0_0_5px_rgba(220,38,38,0.75)]'
-                            : 'bg-stone-500/80'
-                        }`}
-                      />
-                    );
-                  })}
-                  {effectivePreviewPool > 20 && (
-                    <span className="font-mono text-[9px] text-stone-400">
-                      +{effectivePreviewPool - 20}
-                    </span>
-                  )}
-                </div>
+                <DicePreviewStrip
+                  effectivePool={effectivePreviewPool}
+                  normalDiceCount={obsidianPreviewCount}
+                />
                 <span className="font-mono text-stone-300">
                   {isSheetTraitsMode && traitSelection
                     ? traitSelection.formulaSummary
@@ -739,7 +629,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                 <button
                   type="button"
                   onClick={() => onSetRollSourceMode(isSheetTraitsMode ? 'manual' : 'traits')}
-                  className="text-[10px] font-semibold text-stone-400 underline decoration-stone-600 underline-offset-2 hover:text-amber-200"
+                  className="text-xs font-semibold text-stone-400 underline decoration-stone-600 underline-offset-2 hover:text-amber-200"
                 >
                   {isSheetTraitsMode ? 'Raw Pool Override' : 'Use Sheet Traits'}
                 </button>
@@ -750,6 +640,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             <div className="flex items-center gap-2">
               <input
                 type="text"
+                aria-label="Roll label"
                 value={rollLabel}
                 maxLength={120}
                 onChange={(e) => onSetRollLabel(e.target.value)}
@@ -760,35 +651,22 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                   }
                 }}
                 placeholder={effectiveRollLabel || 'Custom roll label (e.g. Dexterity + Firearms)'}
-                className="min-w-0 flex-1 rounded-xl border border-stone-700/75 bg-zinc-950/90 px-3 py-1.5 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75 focus:outline-none"
+                className="min-w-0 flex-1 rounded-xl border border-stone-700/75 bg-zinc-950/90 px-3 py-1.5 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75"
               />
-              <button
-                type="button"
-                onClick={handleSaveOrPinAction}
+              <SavePinButton
+                pinsToSheet={Boolean(activeSheet)}
+                saved={savedFlash}
                 disabled={Boolean(activeSheet && isSheetTraitsMode && !hasTraitSelection)}
-                className="flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-950/30 px-3 py-1.5 text-[11px] font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/55 disabled:opacity-40"
-              >
-                {savedFlash ? (
-                  <Check className="h-3.5 w-3.5 text-emerald-300" />
-                ) : activeSheet ? (
-                  <Pin className="h-3.5 w-3.5" />
-                ) : (
-                  <BookmarkPlus className="h-3.5 w-3.5" />
-                )}
-                {savedFlash
-                  ? activeSheet
-                    ? 'Pinned!'
-                    : 'Saved!'
-                  : activeSheet
-                    ? 'Pin to Sheet'
-                    : 'Save Preset'}
-              </button>
+                onClick={handleSaveOrPinAction}
+              />
             </div>
           </div>
         )}
 
-        {/* Primary Always-Visible Row */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        {/* Primary Always-Visible Row: composer on the left, actions on the right.
+            When they cannot share a line, the actions wrap below as one group. */}
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
+          <div className="flex flex-1 items-center gap-2.5">
           {/* 1-Click Segmented Toggle: Skills vs Numbers */}
           <div
             role="group"
@@ -810,7 +688,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                   ? 'Roll using Character Sheet Attribute + Skill traits'
                   : 'Select a Garou sheet to roll by Attribute + Skill'
               }
-              className={`flex h-full items-center gap-1 rounded-lg px-2.5 text-[11px] font-bold transition ${
+              className={`flex h-full items-center gap-1 rounded-lg px-2.5 text-xs font-bold transition ${
                 isSheetTraitsMode
                   ? 'bg-gradient-to-b from-amber-500/30 to-amber-900/40 text-amber-100 ring-1 ring-amber-400/60'
                   : 'text-stone-400 hover:text-stone-100'
@@ -823,7 +701,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               type="button"
               onClick={() => onSetRollSourceMode('manual')}
               title="Roll raw d10 pool by direct number count"
-              className={`flex h-full items-center gap-1 rounded-lg px-2.5 text-[11px] font-bold transition ${
+              className={`flex h-full items-center gap-1 rounded-lg px-2.5 text-xs font-bold transition ${
                 !isSheetTraitsMode
                   ? 'bg-gradient-to-b from-red-800/75 to-red-950/90 text-amber-100 ring-1 ring-amber-400/55'
                   : 'text-stone-400 hover:text-stone-100'
@@ -873,7 +751,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                     type="button"
                     onClick={() => onSetPool(val)}
                     title={`Set pool to ${val}d10`}
-                    className={`h-8 min-w-[26px] rounded-lg border px-1.5 font-mono text-[11px] font-bold transition ${
+                    className={`h-8 min-w-[26px] rounded-lg border px-1.5 font-mono text-xs font-bold transition ${
                       pool === val
                         ? 'border-amber-400/80 bg-red-900/75 text-amber-100 shadow'
                         : 'border-stone-800 bg-zinc-950/85 text-stone-400 hover:border-stone-600 hover:text-stone-200'
@@ -890,6 +768,9 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             </div>
           )}
 
+          </div>
+
+          <div className="ml-auto flex shrink-0 items-center gap-2.5">
           {/* Hardcoded 1-Click Initiative Button */}
           <button
             type="button"
@@ -939,7 +820,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             <Dices className={`h-4 w-4 shrink-0 ${isThrowing ? 'animate-spin' : ''}`} />
             <span>{primaryRollCtaText}</span>
             {rollStageStatus.localPendingCount > 0 && (
-              <span className="rounded-full bg-amber-300/20 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-amber-200">
+              <span className="rounded-full bg-amber-300/20 px-1.5 py-0.5 font-mono text-xs font-extrabold text-amber-200">
                 +{rollStageStatus.localPendingCount}
               </span>
             )}
@@ -960,11 +841,12 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             <SlidersHorizontal className="h-3.5 w-3.5 text-amber-300" />
             <span>Modifiers</span>
             {activeModifierCount > 0 && (
-              <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-[10px] font-black text-zinc-950">
+              <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-xs font-black text-zinc-950">
                 {activeModifierCount}
               </span>
             )}
           </button>
+          </div>
         </div>
       </section>
     </>

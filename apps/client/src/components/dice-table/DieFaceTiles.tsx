@@ -84,7 +84,7 @@ export const ParticipantAvatar: React.FC<{
   }
   return (
     <div
-      className={`${sizeClass} font-display flex items-center justify-center rounded-full bg-gradient-to-br from-zinc-800 to-zinc-950 text-[11px] font-bold text-amber-100 ${ringClass} ${isConnected ? '' : 'opacity-50'}`}
+      className={`${sizeClass} font-display flex items-center justify-center rounded-full bg-gradient-to-br from-zinc-800 to-zinc-950 text-xs font-bold text-amber-100 ${ringClass} ${isConnected ? '' : 'opacity-50'}`}
     >
       {getInitials(name)}
     </div>
@@ -114,7 +114,7 @@ export const AuthoritativeDieChips: React.FC<{
             'border-red-500/85 bg-gradient-to-b from-red-950 to-zinc-950 text-red-300 shadow-[0_0_8px_rgba(220,38,38,0.4)]';
         } else if (die.isCanceled) {
           style =
-            'border-stone-700/50 bg-zinc-900/60 text-stone-500 line-through decoration-red-400/80 decoration-2';
+            'border-stone-700/50 bg-zinc-900/60 text-stone-400 line-through decoration-red-400/80 decoration-2';
         } else if (isSuccess) {
           style =
             'border-emerald-500/75 bg-gradient-to-b from-emerald-950/90 to-zinc-950 text-emerald-200 shadow-[0_0_10px_rgba(16,185,129,0.3)]';
@@ -150,7 +150,7 @@ export const AuthoritativeDieChips: React.FC<{
           >
             {die.value}
             {!isInitiative && die.contributedSuccesses === 2 && !die.isCanceled && (
-              <span className="absolute -top-1.5 -right-1.5 rounded border border-amber-300/80 bg-gradient-to-b from-amber-300 to-amber-600 px-1 font-sans text-[8px] font-black text-zinc-950 shadow">
+              <span className="absolute -top-1.5 -right-1.5 rounded border border-amber-300/80 bg-gradient-to-b from-amber-300 to-amber-600 px-1 font-sans text-xs font-black text-zinc-950 shadow">
                 x2
               </span>
             )}
@@ -168,12 +168,15 @@ export const ActiveThrowPill: React.FC<{
   activeThrowLabel: string | null;
   queuedCount: number;
   compact?: boolean;
-}> = ({ activeThrowLabel, queuedCount, compact = false }) => (
+  /** Desktop only: distance from the top of the stage, below the measured top bar. */
+  topOffset?: number;
+}> = ({ activeThrowLabel, queuedCount, compact = false, topOffset }) => (
   <div
     role="status"
     aria-live="polite"
+    style={!compact && topOffset !== undefined ? { top: topOffset } : undefined}
     className={`w20-obsidian-panel pointer-events-none absolute left-1/2 z-20 flex max-w-[min(92vw,520px)] -translate-x-1/2 items-center gap-2 rounded-full !border-amber-500/45 px-3.5 py-1.5 shadow-xl ${
-      compact ? 'top-14 mt-[env(safe-area-inset-top,0px)] text-[11px]' : 'top-16 text-xs'
+      compact ? 'top-14 mt-[env(safe-area-inset-top,0px)] text-xs' : 'top-16 text-xs'
     }`}
   >
     <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)]" />
@@ -181,7 +184,7 @@ export const ActiveThrowPill: React.FC<{
       Rolling: {activeThrowLabel || 'W20 Dice Pool'}
     </span>
     {queuedCount > 0 && (
-      <span className="shrink-0 rounded-full border border-amber-400/50 bg-amber-950/80 px-2 py-0.5 font-mono text-[10px] font-extrabold text-amber-200">
+      <span className="shrink-0 rounded-full border border-amber-400/50 bg-amber-950/80 px-2 py-0.5 font-mono text-xs font-extrabold text-amber-200">
         +{queuedCount} queued
       </span>
     )}
@@ -194,6 +197,8 @@ interface RollResultPlaqueProps {
   compact?: boolean;
   queuedCount?: number;
   nextQueuedLabel?: string | null;
+  /** Desktop only: distance from the top of the stage, below the measured top bar. */
+  topOffset?: number;
 }
 
 export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
@@ -202,6 +207,7 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
   compact = false,
   queuedCount = 0,
   nextQueuedLabel = null,
+  topOffset,
 }) => {
   const isInitiative = banner.roll.rollMode === 'initiative';
   const initDie = banner.roll.dice[0]?.value ?? 0;
@@ -236,12 +242,9 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
   return (
     <div
       onClick={onDismiss}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') onDismiss();
-      }}
-      title="Click to dismiss plaque (dice stay on felt)"
+      role="status"
+      aria-live="polite"
+      style={!compact && topOffset !== undefined ? { top: topOffset } : undefined}
       className={`w20-obsidian-panel absolute left-1/2 z-20 -translate-x-1/2 cursor-pointer transition hover:brightness-105 ${
         compact
           ? 'top-14 mt-[env(safe-area-inset-top,0px)] w-[min(94%,440px)] rounded-xl px-3 py-2'
@@ -258,22 +261,22 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
           <div className="min-w-0">
             <div
               className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium text-stone-300 ${
-                compact ? 'text-[10px]' : 'text-[11px]'
+                compact ? 'text-xs' : 'text-xs'
               }`}
             >
               <span className="max-w-[140px] truncate font-bold text-amber-100">
                 {banner.rollerName ?? 'Player'}
               </span>
-              <span className="text-stone-600">•</span>
+              <span className="text-stone-500">•</span>
               <span className="max-w-[140px] truncate">{banner.label}</span>
-              <span className="text-stone-600">•</span>
+              <span className="text-stone-500">•</span>
               <span className="font-mono text-amber-300/90">
                 {isInitiative
                   ? `1d10 [${initDie}] ${modExpr}`
                   : `Diff ${banner.roll.clampedDifficulty}`}
               </span>
               {banner.isSecretRoll && (
-                <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-500/50 bg-amber-950/80 px-1.5 py-0.5 text-[9px] font-bold text-amber-200">
+                <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-500/50 bg-amber-950/80 px-1.5 py-0.5 text-xs font-bold text-amber-200">
                   <EyeOff className="h-2.5 w-2.5" /> Secret
                 </span>
               )}
@@ -297,11 +300,24 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {!isInitiative && banner.roll.automaticSuccesses > 0 && (
-            <span className="rounded-full border border-indigo-400/50 bg-indigo-950/80 px-2 py-0.5 text-[10px] font-bold text-indigo-200">
+            <span className="rounded-full border border-indigo-400/50 bg-indigo-950/80 px-2 py-0.5 text-xs font-bold text-indigo-200">
               +{banner.roll.automaticSuccesses} WP
             </span>
           )}
-          <X className={compact ? 'h-3.5 w-3.5 text-stone-400' : 'h-4 w-4 text-stone-400'} />
+          <button
+            type="button"
+            aria-label={
+              queuedCount > 0 ? 'Dismiss result and show the next roll' : 'Dismiss roll result'
+            }
+            title="Dismiss (the dice stay on the felt)"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDismiss();
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-300 transition hover:bg-obsidian-800 hover:text-parchment"
+          >
+            <X className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+          </button>
         </div>
       </div>
 
@@ -318,7 +334,7 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
       {queuedCount > 0 && (
         <div
           className={`flex items-center justify-between gap-2 border-t border-amber-500/20 pt-1.5 ${
-            compact ? 'mt-1.5 text-[10px]' : 'mt-2.5 text-[11px]'
+            compact ? 'mt-1.5 text-xs' : 'mt-2.5 text-xs'
           }`}
         >
           <p className="min-w-0 truncate text-stone-300">

@@ -102,6 +102,17 @@ export function extractSettledDiceValues(
   return values.length === expectedCount ? values : undefined;
 }
 
+/** Colours handed to the 3D dice renderer. Rage dice are identified by their colour. */
+export const DICE_THEME_COLORS = {
+  normal: '#18181b',
+  rage: '#991b1b',
+} as const;
+
+/** True when a settled die reported by the 3D renderer is a Rage die. */
+export function isRageDieThemeColor(themeColor: unknown): boolean {
+  return themeColor === DICE_THEME_COLORS.rage;
+}
+
 /**
  * Partitions an effective dice pool into Obsidian base dice and crimson Rage dice groups.
  */
@@ -114,10 +125,10 @@ export function buildDiceBoxGroups(
   const obsidianCount = effectivePool - clampedRage;
   const groups: DiceBoxGroup[] = [];
   if (obsidianCount > 0) {
-    groups.push({ qty: obsidianCount, sides: 10, themeColor: '#18181b' });
+    groups.push({ qty: obsidianCount, sides: 10, themeColor: DICE_THEME_COLORS.normal });
   }
   if (clampedRage > 0) {
-    groups.push({ qty: clampedRage, sides: 10, themeColor: '#991b1b' });
+    groups.push({ qty: clampedRage, sides: 10, themeColor: DICE_THEME_COLORS.rage });
   }
   return groups;
 }
