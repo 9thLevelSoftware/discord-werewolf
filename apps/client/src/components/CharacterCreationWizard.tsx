@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { IconButton, Modal } from './ui';
 import {
   ABILITY_GROUPS,
   AbilityCategory,
@@ -176,6 +177,8 @@ interface CharacterCreationWizardProps {
   defaultPlayerName?: string;
 }
 
+const INITIAL_DRAFT_JSON = JSON.stringify(INITIAL_DRAFT);
+
 export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = ({
   campaignId,
   sessionJwt,
@@ -220,6 +223,12 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Closing asks for confirmation once anything has been entered.
+  const isDirty = useMemo(
+    () => deedName.trim() !== '' || JSON.stringify(draft) !== INITIAL_DRAFT_JSON,
+    [draft, deedName]
+  );
 
   // Load Level 1 Gifts from Supabase compendium_gifts when JWT getter is supplied; otherwise use CANONICAL_GIFT_CATALOG directly without warning
   useEffect(() => {
@@ -541,51 +550,89 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
   const ledger = summary.freebieLedger;
   const stepBtnClass = isMobile
-    ? 'flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 text-sm font-bold text-zinc-100 hover:bg-zinc-700 disabled:opacity-35'
+    ? 'flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 text-sm font-bold text-stone-100 hover:bg-zinc-700 disabled:opacity-35'
     : 'rounded bg-zinc-800 px-1.5 py-0.5 font-bold hover:bg-zinc-700 disabled:opacity-40';
   const stepAmberBtnClass = isMobile
     ? 'flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 text-sm font-bold text-amber-300 hover:bg-zinc-700 disabled:opacity-35'
     : 'rounded bg-zinc-800 px-1 font-bold text-amber-300 hover:bg-zinc-700 disabled:opacity-35';
 
+  const wizardFooter = (
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={step === 1}
+              onClick={() => setStep((s) => Math.max(1, s - 1) as 1 | 2 | 3 | 4 | 5)}
+              className="flex items-center gap-1 rounded border border-stone-700 bg-zinc-900 px-3 py-2 font-semibold hover:bg-zinc-800 disabled:opacity-40"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Back
+            </button>
+            <button
+              type="button"
+              disabled={step === 5}
+              onClick={() => setStep((s) => Math.min(5, s + 1) as 1 | 2 | 3 | 4 | 5)}
+              className="flex items-center gap-1 rounded border border-stone-700 bg-zinc-900 px-3 py-2 font-semibold hover:bg-zinc-800 disabled:opacity-40"
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {!summary.isValid && step !== 5 && !isMobile && (
+              <span className="text-xs text-amber-300">
+                {summary.errors.length} rule check(s) remaining
+              </span>
+            )}
+            <button
+              type="button"
+              disabled={!summary.isValid || submitting}
+              onClick={() => void handleSubmitCharacter()}
+              className="w20-crimson-seal font-display rounded-xl px-4 py-2.5 font-black uppercase tracking-wider text-amber-50 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {submitting ? 'Forging Garou...' : 'Finalize & Save Garou'}
+            </button>
+          </div>
+    </div>
+  );
+
   return (
-    <div
-      className={
-        isMobile
-          ? 'fixed inset-0 z-50 flex flex-col bg-black/95'
-          : 'fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm'
-      }
-    >
-      <div
-        className={
-          isMobile
-            ? 'flex h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-zinc-950 text-zinc-100'
-            : 'flex max-h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl'
-        }
-      >
+    <Modal
+      open
+      onClose={onClose}
+      title="Rank 1 Cliath Creation Wizard"
+      variant={isMobile ? 'fullscreen' : 'center'}
+      size="lg"
+      bodyClassName="p-4 text-xs"
+      dirty={isDirty}
+      discardMessage="Discard this character? Everything entered will be lost."
+      footer={wizardFooter}
+      renderHeader={(requestClose) => (
+        <>
         {/* Header + Step Bar */}
-        <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900/80 px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-amber-500/20 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <Sparkles className="h-4 w-4 shrink-0 text-emerald-400" />
-            <h2 className="truncate text-sm font-extrabold tracking-wider uppercase">
+            <Sparkles className="h-4 w-4 shrink-0 text-amber-300" />
+            <h2 className="font-display truncate text-sm font-black tracking-wider uppercase text-amber-100">
               Rank 1 Cliath Creation Wizard
             </h2>
             {defaultPlayerName?.trim() && (
-              <span className="shrink-0 rounded-full border border-amber-500/35 bg-amber-950/35 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+              <span className="shrink-0 rounded-full border border-amber-500/35 bg-amber-950/35 px-2 py-0.5 text-xs font-semibold text-amber-200">
                 {defaultPlayerName.trim()}
               </span>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <IconButton
+            label="Close wizard"
+            icon={<X className="h-4 w-4" />}
+            size={isMobile ? 'touch' : 'md'}
+            onClick={requestClose}
+          />
         </div>
 
         {/* Step Navigation & Live Freebie Ledger Bar */}
-        <div className="shrink-0 border-b border-zinc-800 bg-zinc-900/40 px-4 py-2.5">
+        <div className="shrink-0 border-b border-amber-500/20 px-4 py-2.5">
           <div
             className={
               isMobile
@@ -593,7 +640,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 : 'flex flex-wrap items-center justify-between gap-2'
             }
           >
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1" role="tablist" aria-label="Creation steps">
               {(
                 [
                   [1, '1. Identity'],
@@ -606,11 +653,13 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 <button
                   key={num}
                   type="button"
+                  role="tab"
+                  aria-selected={step === num}
                   onClick={() => setStep(num)}
-                  className={`shrink-0 rounded-md px-2.5 py-1.5 text-[11px] font-bold transition ${
+                  className={`shrink-0 rounded-md px-2.5 py-1.5 text-xs font-bold transition ${
                     step === num
-                      ? 'bg-red-700 text-white'
-                      : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
+                      ? 'bg-red-800/90 text-amber-50 shadow'
+                      : 'bg-zinc-900 text-stone-400 hover:text-stone-200'
                   }`}
                 >
                   {label}
@@ -618,8 +667,8 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
               ))}
             </div>
 
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1 text-[11px]">
-              <span className="text-zinc-400">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-stone-800 bg-zinc-950 px-3 py-1 text-xs">
+              <span className="text-stone-400">
                 Freebies:{' '}
                 <strong
                   className={
@@ -634,50 +683,51 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 </strong>{' '}
                 / {ledger.totalAvailableFreebies} left
               </span>
-              <span className="text-zinc-600">|</span>
-              <span className="text-zinc-400">
+              <span className="text-stone-500">|</span>
+              <span className="text-stone-400">
                 Flaws +{ledger.creditedFlawBonus} (raw {ledger.rawFlawPoints}/7 cap)
               </span>
             </div>
           </div>
         </div>
 
-        {/* Scrollable Step Body */}
-        <div className="flex-1 overflow-y-auto p-4 text-xs">
+        </>
+      )}
+    >
           {/* STEP 1: IDENTITY */}
           {step === 1 && (
             <div className={isMobile ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 gap-4 md:grid-cols-2'}>
               <div className="space-y-3">
                 <label className="block">
-                  <span className="font-bold text-zinc-300">Garou Name *</span>
+                  <span className="font-bold text-stone-300">Garou Name *</span>
                   <input
                     type="text"
                     value={draft.name}
                     onChange={(e) => setIdentityField({ name: e.target.value })}
                     placeholder="e.g. Walks-the-Ash"
-                    className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5"
+                    className="mt-1 w-full rounded border border-stone-700 bg-zinc-900 px-3 py-1.5"
                   />
                 </label>
 
                 <label className="block">
-                  <span className="font-bold text-zinc-300">Deed Name (Optional)</span>
+                  <span className="font-bold text-stone-300">Deed Name (Optional)</span>
                   <input
                     type="text"
                     value={deedName}
                     onChange={(e) => setDeedName(e.target.value)}
                     placeholder="e.g. Silver-Fang's Bane"
-                    className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5"
+                    className="mt-1 w-full rounded border border-stone-700 bg-zinc-900 px-3 py-1.5"
                   />
                 </label>
 
                 <label className="block">
-                  <span className="font-bold text-zinc-300">Concept</span>
+                  <span className="font-bold text-stone-300">Concept</span>
                   <input
                     type="text"
                     value={draft.concept}
                     onChange={(e) => setIdentityField({ concept: e.target.value })}
                     placeholder="e.g. Urban Pack Scout / Umbral Mystic"
-                    className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5"
+                    className="mt-1 w-full rounded border border-stone-700 bg-zinc-900 px-3 py-1.5"
                   />
                 </label>
 
@@ -697,7 +747,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
               <div className="space-y-3">
                 <div>
-                  <span className="block font-bold text-zinc-300">Breed (Starting Gnosis)</span>
+                  <span className="block font-bold text-stone-300">Breed (Starting Gnosis)</span>
                   <div className="mt-1 grid grid-cols-3 gap-2">
                     {(['homid', 'metis', 'lupus'] as Breed[]).map((b) => (
                       <button
@@ -707,11 +757,11 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         className={`rounded-lg border p-2 text-left capitalize transition ${
                           draft.breed === b
                             ? 'border-cyan-500 bg-cyan-950/40 text-cyan-100'
-                            : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700'
+                            : 'border-stone-800 bg-zinc-900 text-stone-300 hover:border-stone-700'
                         }`}
                       >
                         <div className="font-bold">{b}</div>
-                        <div className="text-[10px] text-zinc-400">
+                        <div className="text-xs text-stone-400">
                           Gnosis {STARTING_GNOSIS_BY_BREED[b]}
                         </div>
                       </button>
@@ -720,7 +770,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 </div>
 
                 <div>
-                  <span className="block font-bold text-zinc-300">Auspice (Starting Rage)</span>
+                  <span className="block font-bold text-stone-300">Auspice (Starting Rage)</span>
                   <div className={isMobile ? 'mt-1 grid grid-cols-2 gap-1.5' : 'mt-1 grid grid-cols-5 gap-1.5'}>
                     {(['ragabash', 'theurge', 'philodox', 'galliard', 'ahroun'] as Auspice[]).map(
                       (a) => (
@@ -731,11 +781,11 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           className={`rounded-lg border p-2 text-center capitalize transition ${
                             draft.auspice === a
                               ? 'border-red-500 bg-red-950/45 text-red-100'
-                              : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700'
+                              : 'border-stone-800 bg-zinc-900 text-stone-300 hover:border-stone-700'
                           }`}
                         >
-                          <div className="text-[11px] font-bold">{a}</div>
-                          <div className="text-[10px] text-zinc-400">
+                          <div className="text-xs font-bold">{a}</div>
+                          <div className="text-xs text-stone-400">
                             Rage {STARTING_RAGE_BY_AUSPICE[a]}
                           </div>
                         </button>
@@ -745,11 +795,11 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 </div>
 
                 <label className="block">
-                  <span className="font-bold text-zinc-300">Tribe (Starting Willpower)</span>
+                  <span className="font-bold text-stone-300">Tribe (Starting Willpower)</span>
                   <select
                     value={draft.tribe}
                     onChange={(e) => setIdentityField({ tribe: e.target.value as GarouTribe })}
-                    className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5"
+                    className="mt-1 w-full rounded border border-stone-700 bg-zinc-900 px-3 py-1.5"
                   >
                     {ALL_TRIBES.map((t) => (
                       <option key={t.key} value={t.key}>
@@ -759,10 +809,10 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   </select>
                 </label>
 
-                <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
+                <div className="rounded-lg border border-stone-800 bg-zinc-900/70 p-3">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-zinc-200">Starting Cliath Renown (Total 3)</span>
-                    <span className="text-[10px] text-zinc-400">
+                    <span className="font-bold text-stone-200">Starting Cliath Renown (Total 3)</span>
+                    <span className="text-xs text-stone-400">
                       {draft.auspice === 'ragabash'
                         ? 'Ragabash: Distribute any 3 dots'
                         : `Fixed by ${formatLabel(draft.auspice)}`}
@@ -775,9 +825,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                       return (
                         <div
                           key={rKey}
-                          className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950 px-2.5 py-1.5"
+                          className="flex items-center justify-between rounded border border-stone-800 bg-zinc-950 px-2.5 py-1.5"
                         >
-                          <span className="capitalize text-zinc-300">{rKey}</span>
+                          <span className="capitalize text-stone-300">{rKey}</span>
                           <div className="flex items-center gap-1.5">
                             {isRagabash && (
                               <button
@@ -791,6 +841,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     },
                                   }))
                                 }
+                                aria-label={`Decrease ${String(rKey)} renown`}
                                 className={stepBtnClass}
                               >
                                 -
@@ -816,6 +867,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     };
                                   })
                                 }
+                                aria-label={`Increase ${String(rKey)} renown`}
                                 className={stepBtnClass}
                               >
                                 +
@@ -834,7 +886,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
           {/* STEP 2: ATTRIBUTES */}
           {step === 2 && (
             <div className="space-y-4">
-              <p className="text-zinc-400">
+              <p className="text-stone-400">
                 Every Attribute begins with <strong>1 free dot</strong>. Assign{' '}
                 <strong>7 / 5 / 3</strong> Priority dots across Physical, Social, and Mental, then
                 optionally spend Freebie points ({W20_FREEBIE_COSTS.attribute} Freebies/dot; Rank 1
@@ -852,13 +904,14 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   return (
                     <div
                       key={cat}
-                      className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3"
+                      className="rounded-xl border border-stone-800 bg-zinc-900/60 p-3"
                     >
-                      <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                        <span className="font-extrabold uppercase tracking-wide text-zinc-200">
+                      <div className="flex items-center justify-between border-b border-stone-800 pb-2">
+                        <span className="font-extrabold uppercase tracking-wide text-stone-200">
                           {cat}
                         </span>
                         <select
+                          aria-label={`${cat} priority`}
                           value={tier}
                           onChange={(e) =>
                             setDraft((prev) => ({
@@ -870,7 +923,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               ),
                             }))
                           }
-                          className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-[11px]"
+                          className="rounded border border-stone-700 bg-zinc-950 px-2 py-0.5 text-xs"
                         >
                           <option value="primary">Primary (7)</option>
                           <option value="secondary">Secondary (5)</option>
@@ -878,8 +931,8 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         </select>
                       </div>
 
-                      <div className="mt-1.5 flex justify-between text-[11px]">
-                        <span className="text-zinc-400">Priority Allocated</span>
+                      <div className="mt-1.5 flex justify-between text-xs">
+                        <span className="text-stone-400">Priority Allocated</span>
                         <span
                           className={`font-mono font-bold ${
                             spent === budget ? 'text-emerald-400' : 'text-amber-300'
@@ -897,31 +950,33 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           return (
                             <div
                               key={attr}
-                              className="rounded-lg border border-zinc-800/80 bg-zinc-950/80 p-2"
+                              className="rounded-lg border border-stone-800/80 bg-zinc-950/80 p-2"
                             >
                               <div className="flex items-center justify-between">
-                                <span className="font-bold capitalize text-zinc-200">{attr}</span>
+                                <span className="font-bold capitalize text-stone-200">{attr}</span>
                                 <span className="font-mono text-sm font-black text-emerald-300">
                                   {total}
                                 </span>
                               </div>
-                              <div className="mt-1.5 flex items-center justify-between text-[10px] text-zinc-400">
+                              <div className="mt-1.5 flex items-center justify-between text-xs text-stone-400">
                                 <div className="flex items-center gap-1">
                                   <span>Prio:</span>
                                   <button
                                     type="button"
                                     onClick={() => adjustPriorityAttr(attr, -1)}
+                                    aria-label={`Decrease ${String(attr).replace(/_/g, " ")} priority dots`}
                                     className={stepBtnClass}
                                   >
                                     -
                                   </button>
-                                  <span className="w-4 text-center font-mono text-zinc-200">
+                                  <span className="w-4 text-center font-mono text-stone-200">
                                     {prio}
                                   </span>
                                   <button
                                     type="button"
                                     disabled={total >= 5 || spent >= budget}
                                     onClick={() => adjustPriorityAttr(attr, 1)}
+                                    aria-label={`Increase ${String(attr).replace(/_/g, " ")} priority dots`}
                                     className={stepBtnClass}
                                   >
                                     +
@@ -933,6 +988,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   <button
                                     type="button"
                                     onClick={() => adjustFreebieAttr(attr, -1)}
+                                    aria-label={`Decrease ${String(attr).replace(/_/g, " ")} freebie dots`}
                                     className={stepBtnClass}
                                   >
                                     -
@@ -944,6 +1000,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     type="button"
                                     disabled={total >= 5}
                                     onClick={() => adjustFreebieAttr(attr, 1)}
+                                    aria-label={`Increase ${String(attr).replace(/_/g, " ")} freebie dots`}
                                     className={stepBtnClass}
                                   >
                                     +
@@ -964,7 +1021,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
           {/* STEP 3: ABILITIES */}
           {step === 3 && (
             <div className="space-y-4">
-              <p className="text-zinc-400">
+              <p className="text-stone-400">
                 Assign <strong>13 / 9 / 5</strong> Priority dots across Talents, Skills, and
                 Knowledges (<strong>max 3 dots</strong> per Ability before Freebies;{' '}
                 {W20_FREEBIE_COSTS.ability} Freebies/dot for dots 4–5).
@@ -986,13 +1043,14 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   return (
                     <div
                       key={cat}
-                      className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3"
+                      className="rounded-xl border border-stone-800 bg-zinc-900/60 p-3"
                     >
-                      <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                        <span className="font-extrabold uppercase tracking-wide text-zinc-200">
+                      <div className="flex items-center justify-between border-b border-stone-800 pb-2">
+                        <span className="font-extrabold uppercase tracking-wide text-stone-200">
                           {cat}
                         </span>
                         <select
+                          aria-label={`${cat} priority`}
                           value={tier}
                           onChange={(e) =>
                             setDraft((prev) => ({
@@ -1004,7 +1062,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               ),
                             }))
                           }
-                          className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-[11px]"
+                          className="rounded border border-stone-700 bg-zinc-950 px-2 py-0.5 text-xs"
                         >
                           <option value="primary">Primary (13)</option>
                           <option value="secondary">Secondary (9)</option>
@@ -1012,8 +1070,8 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         </select>
                       </div>
 
-                      <div className="mt-1.5 flex justify-between text-[11px]">
-                        <span className="text-zinc-400">Priority Allocated</span>
+                      <div className="mt-1.5 flex justify-between text-xs">
+                        <span className="text-stone-400">Priority Allocated</span>
                         <span
                           className={`font-mono font-bold ${
                             spent === budget ? 'text-emerald-400' : 'text-amber-300'
@@ -1036,30 +1094,31 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               className={`flex items-center justify-between rounded border px-2 py-1.5 ${
                                 lupusRestricted
                                   ? 'border-amber-900/50 bg-amber-950/20'
-                                  : 'border-zinc-800/80 bg-zinc-950/80'
+                                  : 'border-stone-800/80 bg-zinc-950/80'
                               }`}
                             >
                               <div className="min-w-0 pr-1">
-                                <div className="truncate font-semibold text-zinc-200">
+                                <div className="truncate font-semibold text-stone-200">
                                   {formatLabel(abilKey)}
                                 </div>
                                 {lupusRestricted && (
-                                  <div className="text-[9px] text-amber-400">
+                                  <div className="text-xs text-amber-400">
                                     Lupus Restricted (Freebies only)
                                   </div>
                                 )}
                               </div>
 
-                              <div className="flex shrink-0 items-center gap-2 text-[10px]">
+                              <div className="flex shrink-0 items-center gap-2 text-xs">
                                 <div className="flex items-center gap-0.5" title="Priority (cap 3)">
                                   <button
                                     type="button"
                                     onClick={() => adjustPriorityAbility(abilKey, -1)}
+                                    aria-label={`Decrease ${String(abilKey).replace(/_/g, " ")} priority dots`}
                                     className={stepBtnClass}
                                   >
                                     -
                                   </button>
-                                  <span className="w-3 text-center font-mono text-zinc-200">
+                                  <span className="w-3 text-center font-mono text-stone-200">
                                     {prio}
                                   </span>
                                   <button
@@ -1068,6 +1127,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                       lupusRestricted || prio >= 3 || total >= 5 || spent >= budget
                                     }
                                     onClick={() => adjustPriorityAbility(abilKey, 1)}
+                                    aria-label={`Increase ${String(abilKey).replace(/_/g, " ")} priority dots`}
                                     className={stepBtnClass}
                                   >
                                     +
@@ -1081,6 +1141,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   <button
                                     type="button"
                                     onClick={() => adjustFreebieAbility(abilKey, -1)}
+                                    aria-label={`Decrease ${String(abilKey).replace(/_/g, " ")} freebie dots`}
                                     className={stepAmberBtnClass}
                                   >
                                     -
@@ -1092,6 +1153,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                     type="button"
                                     disabled={total >= 5}
                                     onClick={() => adjustFreebieAbility(abilKey, 1)}
+                                    aria-label={`Increase ${String(abilKey).replace(/_/g, " ")} freebie dots`}
                                     className={stepAmberBtnClass}
                                   >
                                     +
@@ -1161,9 +1223,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
             return (
               <div className={isMobile ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 gap-4 lg:grid-cols-2'}>
                 {/* Backgrounds */}
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-2">
-                    <span className="font-extrabold uppercase tracking-wide text-zinc-200">
+                <div className="rounded-xl border border-stone-800 bg-zinc-900/60 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-800 pb-2">
+                    <span className="font-extrabold uppercase tracking-wide text-stone-200">
                       Backgrounds (5 Base + {W20_FREEBIE_COSTS.background}pt Freebie)
                     </span>
                     <span className="font-mono font-bold text-emerald-400">
@@ -1175,24 +1237,25 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   {/* Filter + Custom Background Free-Text Adder */}
                   <div className="mt-2.5 space-y-2">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <div className="flex min-w-[140px] flex-1 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5">
-                        <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                      <div className="flex min-w-[140px] flex-1 items-center gap-1.5 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5">
+                        <Search className="h-3.5 w-3.5 shrink-0 text-stone-400" />
                         <input
                           type="text"
                           value={bgSearch}
                           onChange={(e) => setBgSearch(e.target.value)}
+                          aria-label="Filter backgrounds"
                           placeholder="Filter W20 Backgrounds (e.g. Fate, Caern)..."
-                          className="min-w-0 flex-1 bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none"
+                          className="min-w-0 flex-1 bg-transparent text-xs text-stone-100 placeholder-stone-500"
                         />
                       </div>
-                      <div className="flex rounded-lg border border-zinc-800 bg-zinc-950 p-0.5 text-[10px] font-bold">
+                      <div className="flex rounded-lg border border-stone-800 bg-zinc-950 p-0.5 text-xs font-bold">
                         <button
                           type="button"
                           onClick={() => setBgTierFilter('all')}
                           className={`rounded-md px-2 py-1 ${
                             bgTierFilter === 'all'
                               ? 'bg-zinc-800 text-amber-200'
-                              : 'text-zinc-400 hover:text-zinc-200'
+                              : 'text-stone-400 hover:text-stone-200'
                           }`}
                         >
                           All W20 ({W20_BACKGROUND_CATALOG.length})
@@ -1203,7 +1266,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           className={`rounded-md px-2 py-1 ${
                             bgTierFilter === 'core'
                               ? 'bg-zinc-800 text-amber-200'
-                              : 'text-zinc-400 hover:text-zinc-200'
+                              : 'text-stone-400 hover:text-stone-200'
                           }`}
                         >
                           Core (12)
@@ -1223,8 +1286,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                             handleAddCustomBackground();
                           }
                         }}
+                        aria-label="Custom background name"
                         placeholder="Type unlisted/custom Background..."
-                        className="min-h-[40px] min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:border-amber-400/75 focus:outline-none"
+                        className="min-h-[40px] min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75"
                       />
                       <button
                         type="button"
@@ -1265,16 +1329,16 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 ? 'border-amber-700/60 bg-amber-950/20'
                                 : bg.tier === 'custom'
                                   ? 'border-amber-500/40 bg-amber-950/15'
-                                  : 'border-zinc-800 bg-zinc-950/80'
+                                  : 'border-stone-800 bg-zinc-950/80'
                           }`}
                         >
                           <div className="min-w-0">
                             <div className="flex items-center gap-1">
-                              <span className="truncate font-semibold text-zinc-200">
+                              <span className="truncate font-semibold text-stone-200">
                                 {bg.label}
                               </span>
                               {bg.tier === 'expanded' && (
-                                <span className="shrink-0 rounded bg-zinc-800 px-1 py-0.2 text-[8px] font-bold uppercase text-zinc-400">
+                                <span className="shrink-0 rounded bg-zinc-800 px-1 py-0.2 text-xs font-bold uppercase text-stone-400">
                                   Exp
                                 </span>
                               )}
@@ -1283,28 +1347,29 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   type="button"
                                   onClick={() => handleRemoveCustomBackground(bg.key)}
                                   aria-label={`Remove custom background ${bg.label}`}
-                                  className="shrink-0 text-zinc-500 hover:text-red-300"
+                                  className="shrink-0 text-stone-400 hover:text-red-300"
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </button>
                               )}
                             </div>
                             {isForbidden && (
-                              <div className="text-[9px] text-red-400">Tribe Forbidden</div>
+                              <div className="text-xs text-red-400">Tribe Forbidden</div>
                             )}
                             {isRequiredMin3 && (
-                              <div className="text-[9px] text-amber-300">Silver Fangs min 3</div>
+                              <div className="text-xs text-amber-300">Silver Fangs min 3</div>
                             )}
                             {isDiscouraged && (
-                              <div className="text-[9px] text-amber-400">Tribe Discouraged</div>
+                              <div className="text-xs text-amber-400">Tribe Discouraged</div>
                             )}
                           </div>
 
-                          <div className="flex shrink-0 items-center gap-2 text-[10px]">
+                          <div className="flex shrink-0 items-center gap-2 text-xs">
                             <div className="flex items-center gap-0.5" title="Base Priority Dots">
                               <button
                                 type="button"
                                 onClick={() => adjustBackground(bg.key, 'priority', -1)}
+                                aria-label={`Decrease ${String(bg.key).replace(/_/g, " ")} priority dots`}
                                 className={stepBtnClass}
                               >
                                 -
@@ -1314,6 +1379,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 type="button"
                                 disabled={isForbidden || total >= 5}
                                 onClick={() => adjustBackground(bg.key, 'priority', 1)}
+                                aria-label={`Increase ${String(bg.key).replace(/_/g, " ")} priority dots`}
                                 className={stepBtnClass}
                               >
                                 +
@@ -1324,6 +1390,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               <button
                                 type="button"
                                 onClick={() => adjustBackground(bg.key, 'freebie', -1)}
+                                aria-label={`Decrease ${String(bg.key).replace(/_/g, " ")} freebie dots`}
                                 className={stepAmberBtnClass}
                               >
                                 -
@@ -1333,6 +1400,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 type="button"
                                 disabled={isForbidden || total >= 5}
                                 onClick={() => adjustBackground(bg.key, 'freebie', 1)}
+                                aria-label={`Increase ${String(bg.key).replace(/_/g, " ")} freebie dots`}
                                 className={stepAmberBtnClass}
                               >
                                 +
@@ -1347,13 +1415,13 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
                 {/* Core Trait Freebies & Visually Differentiated Merits / Flaws */}
                 <div className="space-y-3">
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
-                    <p className="font-extrabold uppercase tracking-wide text-zinc-200">
+                  <div className="rounded-xl border border-stone-800 bg-zinc-900/60 p-3">
+                    <p className="font-extrabold uppercase tracking-wide text-stone-200">
                       Raise Rage, Gnosis &amp; Willpower with Freebies
                     </p>
                     <div className={isMobile ? 'mt-2 grid grid-cols-1 gap-2' : 'mt-2 grid grid-cols-3 gap-2'}>
-                      <div className="rounded border border-zinc-800 bg-zinc-950 p-2">
-                        <div className="text-[10px] font-bold uppercase text-red-400">
+                      <div className="rounded border border-stone-800 bg-zinc-950 p-2">
+                        <div className="text-xs font-bold uppercase text-red-400">
                           Rage ({W20_FREEBIE_COSTS.rage}pt/dot)
                         </div>
                         <div className="mt-1 flex items-center justify-between">
@@ -1369,6 +1437,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   freebieRageDots: Math.max(0, p.freebieRageDots - 1),
                                 }))
                               }
+                              aria-label={`Decrease Rage freebie dots`}
                               className={stepBtnClass}
                             >
                               -
@@ -1384,6 +1453,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                       : p.freebieRageDots + 1,
                                 }))
                               }
+                              aria-label={`Increase Rage freebie dots`}
                               className={stepBtnClass}
                             >
                               +
@@ -1392,8 +1462,8 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         </div>
                       </div>
 
-                      <div className="rounded border border-zinc-800 bg-zinc-950 p-2">
-                        <div className="text-[10px] font-bold uppercase text-cyan-400">
+                      <div className="rounded border border-stone-800 bg-zinc-950 p-2">
+                        <div className="text-xs font-bold uppercase text-cyan-400">
                           Gnosis ({W20_FREEBIE_COSTS.gnosis}pt/dot)
                         </div>
                         <div className="mt-1 flex items-center justify-between">
@@ -1409,6 +1479,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   freebieGnosisDots: Math.max(0, p.freebieGnosisDots - 1),
                                 }))
                               }
+                              aria-label={`Decrease Gnosis freebie dots`}
                               className={stepBtnClass}
                             >
                               -
@@ -1424,6 +1495,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                       : p.freebieGnosisDots + 1,
                                 }))
                               }
+                              aria-label={`Increase Gnosis freebie dots`}
                               className={stepBtnClass}
                             >
                               +
@@ -1432,8 +1504,8 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         </div>
                       </div>
 
-                      <div className="rounded border border-zinc-800 bg-zinc-950 p-2">
-                        <div className="text-[10px] font-bold uppercase text-indigo-400">
+                      <div className="rounded border border-stone-800 bg-zinc-950 p-2">
+                        <div className="text-xs font-bold uppercase text-indigo-400">
                           Willpower ({W20_FREEBIE_COSTS.willpower}pt/dot)
                         </div>
                         <div className="mt-1 flex items-center justify-between">
@@ -1449,6 +1521,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   freebieWillpowerDots: Math.max(0, p.freebieWillpowerDots - 1),
                                 }))
                               }
+                              aria-label={`Decrease Willpower freebie dots`}
                               className={stepBtnClass}
                             >
                               -
@@ -1466,6 +1539,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                       : p.freebieWillpowerDots + 1,
                                 }))
                               }
+                              aria-label={`Increase Willpower freebie dots`}
                               className={stepBtnClass}
                             >
                               +
@@ -1477,35 +1551,36 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   </div>
 
                   {/* Visually Differentiated Merits & Flaws */}
-                  <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+                  <div className="space-y-3 rounded-xl border border-stone-800 bg-zinc-900/60 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-extrabold uppercase tracking-wide text-zinc-200">
+                      <p className="font-extrabold uppercase tracking-wide text-stone-200">
                         Merits &amp; Flaws
                       </p>
-                      <span className="text-[10px] font-semibold text-zinc-400">
+                      <span className="text-xs font-semibold text-stone-400">
                         Flaws grant Freebies (max +{W20_FREEBIE_COSTS.maxFlawBonus} = 22)
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5">
-                      <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                    <div className="flex items-center gap-1.5 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5">
+                      <Search className="h-3.5 w-3.5 shrink-0 text-stone-400" />
                       <input
                         type="text"
                         value={mfSearch}
                         onChange={(e) => setMfSearch(e.target.value)}
+                        aria-label="Filter merits and flaws"
                         placeholder="Filter Merits & Flaws..."
-                        className="min-w-0 flex-1 bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none"
+                        className="min-w-0 flex-1 bg-transparent text-xs text-stone-100 placeholder-stone-500"
                       />
                     </div>
 
                     {/* Merits Sub-Panel (Emerald Boons) */}
                     <div className="rounded-xl border border-emerald-700/45 bg-emerald-950/15 p-2.5">
                       <div className="mb-1.5 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-emerald-300">
+                        <span className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-emerald-300">
                           <ShieldCheck className="h-3.5 w-3.5" />
                           Merits (Cost Freebies)
                         </span>
-                        <span className="font-mono text-[10px] font-bold text-emerald-300">
+                        <span className="font-mono text-xs font-bold text-emerald-300">
                           Cost: {ledger.spentBreakdown.merits}pt
                         </span>
                       </div>
@@ -1518,7 +1593,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               type="button"
                               onClick={() => togglePresetMeritFlaw(mf)}
                               title={mf.summary}
-                              className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                              className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
                                 active
                                   ? 'border-emerald-400 bg-emerald-800/55 text-white shadow-[0_0_8px_rgba(16,185,129,0.25)]'
                                   : 'border-emerald-800/55 bg-emerald-950/30 text-emerald-100/85 hover:border-emerald-500/70'
@@ -1534,11 +1609,11 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                     {/* Flaws Sub-Panel (Crimson/Rose Drawbacks) */}
                     <div className="rounded-xl border border-rose-700/45 bg-rose-950/15 p-2.5">
                       <div className="mb-1.5 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-rose-300">
+                        <span className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-rose-300">
                           <AlertTriangle className="h-3.5 w-3.5" />
                           Flaws (+Bonus Freebies)
                         </span>
-                        <span className="font-mono text-[10px] font-bold text-rose-300">
+                        <span className="font-mono text-xs font-bold text-rose-300">
                           Bonus: +{ledger.creditedFlawBonus}/{W20_FREEBIE_COSTS.maxFlawBonus}pt
                         </span>
                       </div>
@@ -1551,7 +1626,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               type="button"
                               onClick={() => togglePresetMeritFlaw(mf)}
                               title={mf.summary}
-                              className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                              className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
                                 active
                                   ? 'border-rose-400 bg-rose-900/55 text-white shadow-[0_0_8px_rgba(244,63,94,0.25)]'
                                   : 'border-rose-900/60 bg-rose-950/30 text-rose-100/85 hover:border-rose-500/70'
@@ -1565,15 +1640,15 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                     </div>
 
                     {/* Mobile & Desktop Custom Merit / Flaw Adder */}
-                    <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/80 p-2.5">
+                    <div className="space-y-2 rounded-lg border border-stone-800 bg-zinc-950/80 p-2.5">
                       <div className="grid grid-cols-2 gap-1.5">
                         <button
                           type="button"
                           onClick={() => setCustomMfKind('merit')}
-                          className={`rounded-lg border py-1.5 text-[11px] font-bold transition ${
+                          className={`rounded-lg border py-1.5 text-xs font-bold transition ${
                             customMfKind === 'merit'
                               ? 'border-emerald-400/75 bg-emerald-950/60 text-emerald-200'
-                              : 'border-zinc-800 bg-zinc-900 text-zinc-400'
+                              : 'border-stone-800 bg-zinc-900 text-stone-400'
                           }`}
                         >
                           + Custom Merit (Cost)
@@ -1581,10 +1656,10 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         <button
                           type="button"
                           onClick={() => setCustomMfKind('flaw')}
-                          className={`rounded-lg border py-1.5 text-[11px] font-bold transition ${
+                          className={`rounded-lg border py-1.5 text-xs font-bold transition ${
                             customMfKind === 'flaw'
                               ? 'border-rose-400/75 bg-rose-950/60 text-rose-200'
-                              : 'border-zinc-800 bg-zinc-900 text-zinc-400'
+                              : 'border-stone-800 bg-zinc-900 text-stone-400'
                           }`}
                         >
                           + Custom Flaw (+Bonus)
@@ -1601,12 +1676,13 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               addCustomMeritFlaw();
                             }
                           }}
+                          aria-label="Custom merit or flaw name"
                           placeholder={
                             customMfKind === 'merit'
                               ? 'Type custom Merit name...'
                               : 'Type custom Flaw name...'
                           }
-                          className="min-h-[40px] min-w-[140px] flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100"
+                          className="min-h-[40px] min-w-[140px] flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-stone-100"
                         />
                         <input
                           type="number"
@@ -1617,7 +1693,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                             setCustomMfPoints(Math.max(1, Math.min(7, Number(e.target.value) || 1)))
                           }
                           aria-label="Points"
-                          className="min-h-[40px] w-14 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 text-center font-mono text-xs"
+                          className="min-h-[40px] w-14 rounded-lg border border-stone-700 bg-zinc-950 px-2 py-1 text-center font-mono text-xs"
                         />
                         <button
                           type="button"
@@ -1638,13 +1714,13 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                       <div className="space-y-1.5 pt-1">
                         {selectedMerits.length > 0 && (
                           <div className="flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] font-bold uppercase text-emerald-400">
+                            <span className="text-xs font-bold uppercase text-emerald-400">
                               Merits:
                             </span>
                             {selectedMerits.map((m) => (
                               <span
                                 key={m.id}
-                                className="inline-flex items-center gap-1 rounded-md border border-emerald-600/50 bg-emerald-950/45 px-2 py-0.5 text-[10px] font-semibold text-emerald-100"
+                                className="inline-flex items-center gap-1 rounded-md border border-emerald-600/50 bg-emerald-950/45 px-2 py-0.5 text-xs font-semibold text-emerald-100"
                               >
                                 {m.name} (-{m.pointValue}pt)
                                 <button
@@ -1665,13 +1741,13 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         )}
                         {selectedFlaws.length > 0 && (
                           <div className="flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] font-bold uppercase text-rose-400">
+                            <span className="text-xs font-bold uppercase text-rose-400">
                               Flaws:
                             </span>
                             {selectedFlaws.map((m) => (
                               <span
                                 key={m.id}
-                                className="inline-flex items-center gap-1 rounded-md border border-rose-600/50 bg-rose-950/45 px-2 py-0.5 text-[10px] font-semibold text-rose-100"
+                                className="inline-flex items-center gap-1 rounded-md border border-rose-600/50 bg-rose-950/45 px-2 py-0.5 text-xs font-semibold text-rose-100"
                               >
                                 {m.name} (+{m.pointValue}pt)
                                 <button
@@ -1702,7 +1778,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
           {step === 5 && (
             <div className="space-y-4">
               {giftFetchNote && (
-                <div className="rounded border border-amber-800/60 bg-amber-950/30 px-3 py-1.5 text-[11px] text-amber-300">
+                <div className="rounded border border-amber-800/60 bg-amber-950/30 px-3 py-1.5 text-xs text-amber-300">
                   {giftFetchNote}
                 </div>
               )}
@@ -1723,13 +1799,13 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                   return (
                     <div
                       key={slotSource}
-                      className="flex flex-col justify-between rounded-xl border border-zinc-800 bg-zinc-900/60 p-3"
+                      className="flex flex-col justify-between rounded-xl border border-stone-800 bg-zinc-900/60 p-3"
                     >
                       <div>
-                        <p className="font-extrabold uppercase tracking-wide text-zinc-200">
+                        <p className="font-extrabold uppercase tracking-wide text-stone-200">
                           {title}
                         </p>
-                        <p className="text-[10px] text-zinc-400">Pick 1 or type custom Level 1 Gift</p>
+                        <p className="text-xs text-stone-400">Pick 1 or type custom Level 1 Gift</p>
                         <div className="mt-2 space-y-1.5">
                           {selectedCustomInSlot && (
                             <button
@@ -1740,7 +1816,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               <div className="font-bold">
                                 {selectedCustomInSlot.giftId} (Custom)
                               </div>
-                              <div className="mt-0.5 text-[10px] text-emerald-300/80">
+                              <div className="mt-0.5 text-xs text-emerald-300/80">
                                 Custom Level 1 {formatLabel(slotSource)} Gift — tap to deselect
                               </div>
                             </button>
@@ -1757,11 +1833,11 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 className={`w-full rounded-lg border p-2 text-left transition ${
                                   selected
                                     ? 'border-emerald-500 bg-emerald-950/45 text-emerald-100'
-                                    : 'border-zinc-800 bg-zinc-950/80 text-zinc-300 hover:border-zinc-700'
+                                    : 'border-stone-800 bg-zinc-950/80 text-stone-300 hover:border-stone-700'
                                 }`}
                               >
                                 <div className="font-bold">{g.name}</div>
-                                <div className="mt-0.5 text-[10px] text-zinc-400">
+                                <div className="mt-0.5 text-xs text-stone-400">
                                   {g.system_summary}
                                 </div>
                               </button>
@@ -1770,7 +1846,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         </div>
                       </div>
 
-                      <div className="mt-2.5 flex gap-1 border-t border-zinc-800 pt-2">
+                      <div className="mt-2.5 flex gap-1 border-t border-stone-800 pt-2">
                         <input
                           type="text"
                           maxLength={120}
@@ -1787,13 +1863,14 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               handleSetCustomSlotGift(slotSource);
                             }
                           }}
+                          aria-label={`Custom ${slotSource} gift name`}
                           placeholder={`Custom ${slotSource} Gift...`}
-                          className="min-h-[36px] min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 placeholder-zinc-500"
+                          className="min-h-[36px] min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2 py-1 text-xs text-stone-100 placeholder-stone-500"
                         />
                         <button
                           type="button"
                           onClick={() => handleSetCustomSlotGift(slotSource)}
-                          className="min-h-[36px] shrink-0 rounded-lg border border-amber-500/45 bg-amber-950/35 px-2.5 text-[10px] font-bold text-amber-200 hover:bg-amber-900/45"
+                          className="min-h-[36px] shrink-0 rounded-lg border border-amber-500/45 bg-amber-950/35 px-2.5 text-xs font-bold text-amber-200 hover:bg-amber-900/45"
                         >
                           Use
                         </button>
@@ -1804,8 +1881,8 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
               </div>
 
               {/* Extra Freebie Level 1 Gifts */}
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
-                <p className="font-bold text-zinc-200">
+              <div className="rounded-xl border border-stone-800 bg-zinc-900/50 p-3">
+                <p className="font-bold text-stone-200">
                   Optional Extra Level 1 Gifts ({W20_FREEBIE_COSTS.levelOneGift} Freebies each)
                 </p>
                 <div className="mt-2 flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
@@ -1819,7 +1896,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         key={customFree.giftId}
                         type="button"
                         onClick={() => toggleGiftChoice(customFree.giftId, 'freebie')}
-                        className="rounded border border-amber-500 bg-amber-950/60 px-2 py-1 text-[11px] text-amber-200"
+                        className="rounded border border-amber-500 bg-amber-950/60 px-2 py-1 text-xs text-amber-200"
                       >
                         {customFree.giftId} (Custom) ×
                       </button>
@@ -1837,10 +1914,10 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         type="button"
                         disabled={isBaseSelected}
                         onClick={() => toggleGiftChoice(g.id, 'freebie')}
-                        className={`rounded border px-2 py-1 text-[11px] transition ${
+                        className={`rounded border px-2 py-1 text-xs transition ${
                           isFreebieSelected
                             ? 'border-amber-500 bg-amber-950/60 text-amber-200'
-                            : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-zinc-200'
+                            : 'border-stone-800 bg-zinc-950 text-stone-400 hover:text-stone-200'
                         } disabled:opacity-35`}
                       >
                         {g.name}
@@ -1862,8 +1939,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         handleSetCustomSlotGift('freebie');
                       }
                     }}
+                    aria-label="Custom extra gift name"
                     placeholder="Type custom extra Level 1 Gift..."
-                    className="min-h-[38px] min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500"
+                    className="min-h-[38px] min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1 text-xs text-stone-100 placeholder-stone-500"
                   />
                   <button
                     type="button"
@@ -1876,14 +1954,14 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
               </div>
 
               {/* Optional Form Portraits */}
-              <details className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                <summary className="cursor-pointer font-bold text-zinc-300">
+              <details className="rounded-xl border border-stone-800 bg-zinc-900/40 p-3">
+                <summary className="cursor-pointer font-bold text-stone-300">
                   Optional Shifted Form Portrait URLs
                 </summary>
                 <div className={isMobile ? 'mt-2 grid grid-cols-1 gap-2' : 'mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2'}>
                   {(['homid', 'glabro', 'crinos', 'hispo', 'lupus'] as GarouForm[]).map((form) => (
                     <label key={form} className="flex items-center gap-2">
-                      <span className="w-14 capitalize text-zinc-400">{form}</span>
+                      <span className="w-14 capitalize text-stone-400">{form}</span>
                       <input
                         type="text"
                         value={portraitsByForm[form] ?? ''}
@@ -1891,7 +1969,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           setPortraitsByForm((p) => ({ ...p, [form]: e.target.value }))
                         }
                         placeholder="/r2-assets/tokens/..."
-                        className="flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1"
+                        className="flex-1 rounded border border-stone-700 bg-zinc-950 px-2 py-1"
                       />
                     </label>
                   ))}
@@ -1899,7 +1977,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
               </details>
 
               {/* Validation Review */}
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-3">
+              <div className="rounded-xl border border-stone-800 bg-zinc-900/80 p-3">
                 <div className="flex items-center gap-2 font-bold">
                   {summary.isValid ? (
                     <>
@@ -1919,7 +1997,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 </div>
 
                 {summary.errors.length > 0 && (
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] text-red-300">
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-red-300">
                     {summary.errors.map((err, i) => (
                       <li key={i}>{err.message}</li>
                     ))}
@@ -1927,7 +2005,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 )}
 
                 {summary.warnings.length > 0 && (
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] text-amber-300">
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-300">
                     {summary.warnings.map((w, i) => (
                       <li key={i}>{w.message}</li>
                     ))}
@@ -1935,61 +2013,13 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 )}
 
                 {submitError && (
-                  <div className="mt-2 rounded border border-red-700 bg-red-950/70 p-2 text-[11px] text-red-200">
+                  <div className="mt-2 rounded border border-red-700 bg-red-950/70 p-2 text-xs text-red-200">
                     Server validation error: {submitError}
                   </div>
                 )}
               </div>
             </div>
           )}
-        </div>
-
-        {/* Footer Controls */}
-        <div
-          className={
-            isMobile
-              ? 'sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-800 bg-zinc-900/95 px-3 py-3 text-xs'
-              : 'flex shrink-0 items-center justify-between border-t border-zinc-800 bg-zinc-900/80 px-4 py-3 text-xs'
-          }
-        >
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={step === 1}
-              onClick={() => setStep((s) => Math.max(1, s - 1) as 1 | 2 | 3 | 4 | 5)}
-              className="flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-semibold hover:bg-zinc-800 disabled:opacity-40"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              Back
-            </button>
-            <button
-              type="button"
-              disabled={step === 5}
-              onClick={() => setStep((s) => Math.min(5, s + 1) as 1 | 2 | 3 | 4 | 5)}
-              className="flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-semibold hover:bg-zinc-800 disabled:opacity-40"
-            >
-              Next
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {!summary.isValid && step !== 5 && !isMobile && (
-              <span className="text-[11px] text-amber-300">
-                {summary.errors.length} rule check(s) remaining
-              </span>
-            )}
-            <button
-              type="button"
-              disabled={!summary.isValid || submitting}
-              onClick={() => void handleSubmitCharacter()}
-              className="rounded-lg bg-emerald-600 px-4 py-2 font-extrabold uppercase tracking-wider text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {submitting ? 'Forging Garou...' : 'Finalize & Save Garou'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

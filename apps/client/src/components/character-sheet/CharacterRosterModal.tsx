@@ -25,8 +25,10 @@ import type { DiscordSessionContext } from '../../discordBootstrap';
 import { useViewportLayout } from '../../hooks/useViewportLayout';
 import {
   type LocalTableSeat,
+  type SheetSaveStatus,
   useCharacterSheetStore,
 } from '../../store/useCharacterSheetStore';
+import { Button, IconButton, Modal } from '../ui';
 import { CharacterCreationWizard } from '../CharacterCreationWizard';
 import {
   formatFormName,
@@ -41,6 +43,14 @@ type MobileRosterTab = 'saved' | 'create' | 'sync';
 interface CharacterRosterModalProps {
   session: DiscordSessionContext;
 }
+
+const SAVE_STATUS_LABELS: Record<SheetSaveStatus, string> = {
+  idle: 'Ready',
+  saving: 'Saving',
+  saved: 'Saved',
+  local_only: 'Saved on this device only',
+  error: 'Could not save',
+};
 
 export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ session }) => {
   const { isMobile } = useViewportLayout();
@@ -627,6 +637,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
               value={syncCodeInput}
               maxLength={12}
               onChange={(e) => setSyncCodeInput(e.target.value.toUpperCase())}
+              aria-label="Sync code"
               placeholder="ABCD-2345"
               className="min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs uppercase tracking-widest text-amber-100 placeholder-stone-500 focus:border-amber-400/75"
             />
@@ -674,24 +685,20 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
     </section>
   );
 
+  const closeRoster = () => setRosterModalOpen(false);
+
   return (
     <>
       {rosterModalOpen && (
-        <div
-          className={
-            isMobile
-              ? 'fixed inset-0 z-drawer flex flex-col bg-obsidian-950'
-              : 'fixed inset-0 z-drawer flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm'
-          }
-        >
-          <div
-            className={
-              isMobile
-                ? 'flex h-[100dvh] w-full flex-col overflow-hidden bg-obsidian-950 text-stone-100'
-                : 'w20-obsidian-panel flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl text-stone-100'
-            }
-          >
-            {/* Header */}
+        <Modal
+          open
+          onClose={closeRoster}
+          title="Garou Roster & Table Seats"
+          variant={isMobile ? 'fullscreen' : 'center'}
+          size="lg"
+          bodyClassName="space-y-4 p-4"
+          renderHeader={(requestClose) => (
+            <>
             <header className="flex shrink-0 items-center justify-between border-b border-amber-500/20 px-4 py-3">
               <div className="flex min-w-0 items-center gap-2.5">
                 <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-red-700/70 bg-red-950/80 text-red-300">
@@ -702,25 +709,24 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                     Garou Roster &amp; Table Seats
                   </h2>
                   <p className="truncate text-xs text-stone-400">
-                    Signed in as {session.username} • Status: {saveStatus.replace('_', ' ')}
+                    Signed in as {session.username} • {SAVE_STATUS_LABELS[saveStatus]}
                   </p>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setRosterModalOpen(false)}
-                className="rounded-lg p-1.5 text-stone-400 hover:bg-zinc-800 hover:text-stone-100"
-                aria-label="Close Roster"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <IconButton
+                label="Close roster"
+                icon={<X className="h-4 w-4" />}
+                size={isMobile ? 'touch' : 'md'}
+                onClick={requestClose}
+              />
             </header>
 
             {/* Feedback Banner */}
             {(errorMessage || statusNote) && (
               <div
-                className={`mx-4 mt-2.5 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
+                role={errorMessage ? 'alert' : 'status'}
+                className={`mx-4 mt-2.5 flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
                   errorMessage
                     ? 'border-red-700/70 bg-red-950/40 text-red-200'
                     : 'border-emerald-700/60 bg-emerald-950/35 text-emerald-200'
@@ -738,7 +744,11 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
             {/* Mobile Segmented Tabs */}
             {isMobile && (
               <div className="shrink-0 border-b border-stone-800 px-4 pt-2.5 pb-2">
-                <div className="grid grid-cols-3 gap-1.5 rounded-xl border border-stone-800 bg-zinc-950 p-1">
+                <div
+                  role="tablist"
+                  aria-label="Roster sections"
+                  className="grid grid-cols-3 gap-1.5 rounded-xl border border-stone-800 bg-zinc-950 p-1"
+                >
                   {(
                     [
                       ['saved', `Saved (${sortedSheets.length})`],
@@ -749,6 +759,8 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                     <button
                       key={tabKey}
                       type="button"
+                      role="tab"
+                      aria-selected={mobileTab === tabKey}
                       onClick={() => setMobileTab(tabKey)}
                       className={`rounded-lg px-2 py-2 text-xs font-bold transition ${
                         mobileTab === tabKey
@@ -763,8 +775,33 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
               </div>
             )}
 
-            {/* Scrollable Body */}
-            <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            </>
+          )}
+          footer={
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs text-stone-400">
+                {seats.length === 1 ? (
+                  <span>
+                    Table:{' '}
+                    <strong className="text-amber-100">
+                      {activeSeat.sheetId && sheetsById[activeSeat.sheetId]
+                        ? sheetsById[activeSeat.sheetId]!.name
+                        : `${activeSeat.playerName} (no character)`}
+                    </strong>
+                  </span>
+                ) : (
+                  <span>
+                    <strong className="text-amber-100">{seats.length}</strong> same-screen seats ready
+                  </span>
+                )}
+              </div>
+
+              <Button variant="primary" size="touch" onClick={closeRoster}>
+                Enter Dice Table
+              </Button>
+            </div>
+          }
+        >
               {seatsPanel}
 
               {isMobile ? (
@@ -780,43 +817,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                   {syncAndBackupSection}
                 </>
               )}
-            </div>
-
-            {/* Footer / Sticky Bottom CTA */}
-            <footer
-              className={
-                isMobile
-                  ? 'sticky bottom-0 z-10 flex shrink-0 items-center justify-between gap-2 border-t border-amber-500/20 bg-zinc-950/95 px-4 py-3'
-                  : 'flex shrink-0 items-center justify-between border-t border-amber-500/20 bg-zinc-950/85 px-4 py-3'
-              }
-            >
-              <div className="text-xs text-stone-400">
-                {seats.length === 1 ? (
-                  <span>
-                    Table:{' '}
-                    <strong className="text-amber-100">
-                      {activeSeat.sheetId && sheetsById[activeSeat.sheetId]
-                        ? sheetsById[activeSeat.sheetId]!.name
-                        : `${activeSeat.playerName} (Unbound)`}
-                    </strong>
-                  </span>
-                ) : (
-                  <span>
-                    <strong className="text-amber-100">{seats.length}</strong> same-screen seats ready
-                  </span>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setRosterModalOpen(false)}
-                className="w20-crimson-seal font-display flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black tracking-widest uppercase text-amber-50"
-              >
-                Enter Dice Table
-              </button>
-            </footer>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {wizardSeatId !== null && (
