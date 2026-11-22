@@ -25,9 +25,16 @@ export const App: React.FC = () => {
     setBootState('loading');
     setBootError(null);
     try {
-      const ctx = await bootstrapDiscordActivity((isLocal, speakingUserId, active) => {
-        useVttRoomStore.getState().setLocalVoiceSpeaking(speakingUserId, isLocal, active);
-      });
+      // Development only: `?mock=1` signs in as a fake player without Discord.
+      const mockSlot = import.meta.env.DEV
+        ? new URLSearchParams(window.location.search).get('mock')
+        : null;
+      const ctx =
+        import.meta.env.DEV && mockSlot !== null
+          ? await (await import('./devMockSession')).bootstrapMockSession(mockSlot)
+          : await bootstrapDiscordActivity((isLocal, speakingUserId, active) => {
+              useVttRoomStore.getState().setLocalVoiceSpeaking(speakingUserId, isLocal, active);
+            });
       setSession(ctx);
       setBootState('ready');
     } catch (err: unknown) {

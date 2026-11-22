@@ -17,6 +17,8 @@ export interface WorkerEnv
   SUPABASE_SERVICE_ROLE_KEY: string;
   SUPABASE_JWT_SECRET: string;
   ALLOWED_REDIRECT_URIS?: string;
+  /** Local development only. '1' enables the mock sign-in route on loopback hosts. */
+  DEV_MOCK_AUTH?: string;
 }
 
 export function jsonResponse(

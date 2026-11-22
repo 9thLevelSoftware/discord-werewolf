@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm --dir ../.. build",
     "dev": "wrangler dev",
+    "dev:mock": "wrangler dev --var DEV_MOCK_AUTH:1",
     "preview": "wrangler preview",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",

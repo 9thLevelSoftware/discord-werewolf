@@ -1,7 +1,8 @@
 import { DiscordSDK, patchUrlMappings } from '@discord/embedded-app-sdk';
 
 export interface DiscordSessionContext {
-  sdk: DiscordSDK;
+  /** Null only for the local development mock session. */
+  sdk: DiscordSDK | null;
   discordAccessToken: string;
   sessionJwt: string;
   supabaseJwt: string;
