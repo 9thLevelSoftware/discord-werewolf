@@ -318,6 +318,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return;
     }
 
+    if (envelope.command.type === 'CLEAR_TABLE_INITIATIVE') {
+      this.handleClearTableInitiative(envelope.reqId);
+      return;
+    }
+
     const isSeqExemptRollCommand =
       envelope.command.type === 'ROLL_FREEFORM_POOL' ||
       envelope.command.type === 'FRENZY_ROLL_CHECK';
@@ -699,6 +704,17 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       }
     }
 
+    // A removed seat also leaves the shared initiative order.
+    const initiativeBefore = this.roomState.tableInitiative ?? [];
+    const initiativeAfter = initiativeBefore.filter(
+      (entry) =>
+        entry.discordUserId !== attachment.discordUserId || keptKeys.has(entry.participantKey),
+    );
+    const initiativeChanged = initiativeAfter.length !== initiativeBefore.length;
+    if (initiativeChanged) {
+      this.roomState.tableInitiative = initiativeAfter;
+    }
+
     this.persistStateSnapshot();
     this.sendEphemeralBroadcast(
       {
@@ -706,6 +722,27 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         participants: Object.values(this.roomState.tableParticipants),
       },
       reqId,
+    );
+    if (initiativeChanged) {
+      this.broadcastTableInitiative();
+    }
+  }
+
+  /** Anyone at the table may clear the order; dice rooms have no storyteller. */
+  private handleClearTableInitiative(reqId: string): void {
+    if ((this.roomState.tableInitiative ?? []).length === 0) return;
+    this.roomState.tableInitiative = [];
+    this.persistStateSnapshot();
+    this.broadcastTableInitiative(reqId);
+  }
+
+  private broadcastTableInitiative(replyToReqId?: string): void {
+    this.sendEphemeralBroadcast(
+      {
+        type: 'TABLE_INITIATIVE_UPDATED',
+        entries: this.roomState.tableInitiative ?? [],
+      },
+      replyToReqId,
     );
   }
 
@@ -833,6 +870,27 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
 
     this.roomState.rollHistory = [historyEntry, ...(this.roomState.rollHistory ?? [])].slice(0, 50);
 
+    // A non-secret initiative roll takes that seat's place in the shared order,
+    // replacing any earlier roll for the same seat. Secret rolls stay private.
+    const recordsInitiative = isInitiative && !isSecretRoll;
+    if (recordsInitiative) {
+      const seatId = normalizeSeatId(command.seatId);
+      const participantKey = buildParticipantKey(attachment.discordUserId, seatId);
+      this.roomState.tableInitiative = [
+        ...(this.roomState.tableInitiative ?? []).filter(
+          (entry) => entry.participantKey !== participantKey,
+        ),
+        {
+          participantKey,
+          discordUserId: attachment.discordUserId,
+          seatId,
+          displayName: rollerName,
+          total: roll.initiativeTotal ?? roll.netSuccesses,
+          rolledAt: historyEntry.timestamp,
+        },
+      ];
+    }
+
     this.commitAndBroadcast(
       [
         {
@@ -854,6 +912,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       ],
       reqId,
     );
+
+    if (recordsInitiative) {
+      this.broadcastTableInitiative();
+    }
 
     if (willpowerSpent) {
       this.sendEphemeralBroadcast({
@@ -964,6 +1026,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       this.roomState.campaignId = campaignId;
       this.roomState.tableParticipants ??= {};
       this.roomState.rollHistory ??= [];
+      this.roomState.tableInitiative ??= [];
       this.persistStateSnapshot();
       return true;
     }
@@ -1419,6 +1482,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       case 'UPDATE_LIGHT_TRACKERS':
       case 'SYNC_CLIENT_SEATS':
       case 'ROLL_TABLE_POOL':
+      case 'CLEAR_TABLE_INITIATIVE':
         return;
 
       case 'TOKEN_MOVE': {

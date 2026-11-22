@@ -15,6 +15,7 @@ import {
 import { useViewportLayout } from '../../hooks/useViewportLayout';
 import { ConfirmButton, IconButton, Modal, toast } from '../ui';
 import { usePopoverDismiss } from '../ui/usePopoverDismiss';
+import { useUiPref } from '../../store/useUiPrefsStore';
 import {
   type SheetRollRequest,
   type SheetSaveStatus,
@@ -24,7 +25,6 @@ import { SheetPageOneCore } from './SheetPageOneCore';
 import { SheetPageTwoTactical } from './SheetPageTwoTactical';
 import { formatFormName, formatTraitName } from './sheetShared';
 
-type DesktopPage = 'page1' | 'page2';
 type MobileSectionTab =
   | 'identity'
   | 'attributes'
@@ -101,8 +101,12 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
     (s) => s.removeShortcutFromActiveSheet
   );
 
-  const [desktopPage, setDesktopPage] = useState<DesktopPage>('page1');
-  const [mobileTab, setMobileTab] = useState<MobileSectionTab>('identity');
+  const [desktopPage, setDesktopPage] = useUiPref('sheetDesktopPage');
+  const [storedMobileTab, setStoredMobileTab] = useUiPref('sheetMobileTab');
+  const mobileTab: MobileSectionTab = MOBILE_TABS.some((t) => t.key === storedMobileTab)
+    ? (storedMobileTab as MobileSectionTab)
+    : 'identity';
+  const setMobileTab = (tab: MobileSectionTab) => setStoredMobileTab(tab);
   const [shareOpen, setShareOpen] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [busySync, setBusySync] = useState(false);

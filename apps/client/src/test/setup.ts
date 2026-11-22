@@ -22,3 +22,34 @@ if (typeof HTMLDialogElement !== 'undefined') {
     };
   }
 }
+
+// Newer Node versions define their own `localStorage` global, which is unusable
+// without a backing file and hides jsdom's. Provide a small in-memory one so code
+// that remembers things on the device can be tested.
+if (typeof window !== 'undefined') {
+  let usable = false;
+  try {
+    usable = typeof window.localStorage?.setItem === 'function';
+  } catch {
+    usable = false;
+  }
+  if (!usable) {
+    const data = new Map<string, string>();
+    const memoryStorage: Storage = {
+      get length() {
+        return data.size;
+      },
+      clear: () => data.clear(),
+      getItem: (key) => (data.has(key) ? data.get(key)! : null),
+      key: (index) => Array.from(data.keys())[index] ?? null,
+      removeItem: (key) => {
+        data.delete(key);
+      },
+      setItem: (key, value) => {
+        data.set(key, String(value));
+      },
+    };
+    Object.defineProperty(window, 'localStorage', { value: memoryStorage, configurable: true });
+    Object.defineProperty(globalThis, 'localStorage', { value: memoryStorage, configurable: true });
+  }
+}

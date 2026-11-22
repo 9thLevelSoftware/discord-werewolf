@@ -45,6 +45,7 @@ import {
 } from './dice-table/rollQueueController';
 import { PackPresenceDrawer } from './dice-table/PackPresenceDrawer';
 import { toast, useToasts } from './ui';
+import { useUiPref } from '../store/useUiPrefsStore';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
 
 interface DiceTableWorkspaceProps {
@@ -113,6 +114,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   const connectionStatus = useVttRoomStore((s) => s.connectionStatus);
   const lastError = useVttRoomStore((s) => s.lastError);
+  const tableInitiative = useVttRoomStore((s) => s.tableInitiative);
+  const clearTableInitiative = useVttRoomStore((s) => s.clearTableInitiative);
 
   // Show each server rejection once as a toast, then clear it.
   useEffect(() => {
@@ -253,16 +256,38 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const [woundOverride, setWoundOverride] = useState<boolean | null>(null);
   const [isSecretRoll, setIsSecretRoll] = useState(false);
   const [rollLabel, setRollLabel] = useState('');
-  const [manualControlsOpen, setManualControlsOpen] = useState(false);
+  const [manualControlsOpen, setManualControlsOpen] = useUiPref('modifiersOpen');
   const [composerAttr, setComposerAttr] = useState<ComposerAttributeKey | ''>('dexterity');
   const [composerAbil, setComposerAbil] = useState('');
 
   // Arena & Drawer state
-  const [packOpen, setPackOpen] = useState(false);
-  const [feedOpen, setFeedOpen] = useState(() =>
-    typeof window !== 'undefined'
+  // Desktop drawers are remembered between sessions. The mobile roll log is a
+  // transient sheet, so it keeps its own state and never overwrites the desktop choice.
+  const [packOpen, setPackOpen] = useUiPref('packOpen');
+  const [desktopFeedPref, setDesktopFeedPref] = useUiPref('feedOpen');
+  const [mobileFeedOpen, setMobileFeedOpen] = useState(false);
+  const desktopFeedOpen =
+    desktopFeedPref ??
+    (typeof window !== 'undefined'
       ? window.innerWidth >= VIEWPORT_BREAKPOINTS.dockedDrawersMinWidth
-      : true
+      : true);
+  const feedOpen = isMobile ? mobileFeedOpen : desktopFeedOpen;
+  const setFeedOpen = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      if (isMobile) {
+        setMobileFeedOpen(next);
+        return;
+      }
+      setDesktopFeedPref((prev) => {
+        const current =
+          prev ??
+          (typeof window !== 'undefined'
+            ? window.innerWidth >= VIEWPORT_BREAKPOINTS.dockedDrawersMinWidth
+            : true);
+        return typeof next === 'function' ? next(current) : next;
+      });
+    },
+    [isMobile, setDesktopFeedPref]
   );
   const [rollStageStatus, setRollStageStatus] = useState<RollStageStatus>({
     isRolling: false,
@@ -356,8 +381,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const prevIsMobileRef = useRef(isMobile);
   useEffect(() => {
     if (!prevIsMobileRef.current && isMobile) {
-      setFeedOpen(false);
-      setPackOpen(false);
+      // Entering the mobile layout starts with its roll log sheet closed.
+      setMobileFeedOpen(false);
     }
     prevIsMobileRef.current = isMobile;
   }, [isMobile]);
@@ -1170,6 +1195,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     lastError,
     webglReady,
     sortedParticipants,
+    tableInitiative,
+    onClearTableInitiative: clearTableInitiative,
     speakingDiscordIds,
     seats,
     activeSeat,
@@ -1261,6 +1288,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
           open={packOpen}
           currentUserId={session.userId}
           sortedParticipants={sortedParticipants}
+          tableInitiative={tableInitiative}
+          onClearTableInitiative={clearTableInitiative}
           speakingDiscordIds={speakingDiscordIds}
           seats={seats}
           activeSeatId={activeSeat.seatId}

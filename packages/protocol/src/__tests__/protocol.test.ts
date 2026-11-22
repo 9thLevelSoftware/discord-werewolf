@@ -819,4 +819,16 @@ describe('@w20-vtt/protocol parseClientEnvelope & schemas', () => {
       }).success
     ).toBe(false);
   });
+
+  it('accepts CLEAR_TABLE_INITIATIVE with no extra fields', () => {
+    const parsed = parseClientEnvelope(
+      JSON.stringify({
+        reqId: 'req-clear-init',
+        expectedSeq: 0,
+        sentAt: 1,
+        command: { type: 'CLEAR_TABLE_INITIATIVE' },
+      }),
+    );
+    expect(parsed.success).toBe(true);
+  });
 });

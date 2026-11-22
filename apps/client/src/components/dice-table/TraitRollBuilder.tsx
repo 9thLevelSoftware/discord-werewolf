@@ -237,7 +237,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
   const formPerceptionDiff = Math.max(2, Math.min(10, 6 + selection.perceptionFormMod));
 
   return (
-    <div ref={containerRef} className="relative flex min-w-[430px] flex-1 items-center gap-2">
+    <div ref={containerRef} className="relative flex min-w-[min(430px,100%)] flex-1 flex-wrap items-center gap-2">
       {/* Attribute / Inner Trait Pill + Popover */}
       <div className="relative flex min-w-[130px] flex-1 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
         <button
