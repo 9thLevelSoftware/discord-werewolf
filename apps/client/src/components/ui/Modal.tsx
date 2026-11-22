@@ -52,10 +52,10 @@ const DIALOG_VARIANT: Record<ModalVariant, string> = {
 };
 
 const PANEL_VARIANT: Record<ModalVariant, string> = {
-  center: 'w20-obsidian-panel flex max-h-[94dvh] flex-col overflow-hidden rounded-2xl',
+  center: 'w20-obsidian-panel animate-pop-in flex max-h-[94dvh] flex-col overflow-hidden rounded-2xl',
   fullscreen: 'flex h-dvh flex-col overflow-hidden bg-obsidian-950',
   sheet:
-    'w20-obsidian-panel pb-safe flex max-h-[84dvh] flex-col overflow-hidden rounded-t-2xl border-x-0 border-b-0',
+    'w20-obsidian-panel animate-sheet-up pb-safe flex max-h-[84dvh] flex-col overflow-hidden rounded-t-2xl border-x-0 border-b-0',
 };
 
 /**

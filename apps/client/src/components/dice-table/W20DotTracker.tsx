@@ -242,7 +242,7 @@ export const PersonalTrackersControl: React.FC<PersonalTrackersControlProps> = (
         <div
           role="dialog"
           aria-label="Rage, Gnosis, Willpower and wound trackers"
-          className="w20-obsidian-panel absolute right-0 top-full z-modal mt-2 w-[310px] rounded-xl p-3.5 shadow-2xl"
+          className="w20-obsidian-panel animate-pop-in absolute right-0 top-full z-modal mt-2 w-[310px] rounded-xl p-3.5 shadow-2xl"
         >
           <PersonalTrackersPanel
             trackers={trackers}

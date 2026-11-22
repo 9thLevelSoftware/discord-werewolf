@@ -349,6 +349,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
       {/* Compact Roll Result Plaque */}
       {activeBanner && (
         <RollResultPlaque
+          key={activeBanner.id}
           banner={activeBanner}
           compact
           onDismiss={onDismissBanner}

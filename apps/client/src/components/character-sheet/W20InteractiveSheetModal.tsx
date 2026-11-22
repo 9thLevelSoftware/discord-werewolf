@@ -182,7 +182,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
       <div
         role="dialog"
         aria-label="Sync code and backup"
-        className="w20-obsidian-panel absolute right-0 top-full z-modal mt-2 w-72 rounded-xl p-3 text-xs shadow-2xl"
+        className="w20-obsidian-panel animate-pop-in absolute right-0 top-full z-modal mt-2 w-72 rounded-xl p-3 text-xs shadow-2xl"
       >
         <div className="flex items-center justify-between pb-2">
           <span className="flex items-center gap-1.5 font-display text-xs font-bold uppercase text-amber-200">

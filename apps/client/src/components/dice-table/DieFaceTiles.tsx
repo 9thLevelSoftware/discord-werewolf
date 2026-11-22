@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import type { W20RollResult } from '@w20-vtt/core';
-import { EyeOff, X } from 'lucide-react';
+import { Check, EyeOff, Skull, X, Zap } from 'lucide-react';
 import type { Queued3DRoll } from '../../store/useVttRoomStore';
 
 export interface DecoratedDie {
@@ -201,6 +201,42 @@ interface RollResultPlaqueProps {
   topOffset?: number;
 }
 
+type PlaqueTone = 'success' | 'failure' | 'botch' | 'initiative';
+
+const PLAQUE_TONES: Record<
+  PlaqueTone,
+  { border: string; numeral: string; word: string; Icon: typeof Check }
+> = {
+  success: {
+    border: '!border-emerald-500/70',
+    numeral: 'border-emerald-500/60 bg-emerald-950/60 text-emerald-200 shadow-glow-emerald',
+    word: 'text-emerald-300',
+    Icon: Check,
+  },
+  failure: {
+    border: '!border-stone-600/80',
+    numeral: 'border-stone-600 bg-obsidian-900 text-stone-300',
+    word: 'text-stone-300',
+    Icon: X,
+  },
+  botch: {
+    border: '!border-red-500/85',
+    numeral: 'border-red-500/70 bg-red-950/70 text-red-200 shadow-glow-crimson',
+    word: 'text-red-300',
+    Icon: Skull,
+  },
+  initiative: {
+    border: '!border-amber-400/80',
+    numeral: 'border-amber-400/70 bg-amber-950/60 text-amber-100 shadow-glow-gold',
+    word: 'text-amber-200',
+    Icon: Zap,
+  },
+};
+
+/**
+ * The result of a roll, shown over the felt. The outcome is carried three ways at
+ * once (a large number, an icon and a word) so it never depends on colour alone.
+ */
 export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
   banner,
   onDismiss,
@@ -214,115 +250,111 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
   const initMod = banner.roll.initiativeModifier ?? 0;
   const initTotal = banner.roll.initiativeTotal ?? initDie + initMod;
   const modExpr = initMod >= 0 ? `+ ${initMod}` : `- ${Math.abs(initMod)}`;
+  const net = banner.roll.netSuccesses;
 
-  const accentBorder = isInitiative
-    ? '!border-amber-400/80'
+  const tone: PlaqueTone = isInitiative
+    ? 'initiative'
     : banner.roll.isBotch
-      ? '!border-red-500/85'
-      : banner.roll.netSuccesses > 0
-        ? '!border-emerald-500/70'
-        : '';
+      ? 'botch'
+      : net > 0
+        ? 'success'
+        : 'failure';
+  const toneStyle = PLAQUE_TONES[tone];
+  const ToneIcon = toneStyle.Icon;
 
-  const summaryText = isInitiative
-    ? `Initiative: ${initTotal}`
+  const numeral = isInitiative ? initTotal : banner.roll.isBotch ? 0 : net;
+  const numeralCaption = isInitiative ? 'total' : net === 1 ? 'success' : 'successes';
+
+  const outcomeWord = isInitiative
+    ? 'Initiative'
     : banner.roll.isBotch
-      ? compact
-        ? 'Botch!'
-        : 'Catastrophic Botch'
-      : banner.roll.netSuccesses > 0
-        ? compact
-          ? `${banner.roll.netSuccesses} Net (${banner.roll.outcome})`
-          : `${banner.roll.netSuccesses} Net ${
-              banner.roll.netSuccesses === 1 ? 'Success' : 'Successes'
-            } (${banner.roll.outcome})`
-        : compact
-          ? 'Failure (0 Net)'
-          : 'Failure — 0 Net Successes';
+      ? 'Botch'
+      : net > 0
+        ? `${banner.roll.outcome} success`
+        : 'Failure';
 
   return (
     <div
-      onClick={onDismiss}
       role="status"
       aria-live="polite"
       style={!compact && topOffset !== undefined ? { top: topOffset } : undefined}
-      className={`w20-obsidian-panel absolute left-1/2 z-20 -translate-x-1/2 cursor-pointer transition hover:brightness-105 ${
+      className={`w20-obsidian-panel animate-plaque-in absolute left-1/2 z-20 -translate-x-1/2 ${
         compact
-          ? 'top-14 mt-[env(safe-area-inset-top,0px)] w-[min(94%,440px)] rounded-xl px-3 py-2'
-          : 'top-16 w-[min(92%,560px)] rounded-2xl px-4 py-3'
-      } ${accentBorder}`}
+          ? 'top-14 mt-[env(safe-area-inset-top,0px)] w-[min(94%,440px)] rounded-xl px-3 py-2.5'
+          : 'top-16 w-[min(92%,560px)] rounded-2xl px-4 py-3.5'
+      } ${toneStyle.border}`}
     >
-      <div className={`flex items-start justify-between ${compact ? 'gap-2' : 'gap-4'}`}>
-        <div className={`flex min-w-0 items-center ${compact ? 'gap-2' : 'gap-3'}`}>
-          <ParticipantAvatar
-            name={banner.rollerName ?? 'Player'}
-            avatarUrl={banner.rollerAvatarUrl ?? null}
-            sizeClass={compact ? 'h-7 w-7 shrink-0' : 'h-9 w-9 shrink-0'}
-          />
-          <div className="min-w-0">
-            <div
-              className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium text-stone-300 ${
-                compact ? 'text-xs' : 'text-xs'
-              }`}
-            >
-              <span className="max-w-[140px] truncate font-bold text-amber-100">
-                {banner.rollerName ?? 'Player'}
+      <div className={`flex items-stretch ${compact ? 'gap-2.5' : 'gap-3.5'}`}>
+        {/* The number: the first thing read from across the room. */}
+        <div
+          className={`flex shrink-0 flex-col items-center justify-center rounded-xl border ${
+            compact ? 'h-14 w-[4.5rem]' : 'h-[4.5rem] w-20'
+          } ${toneStyle.numeral}`}
+        >
+          <span
+            className={`font-display font-black leading-none tabular-nums ${
+              compact ? 'text-3xl' : 'text-4xl'
+            }`}
+          >
+            {numeral}
+          </span>
+          <span className="mt-0.5 text-xs font-semibold leading-none opacity-90">
+            {numeralCaption}
+          </span>
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col justify-center">
+          <p
+            className={`font-display flex items-center gap-1.5 font-black tracking-wide uppercase ${
+              compact ? 'text-base leading-tight' : 'text-lg leading-tight'
+            } ${toneStyle.word}`}
+          >
+            <ToneIcon className={compact ? 'h-4 w-4 shrink-0' : 'h-5 w-5 shrink-0'} />
+            <span className="truncate">{outcomeWord}</span>
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-stone-300">
+            <ParticipantAvatar
+              name={banner.rollerName ?? 'Player'}
+              avatarUrl={banner.rollerAvatarUrl ?? null}
+              sizeClass="h-5 w-5 shrink-0"
+            />
+            <span className="max-w-[140px] truncate font-bold text-amber-100">
+              {banner.rollerName ?? 'Player'}
+            </span>
+            <span className="max-w-[160px] truncate">{banner.label}</span>
+            <span className="font-mono text-amber-300/90">
+              {isInitiative
+                ? `1d10 [${initDie}] ${modExpr}`
+                : `Diff ${banner.roll.clampedDifficulty}`}
+            </span>
+            {banner.isSecretRoll && (
+              <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-500/50 bg-amber-950/80 px-1.5 py-0.5 text-xs font-bold text-amber-200">
+                <EyeOff className="h-2.5 w-2.5" /> Secret
               </span>
-              <span className="text-stone-500">•</span>
-              <span className="max-w-[140px] truncate">{banner.label}</span>
-              <span className="text-stone-500">•</span>
-              <span className="font-mono text-amber-300/90">
-                {isInitiative
-                  ? `1d10 [${initDie}] ${modExpr}`
-                  : `Diff ${banner.roll.clampedDifficulty}`}
+            )}
+            {!isInitiative && banner.roll.automaticSuccesses > 0 && (
+              <span className="rounded-full border border-indigo-400/50 bg-indigo-950/80 px-1.5 py-0.5 text-xs font-bold text-indigo-200">
+                +{banner.roll.automaticSuccesses} Willpower
               </span>
-              {banner.isSecretRoll && (
-                <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-500/50 bg-amber-950/80 px-1.5 py-0.5 text-xs font-bold text-amber-200">
-                  <EyeOff className="h-2.5 w-2.5" /> Secret
-                </span>
-              )}
-            </div>
-            <p
-              className={`font-display mt-0.5 font-black tracking-wide uppercase ${
-                compact ? 'text-sm leading-tight' : 'text-base'
-              } ${
-                isInitiative
-                  ? 'text-amber-200'
-                  : banner.roll.isBotch
-                    ? 'text-red-300'
-                    : banner.roll.netSuccesses > 0
-                      ? 'text-emerald-300'
-                      : 'text-stone-300'
-              }`}
-            >
-              {summaryText}
-            </p>
+            )}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {!isInitiative && banner.roll.automaticSuccesses > 0 && (
-            <span className="rounded-full border border-indigo-400/50 bg-indigo-950/80 px-2 py-0.5 text-xs font-bold text-indigo-200">
-              +{banner.roll.automaticSuccesses} WP
-            </span>
-          )}
-          <button
-            type="button"
-            aria-label={
-              queuedCount > 0 ? 'Dismiss result and show the next roll' : 'Dismiss roll result'
-            }
-            title="Dismiss (the dice stay on the felt)"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDismiss();
-            }}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-300 transition hover:bg-obsidian-800 hover:text-parchment"
-          >
-            <X className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
-          </button>
-        </div>
+
+        <button
+          type="button"
+          aria-label={
+            queuedCount > 0 ? 'Dismiss result and show the next roll' : 'Dismiss roll result'
+          }
+          title="Dismiss (the dice stay on the felt)"
+          onClick={onDismiss}
+          className="flex h-8 w-8 shrink-0 items-center justify-center self-start rounded-lg text-stone-300 transition hover:bg-obsidian-800 hover:text-parchment"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
 
       {banner.roll.dice.length > 0 && (
-        <div className={compact ? 'mt-1.5' : 'mt-2.5'}>
+        <div className={compact ? 'mt-2' : 'mt-3'}>
           <AuthoritativeDieChips
             roll={banner.roll}
             rageDiceCount={banner.rageDiceCount ?? 0}
@@ -333,19 +365,21 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
 
       {queuedCount > 0 && (
         <div
-          className={`flex items-center justify-between gap-2 border-t border-amber-500/20 pt-1.5 ${
-            compact ? 'mt-1.5 text-xs' : 'mt-2.5 text-xs'
+          className={`flex items-center justify-between gap-2 border-t border-amber-500/20 text-xs ${
+            compact ? 'mt-2 pt-2' : 'mt-3 pt-2.5'
           }`}
         >
           <p className="min-w-0 truncate text-stone-300">
-            <span className="font-mono font-extrabold text-amber-300">
-              +{queuedCount} queued
-            </span>
+            <span className="font-mono font-extrabold text-amber-300">+{queuedCount} waiting</span>
             {nextQueuedLabel ? ` • Next: ${nextQueuedLabel}` : ''}
           </p>
-          <span className="shrink-0 font-semibold text-amber-200/85">
-            {compact ? 'Tap next ›' : 'Click to advance ›'}
-          </span>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="flex h-7 shrink-0 items-center rounded-lg border border-gold-500/45 bg-obsidian-900 px-2.5 font-semibold text-gold-200 transition hover:border-gold-300"
+          >
+            Show next roll
+          </button>
         </div>
       )}
     </div>
