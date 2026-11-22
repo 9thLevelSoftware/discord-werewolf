@@ -17,6 +17,11 @@ import {
   type XpSpendCategory,
 } from '@w20-vtt/core';
 import { W20UserCharacterSheetSchema } from '@w20-vtt/protocol';
+import {
+  handleDevMockSession,
+  isDevMockAuthEnabled,
+  rejectMockSessionCloudAccess,
+} from './devMockAuth';
 import { handleDiscordInteraction } from './discordBotBridge';
 import {
   handleDiscordTokenExchange,
@@ -966,6 +971,16 @@ export default {
       }
       if (pathname === '/api/discord-interactions' && request.method === 'POST') {
         return await handleDiscordInteraction(request, env);
+      }
+
+      if (isDevMockAuthEnabled(request, env)) {
+        if (pathname === '/api/dev/mock-session' && request.method === 'POST') {
+          return await handleDevMockSession(request, env);
+        }
+        if (pathname.startsWith('/api/')) {
+          const blocked = await rejectMockSessionCloudAccess(request, env);
+          if (blocked) return blocked;
+        }
       }
 
       if (pathname === '/api/me/character-sheets' && request.method === 'GET') {
