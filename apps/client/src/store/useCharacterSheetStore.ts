@@ -12,6 +12,7 @@ import {
   normalizeSyncCode,
   SheetShortcut,
   sheetToLightTrackers,
+  TableRollMode,
   W20CharacterCreationDraft,
   W20UserCharacterSheet,
 } from '@w20-vtt/core';
@@ -38,6 +39,8 @@ export interface SheetRollRequest {
   applyWoundPenalty: boolean;
   rageDiceCount?: number;
   isSecretRoll?: boolean;
+  rollMode?: TableRollMode;
+  initiativeModifier?: number;
 }
 
 export type SheetSaveStatus = 'idle' | 'saving' | 'saved' | 'local_only' | 'error';

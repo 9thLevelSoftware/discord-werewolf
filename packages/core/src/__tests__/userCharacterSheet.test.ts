@@ -3,6 +3,7 @@ import type { W20CharacterCreationDraft } from '../characterCreation';
 import {
   buildDefaultSheetShortcuts,
   CANONICAL_GIFT_CATALOG,
+  cleanOtherTraitDisplayName,
   computeUserSheetStats,
   createBlankUserCharacterSheet,
   draftToUserCharacterSheet,
@@ -10,12 +11,14 @@ import {
   generateRandomSyncCode,
   lookupSheetAbilityDots,
   normalizeSyncCode,
+  resolveOtherTraitKind,
   resolveSheetShortcut,
   sheetToLightTrackers,
   SYNC_CODE_ALPHABET,
   type SheetShortcut,
   type W20UserCharacterSheet,
 } from '../userCharacterSheet';
+import { W20_BACKGROUND_CATALOG, W20_MERITS_FLAWS_CATALOG } from '../characterCreation';
 
 function makeValidDraft(
   overrides: Partial<W20CharacterCreationDraft> = {}
@@ -676,5 +679,52 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
     expect(randomCode).toHaveLength(8);
     expect(normalizeSyncCode(randomCode)).toBe(randomCode);
     expect(formatSyncCode(randomCode)).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  });
+
+  it('includes Fate & expanded W20 Backgrounds, preserves custom labels, and differentiates Merits vs Flaws', () => {
+    expect(W20_BACKGROUND_CATALOG.some((b) => b.key === 'fate' && b.label === 'Fate')).toBe(true);
+    expect(W20_BACKGROUND_CATALOG.filter((b) => b.tier === 'core')).toHaveLength(12);
+    expect(W20_BACKGROUND_CATALOG.filter((b) => b.tier === 'expanded')).toHaveLength(12);
+    expect(W20_MERITS_FLAWS_CATALOG.some((m) => m.kind === 'merit')).toBe(true);
+    expect(W20_MERITS_FLAWS_CATALOG.some((m) => m.kind === 'flaw')).toBe(true);
+
+    const draft = makeValidDraft({
+      priorityBackgroundDots: {
+        fate: 2,
+        custom_klaive_bond: 3,
+      },
+      freebieBackgroundDots: {},
+      customBackgroundLabels: {
+        custom_klaive_bond: 'Klaive Bond',
+      },
+      meritsAndFlaws: [
+        { id: 'merit-1', name: 'Acute Senses', kind: 'merit', pointValue: 1, category: 'physical' },
+        { id: 'flaw-1', name: 'Dark Fate', kind: 'flaw', pointValue: 5, category: 'supernatural' },
+      ],
+    });
+
+    const sheet = draftToUserCharacterSheet(draft, {
+      id: 'sheet-bg-merits',
+      ownerDiscordId: 'discord-42',
+    });
+
+    expect(sheet.backgrounds).toEqual(
+      expect.arrayContaining([
+        { id: 'fate', name: 'Fate', dots: 2 },
+        { id: 'custom_klaive_bond', name: 'Klaive Bond', dots: 3 },
+      ])
+    );
+
+    expect(sheet.otherTraits).toEqual([
+      { id: 'merit-1', name: 'Acute Senses', dots: 1, kind: 'merit', category: 'physical' },
+      { id: 'flaw-1', name: 'Dark Fate', dots: 5, kind: 'flaw', category: 'supernatural' },
+    ]);
+
+    expect(resolveOtherTraitKind({ name: 'Acute Senses', kind: 'merit' })).toBe('merit');
+    expect(resolveOtherTraitKind({ name: 'Acute Senses (Merit)' })).toBe('merit');
+    expect(resolveOtherTraitKind({ name: 'Dark Fate (Flaw)' })).toBe('flaw');
+    expect(resolveOtherTraitKind({ name: 'Silver Tolerance' })).toBe('other');
+    expect(cleanOtherTraitDisplayName('Acute Senses (Merit)')).toBe('Acute Senses');
+    expect(cleanOtherTraitDisplayName('Dark Fate (Flaw)')).toBe('Dark Fate');
   });
 });

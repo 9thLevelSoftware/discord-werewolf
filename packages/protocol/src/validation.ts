@@ -279,10 +279,15 @@ export const SheetRiteEntrySchema = z.object({
   summary: z.string().max(2000),
 });
 
+export const OtherTraitKindSchema = z.enum(['merit', 'flaw', 'other']);
+export const MeritFlawCategorySchema = z.enum(['physical', 'mental', 'social', 'supernatural']);
+
 export const SheetOtherTraitEntrySchema = z.object({
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   dots: DotRatingSchema,
+  kind: OtherTraitKindSchema.optional(),
+  category: MeritFlawCategorySchema.optional(),
 });
 
 export const SheetWeaponEntrySchema = z.object({
@@ -455,6 +460,8 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
     hasSpecialty: z.boolean(),
     spendWillpower: z.boolean(),
     applyWoundPenalty: z.boolean(),
+    rollMode: z.enum(['pool', 'initiative']).optional(),
+    initiativeModifier: z.number().int().min(-30).max(50).optional(),
     label: z.string().max(120).optional(),
     isSecretRoll: z.boolean().optional(),
     physicalDiceValues: z.array(z.number().int().min(1).max(10)).max(30).optional(),

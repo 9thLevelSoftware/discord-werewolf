@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createPhysicsSeed,
   resolveW20DicePool,
+  resolveW20InitiativeRoll,
   rollCsprngD10,
   validateResourceSpend,
 } from '../diceResolver';
@@ -187,5 +188,40 @@ describe('W20 d10 Dice Pool Resolver & Golden Rule', () => {
       'gnosis'
     );
     expect(gnosisAfterRage.allowed).toBe(false);
+  });
+
+  it('resolves canonical W20 Initiative (1d10 + Dex + Wits + mod) without botches or doubled 10s', () => {
+    const rolledOne = resolveW20InitiativeRoll(
+      { label: 'Initiative', initiativeModifier: 7 },
+      seqRng([1])
+    );
+    expect(rolledOne.rollMode).toBe('initiative');
+    expect(rolledOne.effectivePool).toBe(1);
+    expect(rolledOne.dice).toHaveLength(1);
+    expect(rolledOne.dice[0]).toMatchObject({
+      value: 1,
+      isOne: false,
+      contributedSuccesses: 0,
+    });
+    expect(rolledOne.onesRolled).toBe(0);
+    expect(rolledOne.isBotch).toBe(false);
+    expect(rolledOne.initiativeModifier).toBe(7);
+    expect(rolledOne.initiativeTotal).toBe(8);
+    expect(rolledOne.netSuccesses).toBe(8);
+
+    const rolledTen = resolveW20InitiativeRoll(
+      { label: 'Initiative', initiativeModifier: 6 },
+      seqRng([10])
+    );
+    expect(rolledTen.rollMode).toBe('initiative');
+    expect(rolledTen.dice).toHaveLength(1);
+    expect(rolledTen.initiativeTotal).toBe(16);
+
+    const heavilyWounded = resolveW20InitiativeRoll(
+      { label: 'Initiative', initiativeModifier: -3 },
+      seqRng([2])
+    );
+    expect(heavilyWounded.isBotch).toBe(false);
+    expect(heavilyWounded.initiativeTotal).toBe(-1);
   });
 });

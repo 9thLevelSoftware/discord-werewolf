@@ -9,6 +9,7 @@ import type {
   ReactionChoice,
   RealmLayer,
   SpecialtyMode,
+  TableRollMode,
   W20CharacterState,
   W20MacroDefinition,
   W20RollResult,
@@ -176,6 +177,8 @@ export type ClientCommand =
       hasSpecialty: boolean;
       spendWillpower: boolean;
       applyWoundPenalty: boolean;
+      rollMode?: TableRollMode;
+      initiativeModifier?: number;
       label?: string;
       isSecretRoll?: boolean;
       physicalDiceValues?: number[];

@@ -177,11 +177,15 @@ export interface CharacterFetishEntry {
   systemSummary: string;
 }
 
+export type MeritFlawCategory = 'physical' | 'mental' | 'social' | 'supernatural';
+
 export interface MeritOrFlawChoice {
   id: string;
   name: string;
   kind: 'merit' | 'flaw';
   pointValue: number; // Positive integer 1..7
+  category?: MeritFlawCategory;
+  summary?: string;
 }
 
 export interface W20CharacterState {

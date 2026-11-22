@@ -27,6 +27,7 @@ type MobileSectionTab =
   | 'identity'
   | 'attributes'
   | 'abilities'
+  | 'bg_merits'
   | 'vitals'
   | 'forms'
   | 'combat_gifts';
@@ -35,6 +36,7 @@ const MOBILE_TABS: readonly { key: MobileSectionTab; label: string }[] = [
   { key: 'identity', label: 'Identity' },
   { key: 'attributes', label: 'Attributes' },
   { key: 'abilities', label: 'Abilities' },
+  { key: 'bg_merits', label: 'Bg & Merits' },
   { key: 'vitals', label: 'Vitals' },
   { key: 'forms', label: 'Forms' },
   { key: 'combat_gifts', label: 'Combat & Gifts' },
@@ -376,15 +378,15 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
               </div>
             )}
 
-            {/* 6 Thumb-Friendly Section Tabs */}
+            {/* Thumb-Friendly Wrapping Section Tabs */}
             {activeSheet && (
-              <nav className="mt-2 flex gap-1 overflow-x-auto pb-0.5">
+              <nav className="mt-2 flex flex-wrap gap-1.5">
                 {MOBILE_TABS.map((tab) => (
                   <button
                     key={tab.key}
                     type="button"
                     onClick={() => setMobileTab(tab.key)}
-                    className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                    className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
                       mobileTab === tab.key
                         ? 'bg-red-800 text-amber-50 shadow'
                         : 'border border-stone-800 bg-zinc-900/90 text-stone-400'
@@ -561,6 +563,34 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                   onPinShortcut={pinShortcutToActiveSheet}
                   onRemoveShortcut={removeShortcutFromActiveSheet}
                 />
+              )}
+
+              {mobileTab === 'bg_merits' && (
+                <div className="space-y-4">
+                  <SheetPageOneCore
+                    key={`${activeSheet.id}-bg`}
+                    sheet={activeSheet}
+                    stats={stats}
+                    isMobile
+                    mobileSection="bg_merits"
+                    onUpdateSheet={(updater) => updateSheet(activeSheet.id, updater)}
+                    onRoll={handleRoll}
+                    onPinShortcut={pinShortcutToActiveSheet}
+                    onRemoveShortcut={removeShortcutFromActiveSheet}
+                  />
+                  <SheetPageTwoTactical
+                    key={`${activeSheet.id}-merits`}
+                    sheet={activeSheet}
+                    stats={stats}
+                    isMobile
+                    mobileSection="bg_merits"
+                    onUpdateSheet={(updater) => updateSheet(activeSheet.id, updater)}
+                    onSetActiveForm={setActiveSheetForm}
+                    onRoll={handleRoll}
+                    onPinShortcut={pinShortcutToActiveSheet}
+                    onRemoveShortcut={removeShortcutFromActiveSheet}
+                  />
+                </div>
               )}
 
               {mobileTab === 'forms' && (

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   type GarouForm,
   type ResolvedSheetShortcut,
@@ -6,7 +6,17 @@ import {
   type W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import type { LightGarouTrackers, TableParticipant } from '@w20-vtt/protocol';
-import { BookmarkPlus, Check, EyeOff, Sparkles, X } from 'lucide-react';
+import {
+  BookmarkPlus,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  EyeOff,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { create } from 'zustand';
 import type { DiceSoundPreferences } from '../../audio/DiceSoundEngine';
 import type { DiscordSessionContext } from '../../discordBootstrap';
@@ -105,6 +115,9 @@ export interface DiceTableHudProps {
   onSetRollLabel: (label: string) => void;
   onSetManualControlsOpen: React.Dispatch<React.SetStateAction<boolean>>;
   onExecuteRoll: () => void;
+  initiativeModifier: number;
+  initiativeFormula: string;
+  onRollInitiative: () => void;
   onTriggerPreset: (preset: QuickRollPreset) => void;
   onTriggerResolvedShortcut: (resolved: ResolvedSheetShortcut) => void;
   onRemoveSheetShortcut: (shortcutId: string) => void;
@@ -286,6 +299,12 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
 
   const [namingOpen, setNamingOpen] = useState(false);
   const [draftName, setDraftName] = useState('');
+  const [expanded, setExpanded] = useState(!compact);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setExpanded(!compact);
+  }, [compact]);
 
   useEffect(() => {
     if (!activeSheet) {
@@ -301,6 +320,20 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
     if (!activeSheet) return [];
     return activeSheet.shortcuts.map((sc) => resolveSheetShortcut(activeSheet, sc));
   }, [activeSheet]);
+
+  const itemCount = activeSheet ? resolvedShortcuts.length : presets.length;
+  const showExpandToggle = itemCount > (compact ? 2 : 4);
+
+  const handleWheelScroll = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (expanded || !scrollRef.current) return;
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      scrollRef.current.scrollLeft += e.deltaY;
+    }
+  };
+
+  const nudgeScroll = (delta: number) => {
+    scrollRef.current?.scrollBy({ left: delta, behavior: 'smooth' });
+  };
 
   const savePresetWithName = (rawName: string) => {
     const cleanName = rawName.trim();
@@ -332,176 +365,236 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
   const pillBtnClass = compact ? 'py-1 pl-2 pr-1 min-h-[30px]' : 'py-1 pl-2.5 pr-1.5';
 
   return (
-    <div
-      className={`no-scrollbar flex min-w-0 items-center gap-1.5 overflow-x-auto ${
-        compact ? '' : 'pb-0.5'
-      }`}
-    >
+    <div className="flex min-w-0 items-start gap-1.5">
       {!compact && (
-        <span className="font-display shrink-0 text-[10px] font-bold tracking-wider uppercase text-amber-300/75">
+        <span className="font-display shrink-0 pt-1.5 text-[10px] font-bold tracking-wider uppercase text-amber-300/75">
           {activeSheet ? 'Pinned Rolls' : 'Quick Rolls'}
         </span>
       )}
 
-      {activeSheet ? (
-        resolvedShortcuts.length === 0 ? (
-          <span className="shrink-0 text-[10px] italic text-stone-500">
-            No pinned rolls — click Pin to save any Trait + Skill setup
-          </span>
-        ) : (
-          resolvedShortcuts.map((resolved) => {
-            const sc = resolved.shortcut;
-            const tooltip = [
-              resolved.label !== sc.name ? `${resolved.label}` : '',
-              resolved.formulaSummary,
-              resolved.specialtyReason ? `Specialty: ${resolved.specialtyReason}` : '',
-              `Diff ${resolved.difficulty}`,
-            ]
-              .filter(Boolean)
-              .join(' • ');
+      {!expanded && !compact && itemCount > 2 && (
+        <button
+          type="button"
+          onClick={() => nudgeScroll(-160)}
+          aria-label="Scroll pinned rolls left"
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-stone-700/80 bg-zinc-950/90 text-stone-300 hover:border-amber-400/60 hover:text-amber-200"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+      )}
 
-            return (
+      <div
+        ref={scrollRef}
+        onWheel={handleWheelScroll}
+        className={
+          expanded
+            ? `w20-thin-scrollbar flex min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-y-auto pr-1 ${
+                compact ? 'max-h-[124px] py-0.5' : 'max-h-[96px]'
+              }`
+            : `w20-thin-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5`
+        }
+      >
+        {activeSheet ? (
+          resolvedShortcuts.length === 0 ? (
+            <span className="shrink-0 text-[10px] italic text-stone-500">
+              No pinned rolls — click Pin to save any Trait + Skill setup
+            </span>
+          ) : (
+            resolvedShortcuts.map((resolved) => {
+              const sc = resolved.shortcut;
+              const tooltip = [
+                resolved.label !== sc.name ? `${resolved.label}` : '',
+                resolved.formulaSummary,
+                resolved.specialtyReason ? `Specialty: ${resolved.specialtyReason}` : '',
+                `Diff ${resolved.difficulty}`,
+              ]
+                .filter(Boolean)
+                .join(' • ');
+
+              return (
+                <div
+                  key={sc.id}
+                  className={`group flex shrink-0 items-center rounded-full border border-stone-700/80 bg-zinc-950/90 ${pillTextClass} transition hover:border-amber-500/60`}
+                >
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onTriggerResolvedShortcut(resolved)}
+                    className={`flex items-center gap-1.5 ${pillBtnClass} text-left disabled:opacity-50`}
+                    title={tooltip}
+                  >
+                    <span className="max-w-[130px] truncate font-semibold text-stone-100">
+                      {sc.name}
+                    </span>
+                    <span
+                      className={`font-mono text-[10px] font-bold ${
+                        resolved.effectivePool <= 0 ? 'text-red-400' : 'text-amber-300'
+                      }`}
+                    >
+                      {resolved.effectivePool}d10
+                    </span>
+                    {resolved.difficulty !== 6 && (
+                      <span className="font-mono text-[9px] text-stone-400">
+                        D{resolved.difficulty}
+                      </span>
+                    )}
+                    {resolved.rageDiceCount > 0 && (
+                      <span className="font-mono text-[9px] text-red-400">
+                        {resolved.rageDiceCount}R
+                      </span>
+                    )}
+                    {resolved.hasSpecialty && <Sparkles className="h-2.5 w-2.5 text-amber-400" />}
+                    {resolved.isSecretRoll && <EyeOff className="h-2.5 w-2.5 text-amber-300" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveSheetShortcut(sc.id)}
+                    aria-label={`Remove ${sc.name}`}
+                    className="mr-1 rounded-full p-0.5 text-stone-500 hover:bg-red-950/70 hover:text-red-300"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              );
+            })
+          )
+        ) : (
+          <>
+            {presets.map((preset) => (
               <div
-                key={sc.id}
-                className={`group flex shrink-0 items-center rounded-full border border-stone-700/80 bg-zinc-950/90 ${pillTextClass} transition hover:border-amber-500/60`}
+                key={preset.id}
+                className={`group flex shrink-0 items-center rounded-full border border-stone-700/75 bg-zinc-950/90 ${pillTextClass} transition hover:border-amber-500/55`}
               >
                 <button
                   type="button"
                   disabled={disabled}
-                  onClick={() => onTriggerResolvedShortcut(resolved)}
+                  onClick={() => onTriggerPreset(preset)}
                   className={`flex items-center gap-1.5 ${pillBtnClass} text-left disabled:opacity-50`}
-                  title={tooltip}
+                  title={`Roll ${preset.name}: ${preset.pool}d10 Diff ${preset.difficulty}`}
                 >
                   <span className="max-w-[130px] truncate font-semibold text-stone-100">
-                    {sc.name}
+                    {preset.name}
                   </span>
-                  <span
-                    className={`font-mono text-[10px] font-bold ${
-                      resolved.effectivePool <= 0 ? 'text-red-400' : 'text-amber-300'
-                    }`}
-                  >
-                    {resolved.effectivePool}d10
+                  <span className="font-mono text-[10px] font-bold text-amber-300">
+                    {preset.pool}d10
                   </span>
-                  {resolved.difficulty !== 6 && (
+                  {preset.difficulty !== 6 && (
                     <span className="font-mono text-[9px] text-stone-400">
-                      D{resolved.difficulty}
+                      D{preset.difficulty}
                     </span>
                   )}
-                  {resolved.rageDiceCount > 0 && (
+                  {preset.rageDiceCount > 0 && (
                     <span className="font-mono text-[9px] text-red-400">
-                      {resolved.rageDiceCount}R
+                      {preset.rageDiceCount}R
                     </span>
                   )}
-                  {resolved.hasSpecialty && <Sparkles className="h-2.5 w-2.5 text-amber-400" />}
-                  {resolved.isSecretRoll && <EyeOff className="h-2.5 w-2.5 text-amber-300" />}
+                  {preset.hasSpecialty && <Sparkles className="h-2.5 w-2.5 text-amber-400" />}
+                  {preset.isSecretRoll && <EyeOff className="h-2.5 w-2.5 text-amber-300" />}
                 </button>
                 <button
                   type="button"
-                  onClick={() => onRemoveSheetShortcut(sc.id)}
-                  aria-label={`Remove ${sc.name}`}
+                  onClick={() => removePreset(userId, seatId, preset.id)}
+                  aria-label={`Remove ${preset.name}`}
                   className="mr-1 rounded-full p-0.5 text-stone-500 hover:bg-red-950/70 hover:text-red-300"
                 >
                   <X className="h-2.5 w-2.5" />
                 </button>
               </div>
-            );
-          })
-        )
-      ) : (
-        <>
-          {presets.map((preset) => (
-            <div
-              key={preset.id}
-              className={`group flex shrink-0 items-center rounded-full border border-stone-700/75 bg-zinc-950/90 ${pillTextClass} transition hover:border-amber-500/55`}
-            >
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => onTriggerPreset(preset)}
-                className={`flex items-center gap-1.5 ${pillBtnClass} text-left disabled:opacity-50`}
-                title={`Roll ${preset.name}: ${preset.pool}d10 Diff ${preset.difficulty}`}
-              >
-                <span className="max-w-[130px] truncate font-semibold text-stone-100">
-                  {preset.name}
-                </span>
-                <span className="font-mono text-[10px] font-bold text-amber-300">
-                  {preset.pool}d10
-                </span>
-                {preset.difficulty !== 6 && (
-                  <span className="font-mono text-[9px] text-stone-400">D{preset.difficulty}</span>
-                )}
-                {preset.rageDiceCount > 0 && (
-                  <span className="font-mono text-[9px] text-red-400">
-                    {preset.rageDiceCount}R
-                  </span>
-                )}
-                {preset.hasSpecialty && <Sparkles className="h-2.5 w-2.5 text-amber-400" />}
-                {preset.isSecretRoll && <EyeOff className="h-2.5 w-2.5 text-amber-300" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => removePreset(userId, seatId, preset.id)}
-                aria-label={`Remove ${preset.name}`}
-                className="mr-1 rounded-full p-0.5 text-stone-500 hover:bg-red-950/70 hover:text-red-300"
-              >
-                <X className="h-2.5 w-2.5" />
-              </button>
-            </div>
-          ))}
+            ))}
 
-          {showSavePresetButton &&
-            (namingOpen ? (
-              <div className="flex shrink-0 items-center gap-1 rounded-full border border-amber-500/65 bg-zinc-950 px-2 py-0.5">
-                <input
-                  type="text"
-                  value={draftName}
-                  maxLength={32}
-                  autoFocus
-                  onChange={(e) => setDraftName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      savePresetWithName(draftName);
-                    } else if (e.key === 'Escape') {
+            {showSavePresetButton &&
+              (namingOpen ? (
+                <div className="flex shrink-0 items-center gap-1 rounded-full border border-amber-500/65 bg-zinc-950 px-2 py-0.5">
+                  <input
+                    type="text"
+                    value={draftName}
+                    maxLength={32}
+                    autoFocus
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        savePresetWithName(draftName);
+                      } else if (e.key === 'Escape') {
+                        setNamingOpen(false);
+                        setDraftName('');
+                      }
+                    }}
+                    placeholder="Preset name..."
+                    className="w-28 bg-transparent text-[11px] text-stone-100 placeholder-stone-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => savePresetWithName(draftName)}
+                    className="rounded-full bg-amber-600/80 p-0.5 text-zinc-950 hover:bg-amber-500"
+                    aria-label="Confirm preset name"
+                  >
+                    <Check className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       setNamingOpen(false);
                       setDraftName('');
-                    }
-                  }}
-                  placeholder="Preset name..."
-                  className="w-28 bg-transparent text-[11px] text-stone-100 placeholder-stone-500 focus:outline-none"
-                />
+                    }}
+                    className="rounded-full p-0.5 text-stone-400 hover:text-stone-100"
+                    aria-label="Cancel preset"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  onClick={() => savePresetWithName(draftName)}
-                  className="rounded-full bg-amber-600/80 p-0.5 text-zinc-950 hover:bg-amber-500"
-                  aria-label="Confirm preset name"
+                  onClick={handleSaveClick}
+                  className="flex shrink-0 items-center gap-1 rounded-full border border-dashed border-amber-500/45 bg-amber-950/20 px-2.5 py-1 text-[10px] font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/40"
+                  title="Save current Dice Console setup as a personal Quick Roll"
                 >
-                  <Check className="h-3 w-3" />
+                  <BookmarkPlus className="h-3 w-3" />
+                  Save Preset
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNamingOpen(false);
-                    setDraftName('');
-                  }}
-                  className="rounded-full p-0.5 text-stone-400 hover:text-stone-100"
-                  aria-label="Cancel preset"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSaveClick}
-                className="flex shrink-0 items-center gap-1 rounded-full border border-dashed border-amber-500/45 bg-amber-950/20 px-2.5 py-1 text-[10px] font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/40"
-                title="Save current Dice Console setup as a personal Quick Roll"
-              >
-                <BookmarkPlus className="h-3 w-3" />
-                Save Preset
-              </button>
-            ))}
-        </>
+              ))}
+          </>
+        )}
+      </div>
+
+      {!expanded && !compact && itemCount > 2 && (
+        <button
+          type="button"
+          onClick={() => nudgeScroll(160)}
+          aria-label="Scroll pinned rolls right"
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-stone-700/80 bg-zinc-950/90 text-stone-300 hover:border-amber-400/60 hover:text-amber-200"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      )}
+
+      {showExpandToggle && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          title={expanded ? 'Collapse to 1 row' : `Show all ${itemCount} pinned rolls`}
+          className={`flex shrink-0 items-center gap-0.5 rounded-full border px-2 font-bold transition ${
+            compact ? 'min-h-[30px] text-[10px]' : 'mt-0.5 h-6 text-[10px]'
+          } ${
+            expanded
+              ? 'border-amber-500/60 bg-amber-950/45 text-amber-200'
+              : 'border-stone-700/85 bg-zinc-950/90 text-stone-300 hover:border-amber-500/55 hover:text-amber-100'
+          }`}
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="h-3 w-3" />
+              <span>1 Row</span>
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3 w-3" />
+              <span>All ({itemCount})</span>
+            </>
+          )}
+        </button>
       )}
     </div>
   );

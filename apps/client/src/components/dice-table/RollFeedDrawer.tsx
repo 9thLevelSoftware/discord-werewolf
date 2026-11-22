@@ -68,12 +68,18 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
           </div>
         ) : (
           rollHistory.map((entry) => {
+            const isInitiative = entry.roll.rollMode === 'initiative';
+            const initDie = entry.roll.dice[0]?.value ?? 0;
+            const initMod = entry.roll.initiativeModifier ?? 0;
+            const initTotal = entry.roll.initiativeTotal ?? initDie + initMod;
             const isSuccess = entry.roll.netSuccesses > 0;
-            const cardAccent = entry.roll.isBotch
-              ? 'border-red-600/75 bg-red-950/25'
-              : isSuccess
-                ? 'border-emerald-700/55 bg-zinc-950/85'
-                : 'border-stone-800/90 bg-zinc-950/75';
+            const cardAccent = isInitiative
+              ? 'border-amber-500/55 bg-amber-950/20'
+              : entry.roll.isBotch
+                ? 'border-red-600/75 bg-red-950/25'
+                : isSuccess
+                  ? 'border-emerald-700/55 bg-zinc-950/85'
+                  : 'border-stone-800/90 bg-zinc-950/75';
 
             return (
               <article
@@ -97,7 +103,9 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                         </span>
                       </div>
                       <p className="truncate text-[11px] text-stone-400">
-                        {entry.label} • Diff {entry.roll.clampedDifficulty}
+                        {isInitiative
+                          ? `${entry.label} • 1d10 ${initMod >= 0 ? `+${initMod}` : initMod}`
+                          : `${entry.label} • Diff ${entry.roll.clampedDifficulty}`}
                       </p>
                     </div>
                   </div>
@@ -117,30 +125,34 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <span
                     className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${
-                      entry.roll.isBotch
-                        ? 'bg-red-700 text-white shadow-[0_0_8px_rgba(185,28,28,0.65)]'
-                        : isSuccess
-                          ? 'bg-emerald-950/90 text-emerald-200 border border-emerald-600/45'
-                          : 'bg-zinc-900 text-stone-400 border border-stone-800'
+                      isInitiative
+                        ? 'border border-amber-500/50 bg-amber-950/90 text-amber-200'
+                        : entry.roll.isBotch
+                          ? 'bg-red-700 text-white shadow-[0_0_8px_rgba(185,28,28,0.65)]'
+                          : isSuccess
+                            ? 'bg-emerald-950/90 text-emerald-200 border border-emerald-600/45'
+                            : 'bg-zinc-900 text-stone-400 border border-stone-800'
                     }`}
                   >
-                    {entry.roll.isBotch
-                      ? 'Botch'
-                      : isSuccess
-                        ? `${entry.roll.netSuccesses} Net (${entry.roll.outcome})`
-                        : 'Failure'}
+                    {isInitiative
+                      ? `Initiative: ${initTotal}`
+                      : entry.roll.isBotch
+                        ? 'Botch'
+                        : isSuccess
+                          ? `${entry.roll.netSuccesses} Net (${entry.roll.outcome})`
+                          : 'Failure'}
                   </span>
                   {entry.isSecretRoll && (
                     <span className="inline-flex items-center gap-0.5 rounded border border-amber-500/40 bg-amber-950/70 px-1.5 py-0.5 text-[9px] font-bold text-amber-200">
                       <EyeOff className="h-2.5 w-2.5" /> Secret
                     </span>
                   )}
-                  {entry.roll.automaticSuccesses > 0 && (
+                  {!isInitiative && entry.roll.automaticSuccesses > 0 && (
                     <span className="rounded border border-indigo-500/40 bg-indigo-950/80 px-1.5 py-0.5 text-[9px] font-bold text-indigo-200">
                       +{entry.roll.automaticSuccesses} WP
                     </span>
                   )}
-                  {entry.rageDiceCount > 0 && (
+                  {!isInitiative && entry.rageDiceCount > 0 && (
                     <span className="rounded border border-red-700/50 bg-red-950/70 px-1.5 py-0.5 text-[9px] font-bold text-red-200">
                       {entry.rageDiceCount} Rage
                     </span>

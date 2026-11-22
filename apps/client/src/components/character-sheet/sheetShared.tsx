@@ -9,6 +9,7 @@ import {
   GarouTribe,
   resolveSheetShortcut,
   SheetShortcut,
+  W20_BACKGROUND_CATALOG,
   W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import { diceSoundEngine } from '../../audio/DiceSoundEngine';
@@ -57,19 +58,9 @@ export const W20_RANK_NAMES: readonly string[] = [
   '6 • Legend',
 ];
 
-export const CANONICAL_BACKGROUND_SUGGESTIONS: readonly string[] = [
-  'Allies',
-  'Ancestors',
-  'Contacts',
-  'Fetish',
-  'Kinfolk',
-  'Mentor',
-  'Pure Breed',
-  'Resources',
-  'Rites',
-  'Spirit Heritage',
-  'Totem',
-];
+export const CANONICAL_BACKGROUND_SUGGESTIONS: readonly string[] = W20_BACKGROUND_CATALOG.map(
+  (entry) => entry.label
+);
 
 export const DEFAULT_ATTR_FOR_ABILITY: Record<CanonicalAbilityKey, AttributeKey> = {
   alertness: 'perception',
