@@ -55,6 +55,7 @@ export interface DiceTableHudProps {
   activeTrackers: LightGarouTrackers;
   rollHistoryCount: number;
   feedOpen: boolean;
+  packOpen: boolean;
   hasDiceOnTable: boolean;
   activeBanner: Queued3DRoll | null;
   sfxPrefs: DiceSoundPreferences;
@@ -90,6 +91,7 @@ export interface DiceTableHudProps {
   onCycleLayoutMode: () => void;
   onToggleFeed: () => void;
   onCloseFeed: () => void;
+  onTogglePack: () => void;
   onClearTable: () => void;
   onDismissBanner: () => void;
   onToggleMuteSfx: () => void;

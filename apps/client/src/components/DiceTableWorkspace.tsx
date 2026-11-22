@@ -26,11 +26,13 @@ import {
   type QuickRollPreset,
   useUnboundQuickRollStore,
 } from './dice-table/QuickRollBar';
+import { QuickRollBar } from './dice-table/QuickRollBar';
 import {
   type ComposerAttributeKey,
   resolveTraitRollSelection,
   type RollSourceMode,
 } from './dice-table/TraitRollBuilder';
+import { PackPresenceDrawer } from './dice-table/PackPresenceDrawer';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
 
 interface DiceTableWorkspaceProps {
@@ -262,6 +264,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const [composerAbil, setComposerAbil] = useState('');
 
   // Arena & Drawer state
+  const [packOpen, setPackOpen] = useState(false);
   const [feedOpen, setFeedOpen] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
@@ -346,11 +349,12 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     }
   }, [activeTrackers.willpower, spendWillpower]);
 
-  // Close feed automatically when transitioning into mobile layout
+  // Close drawers automatically when transitioning into mobile layout
   const prevIsMobileRef = useRef(isMobile);
   useEffect(() => {
     if (!prevIsMobileRef.current && isMobile) {
       setFeedOpen(false);
+      setPackOpen(false);
     }
     prevIsMobileRef.current = isMobile;
   }, [isMobile]);
@@ -1177,6 +1181,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     activeTrackers,
     rollHistoryCount: rollHistory.length,
     feedOpen,
+    packOpen,
     hasDiceOnTable,
     activeBanner,
     sfxPrefs,
@@ -1212,6 +1217,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     onCycleLayoutMode: cycleMode,
     onToggleFeed: () => setFeedOpen((v) => !v),
     onCloseFeed: () => setFeedOpen(false),
+    onTogglePack: () => setPackOpen((v) => !v),
     onClearTable: handleClearTable,
     onDismissBanner: () => setActiveBanner(null),
     onToggleMuteSfx: handleToggleMuteSfx,
@@ -1251,6 +1257,24 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   return (
     <div className="relative flex h-dvh w-full overflow-hidden bg-[#070609] text-stone-100 select-none">
+      {/* Collapsible Pack & Table Presence Drawer (Docked Left Drawer on PC) */}
+      {!isMobile && (
+        <PackPresenceDrawer
+          open={packOpen}
+          currentUserId={session.userId}
+          sortedParticipants={sortedParticipants}
+          speakingDiscordIds={speakingDiscordIds}
+          seats={seats}
+          activeSeatId={activeSeat.seatId}
+          sheetsById={sheetsById}
+          onClose={() => setPackOpen(false)}
+          onSelectSeat={setActiveSeat}
+          onOpenSheet={() => setSheetModalOpen(true)}
+          onOpenRoster={() => setRosterModalOpen(true)}
+          onAddSeatAndOpenRoster={handleAddSeatAndOpenRoster}
+        />
+      )}
+
       {/* Main Full-Height 3D Felt Stage */}
       <div
         ref={arenaWrapperRef}
