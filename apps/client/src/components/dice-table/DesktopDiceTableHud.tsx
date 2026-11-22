@@ -23,12 +23,13 @@ import {
   Zap,
 } from 'lucide-react';
 import { formatFormName, W20_FORMS } from '../character-sheet/sheetShared';
-import { RollResultPlaque } from './DieFaceTiles';
+import { ActiveThrowPill, RollResultPlaque } from './DieFaceTiles';
 import {
   type DiceTableHudProps,
   POOL_QUICK_JUMPS,
   QuickRollBar,
 } from './QuickRollBar';
+import { MAX_LOCAL_QUEUED_ROLLS } from './rollQueueController';
 import { DesktopTraitRollBar, DifficultyQuickControl } from './TraitRollBuilder';
 import { PersonalTrackersControl } from './W20DotTracker';
 
@@ -154,6 +155,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   effectiveRollLabel,
   manualControlsOpen,
   isThrowing,
+  rollStageStatus,
   effectivePreviewPool,
   clampedPreviewRage,
   obsidianPreviewCount,
@@ -201,7 +203,9 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   const [savedFlash, setSavedFlash] = useState(false);
 
   const isSheetTraitsMode = Boolean(activeSheet && rollSourceMode === 'traits');
-  const isDisabled = isThrowing || connectionStatus !== 'authenticated';
+  const isDisabled =
+    (connectionStatus !== 'authenticated' && connectionStatus !== 'reconnecting') ||
+    rollStageStatus.localPendingCount >= MAX_LOCAL_QUEUED_ROLLS;
   const rollBlockedByEmptyTraits = isSheetTraitsMode && (!hasTraitSelection || pool <= 0);
   const anySpeaking = sortedParticipants.some((p) => speakingDiscordIds.has(p.discordUserId));
   const initButtonLabel =
@@ -222,9 +226,8 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
     window.setTimeout(() => setSavedFlash(false), 1400);
   };
 
-  const primaryRollCtaText = isThrowing
-    ? 'Casting...'
-    : isSheetTraitsMode && !hasTraitSelection
+  const primaryRollCtaText =
+    isSheetTraitsMode && !hasTraitSelection
       ? 'Select Trait'
       : isSheetTraitsMode && pool <= 0
         ? '0 Dice'
@@ -407,7 +410,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             <span>{layoutLabel}</span>
           </button>
 
-          {(hasDiceOnTable || activeBanner) && (
+          {(hasDiceOnTable || activeBanner || rollStageStatus.isRolling) && (
             <button
               type="button"
               onClick={onClearTable}
@@ -438,9 +441,22 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
         </div>
       )}
 
+      {/* Active 3D Throw & Queue Indicator */}
+      {!activeBanner && rollStageStatus.isRolling && (
+        <ActiveThrowPill
+          activeThrowLabel={rollStageStatus.activeThrowLabel}
+          queuedCount={rollStageStatus.queuedCount}
+        />
+      )}
+
       {/* Dismissible Floating Roll Result Plaque */}
       {activeBanner && (
-        <RollResultPlaque banner={activeBanner} onDismiss={onDismissBanner} />
+        <RollResultPlaque
+          banner={activeBanner}
+          onDismiss={onDismissBanner}
+          queuedCount={rollStageStatus.queuedCount}
+          nextQueuedLabel={rollStageStatus.nextQueuedLabel}
+        />
       )}
 
       {/* Floating Full-Width Bottom Sheet-Driven Console */}
@@ -920,8 +936,13 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             }
             className="w20-crimson-seal font-display flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-4 text-xs font-black tracking-widest uppercase text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Dices className="h-4 w-4 shrink-0" />
+            <Dices className={`h-4 w-4 shrink-0 ${isThrowing ? 'animate-spin' : ''}`} />
             <span>{primaryRollCtaText}</span>
+            {rollStageStatus.localPendingCount > 0 && (
+              <span className="rounded-full bg-amber-300/20 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-amber-200">
+                +{rollStageStatus.localPendingCount}
+              </span>
+            )}
           </button>
 
           {/* Modifiers Drawer Toggle */}

@@ -164,16 +164,44 @@ export const AuthoritativeDieChips: React.FC<{
   );
 };
 
+export const ActiveThrowPill: React.FC<{
+  activeThrowLabel: string | null;
+  queuedCount: number;
+  compact?: boolean;
+}> = ({ activeThrowLabel, queuedCount, compact = false }) => (
+  <div
+    role="status"
+    aria-live="polite"
+    className={`w20-obsidian-panel pointer-events-none absolute left-1/2 z-20 flex max-w-[min(92vw,520px)] -translate-x-1/2 items-center gap-2 rounded-full !border-amber-500/45 px-3.5 py-1.5 shadow-xl ${
+      compact ? 'top-14 mt-[env(safe-area-inset-top,0px)] text-[11px]' : 'top-16 text-xs'
+    }`}
+  >
+    <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)]" />
+    <span className="truncate font-semibold text-amber-100">
+      Rolling: {activeThrowLabel || 'W20 Dice Pool'}
+    </span>
+    {queuedCount > 0 && (
+      <span className="shrink-0 rounded-full border border-amber-400/50 bg-amber-950/80 px-2 py-0.5 font-mono text-[10px] font-extrabold text-amber-200">
+        +{queuedCount} queued
+      </span>
+    )}
+  </div>
+);
+
 interface RollResultPlaqueProps {
   banner: Queued3DRoll;
   onDismiss: () => void;
   compact?: boolean;
+  queuedCount?: number;
+  nextQueuedLabel?: string | null;
 }
 
 export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
   banner,
   onDismiss,
   compact = false,
+  queuedCount = 0,
+  nextQueuedLabel = null,
 }) => {
   const isInitiative = banner.roll.rollMode === 'initiative';
   const initDie = banner.roll.dice[0]?.value ?? 0;
@@ -284,6 +312,24 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
             rageDiceCount={banner.rageDiceCount ?? 0}
             compact={compact}
           />
+        </div>
+      )}
+
+      {queuedCount > 0 && (
+        <div
+          className={`flex items-center justify-between gap-2 border-t border-amber-500/20 pt-1.5 ${
+            compact ? 'mt-1.5 text-[10px]' : 'mt-2.5 text-[11px]'
+          }`}
+        >
+          <p className="min-w-0 truncate text-stone-300">
+            <span className="font-mono font-extrabold text-amber-300">
+              +{queuedCount} queued
+            </span>
+            {nextQueuedLabel ? ` • Next: ${nextQueuedLabel}` : ''}
+          </p>
+          <span className="shrink-0 font-semibold text-amber-200/85">
+            {compact ? 'Tap next ›' : 'Click to advance ›'}
+          </span>
         </div>
       )}
     </div>

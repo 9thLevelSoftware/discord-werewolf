@@ -32,47 +32,18 @@ import {
   resolveTraitRollSelection,
   type RollSourceMode,
 } from './dice-table/TraitRollBuilder';
+import {
+  type LocalQueuedRollSpec,
+  MAX_LOCAL_QUEUED_ROLLS,
+  RollStageCoordinator,
+  type RollStageStatus,
+  SafeDiceBoxController,
+} from './dice-table/rollQueueController';
 import { PackPresenceDrawer } from './dice-table/PackPresenceDrawer';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
 
 interface DiceTableWorkspaceProps {
   session: DiscordSessionContext;
-}
-
-function extractSettledDiceValues(raw: unknown, expectedCount: number): number[] | undefined {
-  if (!Array.isArray(raw) || expectedCount <= 0) {
-    return undefined;
-  }
-  const values: number[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object' || !('value' in item)) {
-      continue;
-    }
-    const rawVal = Number((item as { value?: unknown }).value);
-    if (!Number.isFinite(rawVal)) {
-      continue;
-    }
-    const normalized = rawVal === 0 ? 10 : Math.max(1, Math.min(10, Math.round(rawVal)));
-    values.push(normalized);
-  }
-  return values.length === expectedCount ? values : undefined;
-}
-
-function buildDiceBoxGroups(
-  effectivePool: number,
-  rageDiceCount: number
-): Array<{ qty: number; sides: number; themeColor: string }> {
-  if (effectivePool <= 0) return [];
-  const clampedRage = Math.min(effectivePool, Math.max(0, rageDiceCount));
-  const obsidianCount = effectivePool - clampedRage;
-  const groups: Array<{ qty: number; sides: number; themeColor: string }> = [];
-  if (obsidianCount > 0) {
-    groups.push({ qty: obsidianCount, sides: 10, themeColor: '#18181b' });
-  }
-  if (clampedRage > 0) {
-    groups.push({ qty: clampedRage, sides: 10, themeColor: '#991b1b' });
-  }
-  return groups;
 }
 
 const GarouFeltMedallion: React.FC = () => (
@@ -131,7 +102,6 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const rollHistory = useVttRoomStore((s) => s.rollHistory);
   const diceQueue = useVttRoomStore((s) => s.diceQueue);
   const sendCommand = useVttRoomStore((s) => s.sendCommand);
-  const dequeue3DRoll = useVttRoomStore((s) => s.dequeue3DRoll);
 
   const sheetsById = useCharacterSheetStore((s) => s.sheetsById);
   const seats = useCharacterSheetStore((s) => s.seats);
@@ -268,7 +238,14 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const [feedOpen, setFeedOpen] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
-  const [isThrowing, setIsThrowing] = useState(false);
+  const [rollStageStatus, setRollStageStatus] = useState<RollStageStatus>({
+    isRolling: false,
+    activeThrowLabel: null,
+    queuedCount: 0,
+    nextQueuedLabel: null,
+    localPendingCount: 0,
+  });
+  const isThrowing = rollStageStatus.localPendingCount > 0;
   const [hasDiceOnTable, setHasDiceOnTable] = useState(false);
   const [activeBanner, setActiveBanner] = useState<Queued3DRoll | null>(null);
   const [webglReady, setWebglReady] = useState(false);
@@ -362,13 +339,74 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const arenaWrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const boxRef = useRef<DiceBox | null>(null);
-  const readyRef = useRef(false);
-  const localRollClientIdsRef = useRef<Set<string>>(new Set());
-  const busyQueueIdRef = useRef<string | null>(null);
+  const safeDiceBoxRef = useRef<SafeDiceBoxController | null>(null);
+  if (!safeDiceBoxRef.current) {
+    safeDiceBoxRef.current = new SafeDiceBoxController();
+  }
+  const coordinatorRef = useRef<RollStageCoordinator | null>(null);
 
   useEffect(() => {
     setRageDiceCount((prev) => Math.min(prev, Math.max(0, activeBasePool)));
   }, [activeBasePool]);
+
+  // Mount single-flight RollStageCoordinator & flush unsent queued rolls on pagehide/unmount
+  useEffect(() => {
+    const safeBox = safeDiceBoxRef.current!;
+    const coordinator = new RollStageCoordinator({
+      diceBox: safeBox,
+      getRemoteQueue: () => useVttRoomStore.getState().diceQueue,
+      dequeueRemoteRoll: (id) => useVttRoomStore.getState().dequeue3DRoll(id),
+      consumeRemoteRollByClientId: (clientId) =>
+        useVttRoomStore.getState().consume3DRollByClientId(clientId),
+      onSendRollCommand: (spec: LocalQueuedRollSpec, physicalDiceValues) => {
+        useVttRoomStore.getState().sendCommand({
+          type: 'ROLL_TABLE_POOL',
+          pool: spec.pool,
+          rageDiceCount: spec.rageDiceCount,
+          difficulty: spec.difficulty,
+          hasSpecialty: spec.hasSpecialty,
+          spendWillpower: spec.spendWillpower,
+          applyWoundPenalty: spec.applyWoundPenalty,
+          ...(spec.rollMode === 'initiative'
+            ? {
+                rollMode: 'initiative' as const,
+                ...(spec.initiativeModifier !== undefined
+                  ? { initiativeModifier: spec.initiativeModifier }
+                  : {}),
+              }
+            : {}),
+          ...(spec.label ? { label: spec.label } : {}),
+          isSecretRoll: spec.isSecretRoll,
+          ...(physicalDiceValues ? { physicalDiceValues } : {}),
+          rollClientId: spec.rollClientId,
+          seatId: spec.seatId,
+          rollerDisplayName: spec.rollerDisplayName,
+        });
+      },
+      onSetBanner: (banner) => setActiveBanner(banner),
+      onSetHasDiceOnTable: (hasDice) => setHasDiceOnTable(hasDice),
+      onPlayThrowSound: (effectivePool, rageCount) =>
+        diceSoundEngine.playThrowCascade(effectivePool, rageCount),
+      onStopThrowSound: () => diceSoundEngine.stopActiveRollCascade(),
+      onPlayOutcomeSound: (roll) => diceSoundEngine.playOutcomeAccent(roll),
+      onStatusChange: (status) => setRollStageStatus(status),
+    });
+
+    coordinatorRef.current = coordinator;
+
+    const handlePageHide = () => {
+      coordinator.flushUnsentLocalRolls();
+    };
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      coordinator.dispose();
+      if (coordinatorRef.current === coordinator) {
+        coordinatorRef.current = null;
+      }
+    };
+  }, []);
 
   // Initialize full-stage @3d-dice/dice-box ONCE outside the isMobile branch
   useEffect(() => {
@@ -409,26 +447,33 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       box
         .init()
         .then(() => {
-          if (cancelled) return;
+          if (cancelled) {
+            try {
+              box.clear();
+            } catch {
+              // Ignore teardown error
+            }
+            return;
+          }
           boxRef.current = box;
-          readyRef.current = true;
+          safeDiceBoxRef.current?.setBox(box, true);
           setWebglReady(true);
           window.dispatchEvent(new Event('resize'));
         })
         .catch((err: unknown) => {
           console.warn('3D DiceBox unavailable; using authoritative CSPRNG mode.', err);
-          readyRef.current = false;
+          safeDiceBoxRef.current?.setBox(null, false);
           setWebglReady(false);
         });
     } catch (err: unknown) {
       console.warn('3D DiceBox initialization failed; using authoritative CSPRNG mode.', err);
-      readyRef.current = false;
+      safeDiceBoxRef.current?.setBox(null, false);
       setWebglReady(false);
     }
 
     return () => {
       cancelled = true;
-      readyRef.current = false;
+      safeDiceBoxRef.current?.setBox(null, false);
       setWebglReady(false);
       try {
         boxRef.current?.clear();
@@ -460,65 +505,10 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     };
   }, []);
 
-  // Sequential inbound DICE_ROLLED_3D handler
-  const headRoll = diceQueue[0] ?? null;
-  const headRollId = headRoll?.id ?? null;
-
+  // Notify stage coordinator whenever remote DICE_ROLLED_3D events arrive
   useEffect(() => {
-    if (!headRoll || !headRollId || busyQueueIdRef.current === headRollId) {
-      return;
-    }
-
-    if (headRoll.rollClientId && localRollClientIdsRef.current.has(headRoll.rollClientId)) {
-      localRollClientIdsRef.current.delete(headRoll.rollClientId);
-      setActiveBanner(headRoll);
-      setHasDiceOnTable(headRoll.roll.effectivePool > 0 && readyRef.current);
-      diceSoundEngine.playOutcomeAccent(headRoll.roll);
-      dequeue3DRoll(headRoll.id);
-      return;
-    }
-
-    let cancelled = false;
-    busyQueueIdRef.current = headRollId;
-
-    const animateRemoteRoll = async () => {
-      const rageCount = headRoll.rageDiceCount ?? 0;
-      const groups = buildDiceBoxGroups(headRoll.roll.effectivePool, rageCount);
-
-      diceSoundEngine.playThrowCascade(headRoll.roll.effectivePool, rageCount);
-
-      if (readyRef.current && boxRef.current && groups.length > 0) {
-        try {
-          await boxRef.current.roll(groups, {
-            theme: 'default',
-            newStartPoint: true,
-          });
-          diceSoundEngine.stopActiveRollCascade();
-        } catch {
-          // Fallback to banner if WebGL is throttled
-        }
-      } else if (readyRef.current && boxRef.current && groups.length === 0) {
-        try {
-          boxRef.current.clear();
-        } catch {
-          // Ignore clear errors
-        }
-      }
-
-      if (cancelled) return;
-      setHasDiceOnTable(groups.length > 0 && readyRef.current);
-      setActiveBanner(headRoll);
-      diceSoundEngine.playOutcomeAccent(headRoll.roll);
-      busyQueueIdRef.current = null;
-      dequeue3DRoll(headRoll.id);
-    };
-
-    void animateRemoteRoll();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [headRollId, headRoll, dequeue3DRoll]);
+    coordinatorRef.current?.notifyInboundQueueChanged();
+  }, [diceQueue]);
 
   const updateTrackers = useCallback(
     (patch: Partial<LightGarouTrackers>) => {
@@ -542,7 +532,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   );
 
   const executeRoll = useCallback(
-    async (overrides?: {
+    (overrides?: {
       pool?: number;
       rageDiceCount?: number;
       difficulty?: number;
@@ -552,12 +542,20 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       label?: string;
       isSecretRoll?: boolean;
     }) => {
-      if (isThrowing || connectionStatus !== 'authenticated') return;
+      if (
+        connectionStatus !== 'authenticated' &&
+        connectionStatus !== 'reconnecting'
+      ) {
+        return;
+      }
 
       const rawTargetPool = overrides?.pool ?? activeBasePool;
       if (rawTargetPool <= 0) return;
       const targetPool = Math.max(1, Math.min(30, Math.round(rawTargetPool)));
-      const targetDiff = Math.max(2, Math.min(10, Math.round(overrides?.difficulty ?? difficulty)));
+      const targetDiff = Math.max(
+        2,
+        Math.min(10, Math.round(overrides?.difficulty ?? difficulty))
+      );
       const targetSpec = overrides?.hasSpecialty ?? activeHasSpecialty;
       const targetWp = overrides?.spendWillpower ?? spendWillpower;
       const targetApplyWounds = overrides?.applyWoundPenalty ?? activeApplyWounds;
@@ -571,61 +569,34 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         Math.max(0, overrides?.rageDiceCount ?? rageDiceCount)
       );
 
-      const rollClientId = crypto.randomUUID();
-      localRollClientIdsRef.current.add(rollClientId);
-
-      setIsThrowing(true);
-      let physicalDiceValues: number[] | undefined;
-
-      diceSoundEngine.playThrowCascade(effectivePool, effectiveRage);
-
-      try {
-        const groups = buildDiceBoxGroups(effectivePool, effectiveRage);
-        if (readyRef.current && boxRef.current && groups.length > 0) {
-          const settled = await boxRef.current.roll(groups, {
-            theme: 'default',
-            newStartPoint: true,
-          });
-          diceSoundEngine.stopActiveRollCascade();
-          physicalDiceValues = extractSettledDiceValues(settled, effectivePool);
-          setHasDiceOnTable(true);
-        } else if (readyRef.current && boxRef.current && groups.length === 0) {
-          boxRef.current.clear();
-          setHasDiceOnTable(false);
-        }
-      } catch {
-        physicalDiceValues = undefined;
-      } finally {
-        setIsThrowing(false);
-      }
-
-      if (targetWp) {
-        setSpendWillpower(false);
-        spendActiveSeatWillpower();
-      }
-
       const rollerDisplayName = activeSheet
         ? `${activeSheet.name} (${activeSeat.playerName})`
         : activeSeat.playerName;
 
-      sendCommand({
-        type: 'ROLL_TABLE_POOL',
-        pool: targetPool,
-        rageDiceCount: effectiveRage,
-        difficulty: targetDiff,
-        hasSpecialty: targetSpec,
-        spendWillpower: targetWp,
-        applyWoundPenalty: targetApplyWounds,
-        ...(targetLabel ? { label: targetLabel } : {}),
-        isSecretRoll: targetSecret,
-        ...(physicalDiceValues ? { physicalDiceValues } : {}),
-        rollClientId,
-        seatId: activeSeat.seatId,
-        rollerDisplayName,
-      });
+      const accepted =
+        coordinatorRef.current?.enqueueLocalRoll({
+          rollClientId: crypto.randomUUID(),
+          pool: targetPool,
+          rageDiceCount: effectiveRage,
+          difficulty: targetDiff,
+          hasSpecialty: targetSpec,
+          spendWillpower: targetWp,
+          applyWoundPenalty: targetApplyWounds,
+          rollMode: 'pool',
+          label: targetLabel || 'W20 Dice Pool',
+          isSecretRoll: targetSecret,
+          seatId: activeSeat.seatId,
+          rollerDisplayName,
+          effectivePool,
+          effectiveRage,
+        }) ?? false;
+
+      if (accepted && targetWp) {
+        setSpendWillpower(false);
+        spendActiveSeatWillpower();
+      }
     },
     [
-      isThrowing,
       connectionStatus,
       activeBasePool,
       difficulty,
@@ -640,7 +611,6 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       activeSheet,
       activeSeat.playerName,
       activeSeat.seatId,
-      sendCommand,
     ]
   );
 
@@ -673,48 +643,27 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   }, [activeSheet, activeApplyWounds, activeTrackers.woundPenalty, isSheetTraitsMode, bonusDice]);
 
   const executeInitiativeRoll = useCallback(
-    async (overrides?: {
+    (overrides?: {
       initiativeModifier?: number;
       label?: string;
       isSecretRoll?: boolean;
     }) => {
-      if (isThrowing || connectionStatus !== 'authenticated') return;
+      if (
+        connectionStatus !== 'authenticated' &&
+        connectionStatus !== 'reconnecting'
+      ) {
+        return;
+      }
 
       const targetMod = overrides?.initiativeModifier ?? initiativeMeta.modifier;
       const targetSecret = overrides?.isSecretRoll ?? isSecretRoll;
       const targetLabel = (overrides?.label ?? 'Initiative').trim() || 'Initiative';
-
-      const rollClientId = crypto.randomUUID();
-      localRollClientIdsRef.current.add(rollClientId);
-
-      setIsThrowing(true);
-      let physicalDiceValues: number[] | undefined;
-
-      diceSoundEngine.playThrowCascade(1, 0);
-
-      try {
-        const groups = buildDiceBoxGroups(1, 0);
-        if (readyRef.current && boxRef.current && groups.length > 0) {
-          const settled = await boxRef.current.roll(groups, {
-            theme: 'default',
-            newStartPoint: true,
-          });
-          diceSoundEngine.stopActiveRollCascade();
-          physicalDiceValues = extractSettledDiceValues(settled, 1);
-          setHasDiceOnTable(true);
-        }
-      } catch {
-        physicalDiceValues = undefined;
-      } finally {
-        setIsThrowing(false);
-      }
-
       const rollerDisplayName = activeSheet
         ? `${activeSheet.name} (${activeSeat.playerName})`
         : activeSeat.playerName;
 
-      sendCommand({
-        type: 'ROLL_TABLE_POOL',
+      coordinatorRef.current?.enqueueLocalRoll({
+        rollClientId: crypto.randomUUID(),
         pool: 1,
         rageDiceCount: 0,
         difficulty: 6,
@@ -725,14 +674,13 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         initiativeModifier: targetMod,
         label: targetLabel,
         isSecretRoll: targetSecret,
-        ...(physicalDiceValues ? { physicalDiceValues } : {}),
-        rollClientId,
         seatId: activeSeat.seatId,
         rollerDisplayName,
+        effectivePool: 1,
+        effectiveRage: 0,
       });
     },
     [
-      isThrowing,
       connectionStatus,
       initiativeMeta.modifier,
       isSecretRoll,
@@ -740,7 +688,6 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       activeSeat.playerName,
       activeSeat.seatId,
       activeApplyWounds,
-      sendCommand,
     ]
   );
 
@@ -938,14 +885,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   );
 
   const handleClearTable = useCallback(() => {
-    diceSoundEngine.stopActiveRollCascade();
-    try {
-      boxRef.current?.clear();
-    } catch {
-      // Ignore WebGL clear errors
-    }
-    setHasDiceOnTable(false);
-    setActiveBanner(null);
+    coordinatorRef.current?.clearFelt();
   }, []);
 
   const handleToggleMuteSfx = useCallback(() => {
@@ -1208,6 +1148,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     effectiveRollLabel,
     manualControlsOpen,
     isThrowing,
+    rollStageStatus,
     effectivePreviewPool,
     clampedPreviewRage,
     obsidianPreviewCount,
@@ -1219,7 +1160,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     onCloseFeed: () => setFeedOpen(false),
     onTogglePack: () => setPackOpen((v) => !v),
     onClearTable: handleClearTable,
-    onDismissBanner: () => setActiveBanner(null),
+    onDismissBanner: () => coordinatorRef.current?.dismissBanner(),
     onToggleMuteSfx: handleToggleMuteSfx,
     onSfxVolumeChange: handleSfxVolumeChange,
     onUpdateTrackers: updateTrackers,
@@ -1291,7 +1232,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         <GarouFeltMedallion />
 
         {/* Idle Prompt */}
-        {!activeBanner && !hasDiceOnTable && (
+        {!activeBanner && !hasDiceOnTable && !rollStageStatus.isRolling && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-4 pb-24 text-center opacity-55">
             <p className="font-display text-xs font-bold tracking-[0.28em] uppercase text-amber-200/80">
               Garou Umbral Felt
@@ -1324,7 +1265,10 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         open={feedOpen}
         mobileSheet={isMobile}
         rollHistory={rollHistory}
-        disabled={isThrowing || connectionStatus !== 'authenticated'}
+        disabled={
+          (connectionStatus !== 'authenticated' && connectionStatus !== 'reconnecting') ||
+          rollStageStatus.localPendingCount >= MAX_LOCAL_QUEUED_ROLLS
+        }
         onClose={() => setFeedOpen(false)}
         onReroll={handleRerollFromHistory}
       />
