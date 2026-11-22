@@ -1031,7 +1031,7 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
           {isThrowing
             ? 'Casting...'
             : !selection.hasSelection
-              ? 'Select Trait'
+              ? 'Pick a trait'
               : `Roll ${selection.effectivePool}d10${clampedRage > 0 ? ` (${clampedRage}R)` : ''}`}
         </button>
 

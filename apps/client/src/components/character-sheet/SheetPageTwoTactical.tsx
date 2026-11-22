@@ -560,7 +560,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 className="flex items-center gap-1 rounded-lg border border-amber-500/55 bg-amber-950/45 px-2.5 py-1 text-xs font-bold text-amber-100 transition hover:border-amber-400 hover:bg-amber-900/55"
               >
                 <Zap className="h-3 w-3 text-amber-300" />
-                Roll Init (1d10{stats.initiativeBonus >= 0 ? `+${stats.initiativeBonus}` : stats.initiativeBonus})
+                Roll Initiative (1d10{stats.initiativeBonus >= 0 ? `+${stats.initiativeBonus}` : stats.initiativeBonus})
               </button>
             </div>
           </div>

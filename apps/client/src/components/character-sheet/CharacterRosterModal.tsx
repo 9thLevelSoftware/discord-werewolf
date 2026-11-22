@@ -28,7 +28,7 @@ import {
   type SheetSaveStatus,
   useCharacterSheetStore,
 } from '../../store/useCharacterSheetStore';
-import { Button, IconButton, Modal } from '../ui';
+import { Button, ConfirmButton, IconButton, Modal } from '../ui';
 import { CharacterCreationWizard } from '../CharacterCreationWizard';
 import {
   formatFormName,
@@ -93,7 +93,6 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
   const [syncCodeInput, setSyncCodeInput] = useState('');
   const [syncingCode, setSyncingCode] = useState(false);
   const [statusNote, setStatusNote] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeSeat: LocalTableSeat =
@@ -193,12 +192,13 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
             Table Seats ({seats.length}/8)
           </h3>
           <span className="text-caption text-stone-400">
-            Same-screen co-op or solo table
+            One seat per player sharing this screen
           </span>
         </div>
         <button
           type="button"
           disabled={seats.length >= 8}
+          title={seats.length >= 8 ? 'The table is full (8 seats)' : undefined}
           onClick={() => {
             const newId = addSeat();
             if (newId) setActiveSeat(newId);
@@ -206,7 +206,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
           className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-950/35 px-2.5 py-1 text-xs font-bold text-amber-200 transition hover:bg-amber-900/45 disabled:opacity-40"
         >
           <Plus className="h-3.5 w-3.5" />
-          Add Same-Screen Player
+          Add Seat
         </button>
       </div>
 
@@ -245,17 +245,21 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                   {seat.seatId === 'primary' ? 'Primary Seat' : `Seat ${idx + 1}`}
                 </span>
                 {seat.seatId !== 'primary' && (
-                  <button
-                    type="button"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      removeSeat(seat.seatId);
-                    }}
-                    aria-label={`Remove ${seat.playerName}`}
-                    className="rounded p-0.5 text-stone-400 hover:bg-red-950/60 hover:text-red-300"
+                  <span
+                    onClick={(ev) => ev.stopPropagation()}
+                    onKeyDown={(ev) => ev.stopPropagation()}
                   >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                    <ConfirmButton
+                      variant="ghost"
+                      label={`Remove ${seat.playerName}'s seat`}
+                      prompt={`Remove ${seat.playerName}'s seat?`}
+                      confirmLabel="Remove"
+                      className="h-7 w-7 px-0"
+                      onConfirm={() => removeSeat(seat.seatId)}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </ConfirmButton>
+                  </span>
                 )}
               </div>
 
@@ -277,7 +281,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                   </span>
                 ) : (
                   <span className="truncate italic text-stone-400">
-                    Unbound (Storyteller / Guest)
+                    No character
                   </span>
                 )}
               </div>
@@ -297,17 +301,19 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                     >
                       Sheet
                     </button>
-                    <button
-                      type="button"
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        assignSheetToSeat(seat.seatId, null);
-                      }}
-                      className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-caption text-stone-300 hover:border-stone-500"
-                      title="Roll Unbound (Storyteller / Guest)"
+                    <span
+                      onClick={(ev) => ev.stopPropagation()}
+                      onKeyDown={(ev) => ev.stopPropagation()}
                     >
-                      Roll Unbound
-                    </button>
+                      <ConfirmButton
+                        variant="secondary"
+                        prompt={`Take ${boundSheet?.name ?? 'this character'} off this seat?`}
+                        confirmLabel="Unassign"
+                        onConfirm={() => assignSheetToSeat(seat.seatId, null)}
+                      >
+                        Unassign
+                      </ConfirmButton>
+                    </span>
                   </>
                 ) : (
                   <button
@@ -319,7 +325,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                     }}
                     className="w-full rounded border border-stone-700/70 bg-zinc-900/90 px-2 py-1 text-caption font-semibold text-stone-300 hover:border-amber-500/40"
                   >
-                    Roll Unbound (Storyteller / Guest)
+                    Roll without a character
                   </button>
                 )}
               </div>
@@ -352,7 +358,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
             No Saved Garou Yet
           </p>
           <p className="mt-1 text-xs text-stone-400">
-            Use the Guided W20 Creation Wizard, create a Blank Fillable Sheet, load an 8-char Sync Code, or roll Unbound.
+            Create a character with the guided wizard, start from a blank sheet, load one with a sync code, or just roll without a character.
           </p>
         </div>
       ) : (
@@ -457,43 +463,22 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                     type="button"
                     onClick={() => exportSheetJson(sheet.id)}
                     className="flex items-center gap-1 rounded-lg border border-stone-700 bg-zinc-900 px-2 py-1.5 text-xs text-stone-300 hover:border-stone-500"
-                    title="Export .w20sheet.json"
+                    title="Export a backup file"
                   >
                     <Download className="h-3 w-3" />
-                    {!isMobile && <span>Export JSON</span>}
+                    {!isMobile && <span>Export backup</span>}
                   </button>
 
-                  {confirmDeleteId === sheet.id ? (
-                    <div className="ml-auto flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void deleteSheet(sheet.id);
-                          setConfirmDeleteId(null);
-                        }}
-                        className="rounded-lg bg-red-700 px-2 py-1.5 text-caption font-bold text-white hover:bg-red-600"
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(null)}
-                        className="rounded-lg bg-zinc-800 px-2 py-1.5 text-caption text-stone-300 hover:bg-zinc-700"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteId(sheet.id)}
-                      className="ml-auto rounded-lg border border-stone-800 bg-zinc-900/90 p-1.5 text-stone-400 hover:border-red-700/70 hover:text-red-300"
-                      aria-label={`Delete ${sheet.name}`}
-                      title="Delete sheet"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+                  <ConfirmButton
+                    variant="ghost"
+                    label={`Delete ${sheet.name}`}
+                    prompt={`Delete ${sheet.name} for good? This cannot be undone.`}
+                    confirmLabel="Delete"
+                    className="ml-auto"
+                    onConfirm={() => void deleteSheet(sheet.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </ConfirmButton>
                 </div>
               </article>
             );
@@ -511,7 +496,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
             Create New Garou for {activeSeat.playerName}
           </h3>
           <p className="text-xs text-stone-400">
-            Follow canonical W20 step-by-step rules or start with a blank fillable sheet.
+            Use the step-by-step wizard, or start with a blank sheet.
           </p>
         </div>
 
@@ -655,7 +640,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
           <div>
             <div className="flex items-center gap-1.5 text-xs font-bold text-stone-200">
               <Upload className="h-3.5 w-3.5 text-cyan-300" />
-              Import .w20sheet.json Backup
+              Import a backup file
             </div>
             <p className="mt-1 text-caption text-stone-400">
               Import an exported JSON sheet into your library and bind it to{' '}
@@ -791,7 +776,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                   </span>
                 ) : (
                   <span>
-                    <strong className="text-amber-100">{seats.length}</strong> same-screen seats ready
+                    <strong className="text-amber-100">{seats.length}</strong> seats ready
                   </span>
                 )}
               </div>

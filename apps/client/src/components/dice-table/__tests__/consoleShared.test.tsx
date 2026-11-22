@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import {
   connectionLabel,
+  getRollBlockReason,
   getRollCtaText,
   getRollGate,
   RageDiceStepper,
@@ -58,13 +59,39 @@ describe('getRollCtaText', () => {
   it('describes the roll, adding difficulty and Rage only when they matter', () => {
     expect(getRollCtaText(base)).toBe('Roll 7d10');
     expect(getRollCtaText({ ...base, difficulty: 8, clampedPreviewRage: 2 })).toBe(
-      'Roll 7d10 • D8 (2R)'
+      'Roll 7d10 • Diff 8 • 2 Rage'
     );
   });
 
+  it('shows the block reason in place of the roll text', () => {
+    expect(getRollCtaText({ ...base, blockReason: 'Session expired' })).toBe('Session expired');
+  });
+
   it('explains why a sheet-trait roll is not ready', () => {
-    expect(getRollCtaText({ ...base, hasTraitSelection: false })).toBe('Select Trait');
+    expect(getRollCtaText({ ...base, hasTraitSelection: false })).toBe('Pick a trait');
     expect(getRollCtaText({ ...base, pool: 0 })).toBe('0 Dice');
+  });
+});
+
+describe('getRollBlockReason', () => {
+  it('is null when rolling is possible, including while reconnecting', () => {
+    expect(getRollBlockReason({ connectionStatus: 'authenticated', localPendingCount: 0 })).toBeNull();
+    expect(getRollBlockReason({ connectionStatus: 'reconnecting', localPendingCount: 3 })).toBeNull();
+  });
+
+  it('names the reason when rolling is blocked', () => {
+    expect(getRollBlockReason({ connectionStatus: 'session_expired', localPendingCount: 0 })).toBe(
+      'Session expired'
+    );
+    expect(getRollBlockReason({ connectionStatus: 'disconnected', localPendingCount: 0 })).toBe(
+      'Offline'
+    );
+    expect(
+      getRollBlockReason({
+        connectionStatus: 'authenticated',
+        localPendingCount: MAX_LOCAL_QUEUED_ROLLS,
+      })
+    ).toBe(`Queue full (${MAX_LOCAL_QUEUED_ROLLS})`);
   });
 });
 
@@ -73,6 +100,7 @@ describe('connectionLabel', () => {
     expect(connectionLabel('authenticated')).toBe('Connected');
     expect(connectionLabel('reconnecting')).toBe('Reconnecting');
     expect(connectionLabel('disconnected')).toBe('Offline');
+    expect(connectionLabel('session_expired')).toBe('Session expired');
   });
 });
 

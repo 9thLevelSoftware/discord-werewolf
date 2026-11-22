@@ -73,6 +73,11 @@ export interface RollStageCoordinatorOptions {
   onStopThrowSound: () => void;
   onPlayOutcomeSound: (roll: W20RollResult) => void;
   onStatusChange: (status: RollStageStatus) => void;
+  /**
+   * A local roll was sent but never confirmed by the table: either the server
+   * rejected it, or no confirmation arrived in time.
+   */
+  onLocalRollUnconfirmed?: (spec: LocalQueuedRollSpec, reason: 'rejected' | 'timeout') => void;
   timing?: RollStageTimingOptions;
 }
 
@@ -280,6 +285,7 @@ export class RollStageCoordinator {
   private readonly expectedLocalClientIds = new Set<string>();
   private readonly earlyMatchedEchoes = new Map<string, Queued3DRoll>();
   private readonly echoWaiters = new Map<string, (roll: Queued3DRoll | null) => void>();
+  private inFlightRejected = false;
 
   private inFlightLocalSpec: LocalQueuedRollSpec | null = null;
   private inFlightLocalSent = false;
@@ -337,6 +343,16 @@ export class RollStageCoordinator {
     this.emitStatus();
     this.pump();
     return true;
+  }
+
+  /**
+   * The server rejected a command. If one of our rolls is waiting for confirmation,
+   * treat the rejection as its answer instead of waiting out the timeout.
+   */
+  notifyCommandRejected(): void {
+    if (this.disposed || !this.inFlightLocalSent || !this.inFlightLocalSpec) return;
+    this.inFlightRejected = true;
+    this.echoWaiters.get(this.inFlightLocalSpec.rollClientId)?.(null);
   }
 
   notifyInboundQueueChanged(): void {
@@ -587,6 +603,11 @@ export class RollStageCoordinator {
 
     const echoedRoll = await echoPromise;
     this.expectedLocalClientIds.delete(spec.rollClientId);
+
+    if (!echoedRoll && !this.disposed) {
+      this.options.onLocalRollUnconfirmed?.(spec, this.inFlightRejected ? 'rejected' : 'timeout');
+    }
+    this.inFlightRejected = false;
 
     this.inFlightLocalSpec = null;
     this.inFlightLocalSent = false;

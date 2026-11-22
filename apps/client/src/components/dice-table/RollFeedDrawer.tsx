@@ -32,10 +32,10 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
         {rollHistory.length === 0 ? (
           <div className="rounded-xl border border-dashed border-stone-700/60 bg-zinc-950/50 p-6 text-center text-xs text-stone-400">
             <p className="font-display text-amber-200/80 uppercase tracking-wider">
-              The Felt Awaits
+              No rolls yet
             </p>
             <p className="mt-1 text-xs text-stone-400">
-              Every thrown pool in this voice table is inscribed here.
+              Rolls from everyone at this table appear here.
             </p>
           </div>
         ) : (
@@ -152,7 +152,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
       <Modal
         open
         onClose={onClose}
-        title="Chronicle of Rolls"
+        title="Roll Log"
         variant="sheet"
         bodyClassName="space-y-2.5 p-3"
       >
@@ -163,7 +163,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
 
   return (
     <aside
-      aria-label="Chronicle of Rolls"
+      aria-label="Roll Log"
       onKeyDown={(e) => {
         if (e.key === 'Escape') onClose();
       }}
@@ -173,11 +173,11 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
         <div className="flex items-center gap-2">
           <ScrollText className="h-4 w-4 text-amber-300" />
           <h2 className="font-display text-xs font-bold tracking-wider uppercase text-amber-100">
-            Chronicle of Rolls
+            Roll Log
           </h2>
         </div>
         <IconButton
-          label="Collapse Chronicle of Rolls"
+          label="Collapse Roll Log"
           icon={<ChevronRight className="h-4 w-4" />}
           size="sm"
           onClick={onClose}

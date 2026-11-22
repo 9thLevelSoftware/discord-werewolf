@@ -44,7 +44,7 @@ import {
   W20_RANK_NAMES,
   W20_TRIBES,
 } from './sheetShared';
-import { NumberStepper } from '../ui';
+import { ConfirmButton, NumberStepper } from '../ui';
 
 export type PageOneMobileSection =
   | 'identity'
@@ -1889,9 +1889,11 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
 
             <div className="mt-2.5 flex items-center justify-between text-caption text-stone-400">
               <span>Tap box: None → / → X → *</span>
-              <button
-                type="button"
-                onClick={() =>
+              <ConfirmButton
+                variant="secondary"
+                prompt="Clear all health damage?"
+                confirmLabel="Clear"
+                onConfirm={() =>
                   onUpdateSheet((prev) => ({
                     ...prev,
                     health: {
@@ -1900,10 +1902,9 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     },
                   }))
                 }
-                className="rounded border border-stone-700 bg-zinc-900 px-2 py-0.5 font-semibold text-stone-300 hover:border-emerald-600/60 hover:text-emerald-200"
               >
                 Clear All
-              </button>
+              </ConfirmButton>
             </div>
           </section>
         </div>
