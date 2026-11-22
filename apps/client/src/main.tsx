@@ -15,7 +15,21 @@ const root = createRoot(rootElement);
 const showUiGallery =
   import.meta.env.DEV && new URLSearchParams(window.location.search).has('ui');
 
-if (import.meta.env.DEV && showUiGallery) {
+// Development only: /?preview=legacy mounts the campaign screens with sample state.
+const showLegacyPreview =
+  import.meta.env.DEV && new URLSearchParams(window.location.search).get('preview') === 'legacy';
+
+if (import.meta.env.DEV && showLegacyPreview) {
+  void import('./components/LegacyPreview').then(({ LegacyPreview }) => {
+    root.render(
+      <StrictMode>
+        <ErrorBoundary>
+          <LegacyPreview />
+        </ErrorBoundary>
+      </StrictMode>
+    );
+  });
+} else if (import.meta.env.DEV && showUiGallery) {
   void import('./components/ui/UiGallery').then(({ UiGallery }) => {
     root.render(
       <StrictMode>

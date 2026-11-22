@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { LogOut, Wifi, WifiOff } from 'lucide-react';
 import { DiscordSessionContext } from '../discordBootstrap';
 import { useVttRoomStore } from '../store/useVttRoomStore';
+import { connectionLabel } from './dice-table/console/consoleShared';
 import { TacticalViewport } from '../canvas/TacticalViewport';
 import { DiceOverlay3D } from './DiceOverlay3D';
 import { GarouCharacterHud } from './GarouCharacterHud';
@@ -33,26 +34,27 @@ export const ActivityWorkspace: React.FC<ActivityWorkspaceProps> = ({
   const effectiveMapUrl = mapAssetUrl !== undefined ? mapAssetUrl : storeMapAssetUrl;
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100">
+    <main className="relative h-dvh w-screen overflow-hidden bg-zinc-950 text-stone-100">
       {/* Z-0: PixiJS v8 Dual-Realm Battlemap, Fog of War & Voice-Reactive Tokens */}
       <TacticalViewport mapAssetUrl={effectiveMapUrl} />
 
       {/* Top-Center Connection Status & Lobby Switch Pill */}
-      <div className="pointer-events-auto absolute top-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-zinc-800 bg-zinc-950/85 px-3 py-1 text-[11px] shadow-md backdrop-blur">
+      <div className="pointer-events-auto absolute top-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full w20-obsidian-panel px-3 py-1 text-xs">
         {connectionStatus === 'authenticated' ? (
           <Wifi className="h-3.5 w-3.5 text-emerald-400" />
         ) : (
           <WifiOff className="h-3.5 w-3.5 animate-pulse text-amber-400" />
         )}
-        <span className="capitalize text-zinc-300">{connectionStatus}</span>
+        <span className="text-stone-300">{connectionLabel(connectionStatus)}</span>
         {onLeaveRoom && (
           <>
             <span className="h-3 w-px bg-zinc-700" />
             <button
               type="button"
               onClick={onLeaveRoom}
+              aria-label="Return to Chronicle Lobby"
               title="Return to Chronicle Lobby"
-              className="flex items-center gap-1 text-zinc-400 hover:text-zinc-100"
+              className="flex items-center gap-1 text-stone-400 hover:text-stone-100"
             >
               <LogOut className="h-3 w-3" />
               Lobby

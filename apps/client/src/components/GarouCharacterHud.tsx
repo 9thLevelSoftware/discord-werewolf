@@ -50,10 +50,10 @@ const DualPoolRow: React.FC<{
 
   return (
     <div className="flex flex-col gap-0.5">
-      <div className="flex items-center justify-between gap-2 text-[10px]">
-        <span className="font-bold tracking-wide uppercase text-zinc-300">{label}</span>
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-bold tracking-wide uppercase text-stone-300">{label}</span>
         <div className="flex items-center gap-1">
-          <span className="font-mono text-zinc-400">
+          <span className="font-mono text-stone-400">
             {tracker.temporary}/{perm}
             {effectivePermanent !== undefined && effectivePermanent < tracker.permanent && (
               <span className="ml-1 text-amber-400" title="Reduced by carried silver items">
@@ -65,8 +65,9 @@ const DualPoolRow: React.FC<{
             type="button"
             disabled={spendBlocked}
             onClick={() => onAdjust(-1)}
+            aria-label={lockedReason ?? `Spend 1 ${label}`}
             title={lockedReason ?? `Spend 1 ${label}`}
-            className="h-4 w-4 rounded border border-zinc-700 bg-zinc-900 text-center font-mono leading-none text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-35"
+            className="flex h-6 w-6 items-center justify-center rounded border border-stone-700 bg-zinc-900 font-mono leading-none text-stone-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-35"
           >
             -
           </button>
@@ -74,8 +75,9 @@ const DualPoolRow: React.FC<{
             type="button"
             disabled={gainBlocked}
             onClick={() => onAdjust(1)}
+            aria-label={`Restore 1 ${label}`}
             title={`Restore 1 ${label}`}
-            className="h-4 w-4 rounded border border-zinc-700 bg-zinc-900 text-center font-mono leading-none text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-35"
+            className="flex h-6 w-6 items-center justify-center rounded border border-stone-700 bg-zinc-900 font-mono leading-none text-stone-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-35"
           >
             +
           </button>
@@ -92,12 +94,12 @@ const DualPoolRow: React.FC<{
             <div key={idx} className="flex flex-col items-center gap-0.5">
               <span
                 className={`h-1.5 w-1.5 rounded-full border ${
-                  hasPerm ? `${accentClass} border-transparent` : 'border-zinc-700 bg-zinc-900'
+                  hasPerm ? `${accentClass} border-transparent` : 'border-stone-700 bg-zinc-900'
                 }`}
               />
               <span
                 className={`h-2 w-2 rounded-[2px] border ${
-                  hasTemp ? 'border-zinc-300 bg-zinc-200' : 'border-zinc-700 bg-zinc-950'
+                  hasTemp ? 'border-stone-300 bg-zinc-200' : 'border-stone-700 bg-zinc-950'
                 } ${lockedReason ? 'opacity-40' : ''}`}
                 title={lockedReason}
               />
@@ -148,12 +150,12 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
 
   if (!character || !computed || !previewComputed || !activeCharacterId) {
     return (
-      <div className="pointer-events-auto absolute bottom-3 left-3 z-30 flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/90 px-3 py-2 text-xs shadow-2xl backdrop-blur">
+      <div className="pointer-events-auto absolute bottom-3 left-3 z-hud flex items-center gap-2 rounded-xl w20-obsidian-panel px-3 py-2 text-xs">
         {viewerRole === 'storyteller' && onToggleSheet && (
           <button
             type="button"
             onClick={onToggleSheet}
-            className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 font-bold text-zinc-200 hover:bg-zinc-800"
+            className="flex items-center gap-1.5 rounded-lg border border-stone-700 bg-zinc-900 px-2.5 py-1.5 font-bold text-stone-200 hover:bg-zinc-800"
           >
             <BookOpen className="h-3.5 w-3.5 text-amber-400" />
             {sheetOpen ? 'Hide Roster Sheet' : 'Inspect Pack Sheets'}
@@ -167,6 +169,7 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
               reason: 'X-Card safety pause requested.',
             })
           }
+          aria-label="Pause scene immediately (X-Card safety tool)"
           title="Pause scene immediately (X-Card safety tool)"
           className="flex items-center gap-1 rounded-lg border border-red-800/70 bg-red-950/60 px-2.5 py-1.5 font-bold text-red-200 hover:bg-red-900/80"
         >
@@ -216,7 +219,7 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
   };
 
   return (
-    <div className="pointer-events-auto absolute bottom-3 left-3 z-30 flex max-w-[calc(100vw-1.5rem)] flex-wrap items-stretch gap-2.5 rounded-xl border border-zinc-800 bg-zinc-950/92 p-2.5 text-zinc-100 shadow-2xl backdrop-blur md:max-w-[calc(100vw-23rem)]">
+    <div className="pointer-events-auto absolute bottom-3 left-3 z-hud flex max-w-[calc(100vw-1.5rem)] flex-wrap items-stretch gap-2.5 rounded-xl w20-obsidian-panel p-2.5 text-stone-100 md:max-w-[calc(100vw-23rem)]">
       {/* 1. Voice-Reactive Shifted Portrait */}
       <div className="relative flex flex-col items-center justify-between">
         <div
@@ -225,30 +228,30 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
               ? 'border-red-500 shadow-[0_0_16px_rgba(239,68,68,0.65)]'
               : isSpeaking
                 ? 'border-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.6)]'
-                : 'border-zinc-700'
+                : 'border-stone-700'
           }`}
         >
           {portraitSrc ? (
             <img src={portraitSrc} alt={character.name} className="h-full w-full object-cover" />
           ) : (
-            <div className="flex h-full w-full items-center justify-center bg-zinc-900 text-lg font-bold text-zinc-400">
+            <div className="flex h-full w-full items-center justify-center bg-zinc-900 text-lg font-bold text-stone-400">
               {character.name.slice(0, 2).toUpperCase()}
             </div>
           )}
-          <span className="absolute inset-x-0 bottom-0 bg-black/80 py-0.5 text-center text-[9px] font-bold tracking-wider uppercase">
+          <span className="absolute inset-x-0 bottom-0 bg-black/80 py-0.5 text-center text-xs font-bold tracking-wider uppercase">
             {character.activeForm}
           </span>
         </div>
         <div className="mt-1 text-center">
-          <p className="max-w-20 truncate text-[11px] font-bold">{character.name}</p>
-          <p className="text-[9px] capitalize text-zinc-400">
+          <p className="max-w-20 truncate text-xs font-bold">{character.name}</p>
+          <p className="text-xs capitalize text-stone-400">
             {character.breed} {character.auspice}
           </p>
         </div>
       </div>
 
       {/* 2. Five-Form Shifter & Live Attribute Strip */}
-      <div className="flex flex-col justify-between border-l border-zinc-800 pl-2.5">
+      <div className="flex flex-col justify-between border-l border-stone-800 pl-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap gap-1">
             {ORDERED_FORMS.map((f) => {
@@ -269,11 +272,11 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
                   className={`rounded-md border px-2 py-1 text-left transition ${
                     isCurrent
                       ? 'border-red-500/80 bg-red-950/60 text-red-100'
-                      : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-600'
+                      : 'border-stone-800 bg-zinc-900 text-stone-300 hover:border-stone-600'
                   } disabled:cursor-not-allowed disabled:opacity-55`}
                 >
-                  <div className="text-[11px] font-bold">{f.label}</div>
-                  <div className="text-[9px] text-zinc-400">
+                  <div className="text-xs font-bold">{f.label}</div>
+                  <div className="text-xs text-stone-400">
                     {isCurrent
                       ? 'Active'
                       : isBreedForm
@@ -290,11 +293,12 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
           <button
             type="button"
             onClick={() => setInstantRageShift((v) => !v)}
+            aria-label={rageCheck.reason ?? 'Toggle between Primal-Urge roll and 1-Rage instant shift'}
             title={rageCheck.reason ?? 'Toggle between Primal-Urge roll and 1-Rage instant shift'}
-            className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${
+            className={`rounded border px-2 py-1 text-xs font-semibold transition ${
               instantRageShift
                 ? 'border-red-500/60 bg-red-950/70 text-red-200'
-                : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-zinc-200'
+                : 'border-stone-700 bg-zinc-900 text-stone-400 hover:text-stone-200'
             }`}
           >
             {instantRageShift ? 'Instant (1 Rage)' : 'Roll Primal-Urge'}
@@ -319,14 +323,14 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
             const diff = val - base;
             return (
               <div key={attr} className="flex flex-col items-center">
-                <span className="text-[9px] uppercase text-zinc-500">{attr.slice(0, 3)}</span>
+                <span className="text-xs uppercase text-stone-400">{attr.slice(0, 3)}</span>
                 <span
                   className={`font-mono text-xs font-bold ${
                     diff > 0
                       ? 'text-emerald-400'
                       : diff < 0
                         ? 'text-amber-400'
-                        : 'text-zinc-200'
+                        : 'text-stone-200'
                   }`}
                 >
                   {val}
@@ -344,7 +348,7 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
                 key={atk.name}
                 type="button"
                 onClick={() => triggerNaturalAttack(atk.name, atk.accuracyDiff)}
-                className="flex items-center gap-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-[10px] font-semibold text-zinc-200 hover:border-red-500/70 hover:text-white"
+                className="flex items-center gap-1 rounded border border-stone-700 bg-zinc-800 px-2 py-1 text-xs font-semibold text-stone-200 hover:border-red-500/70 hover:text-white"
               >
                 <Swords className="h-3 w-3 text-red-400" />
                 {atk.name} ({atk.damageDicePool}d {atk.damageType.slice(0, 3).toUpperCase()})
@@ -354,7 +358,7 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
         </div>
 
         {/* Form Special Rule Hint Bar & Turn Lock */}
-        <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-zinc-400">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-400">
           <span>
             {hoveredForm && hoveredForm !== character.activeForm && (
               <strong className="mr-1.5 text-amber-300 uppercase">Preview {hoveredForm}:</strong>
@@ -379,7 +383,7 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
       </div>
 
       {/* 3. Dual Rage / Gnosis / Willpower Interactive Trackers */}
-      <div className="flex flex-col justify-between gap-1 border-l border-zinc-800 pl-2.5">
+      <div className="flex flex-col justify-between gap-1 border-l border-stone-800 pl-2.5">
         <DualPoolRow
           label="Rage"
           tracker={character.rage}
@@ -425,18 +429,18 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
       </div>
 
       {/* 4. Cascading Health Track + Damage/Heal/Soak Popover + Sheet & X-Card */}
-      <div className="relative flex flex-col justify-between gap-1.5 border-l border-zinc-800 pl-2.5">
-        <div className="flex items-center justify-between gap-2 text-[10px]">
+      <div className="relative flex flex-col justify-between gap-1.5 border-l border-stone-800 pl-2.5">
+        <div className="flex items-center justify-between gap-2 text-xs">
           <button
             type="button"
             onClick={() => setHealthPopoverOpen((v) => !v)}
-            className="flex items-center gap-1 font-bold uppercase text-zinc-200 hover:text-red-300"
+            className="flex items-center gap-1 font-bold uppercase text-stone-200 hover:text-red-300"
           >
             <HeartPulse className="h-3.5 w-3.5 text-red-400" />
             Health
           </button>
           <span
-            className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+            className={`rounded px-1.5 py-0.5 font-mono text-xs font-bold ${
               computed.isIncapacitated
                 ? 'bg-red-900 text-red-100'
                 : character.inFrenzy || character.turnLocks.ignoringWoundPenaltiesThisTurn
@@ -460,15 +464,16 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
               key={idx}
               type="button"
               onClick={() => setHealthPopoverOpen((v) => !v)}
+              aria-label={healthLadderLabels[idx] ?? 'Health Box'}
               title={healthLadderLabels[idx] ?? 'Health Box'}
-              className={`flex h-5 w-5 items-center justify-center rounded border font-mono text-[11px] font-black ${
+              className={`flex h-5 w-5 items-center justify-center rounded border font-mono text-xs font-black ${
                 dmg === 'aggravated'
                   ? 'border-red-500 bg-red-950/80 text-amber-300'
                   : dmg === 'lethal'
                     ? 'border-red-700/80 bg-zinc-900 text-red-400'
                     : dmg === 'bashing'
                       ? 'border-amber-600/60 bg-zinc-900 text-amber-300'
-                      : 'border-zinc-800 bg-zinc-950 text-zinc-700'
+                      : 'border-stone-800 bg-zinc-950 text-stone-400'
               }`}
             >
               {renderWoundGlyph(dmg)}
@@ -482,10 +487,10 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
             <button
               type="button"
               onClick={onToggleSheet}
-              className={`flex flex-1 items-center justify-center gap-1 rounded border px-2 py-1 text-[10px] font-bold transition ${
+              className={`flex flex-1 items-center justify-center gap-1 rounded border px-2 py-1 text-xs font-bold transition ${
                 sheetOpen
                   ? 'border-emerald-500/70 bg-emerald-950/60 text-emerald-200'
-                  : 'border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800'
+                  : 'border-stone-700 bg-zinc-900 text-stone-200 hover:bg-zinc-800'
               }`}
             >
               <BookOpen className="h-3 w-3" />
@@ -500,8 +505,9 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
                 reason: `${character.name} triggered the X-Card safety pause.`,
               })
             }
+            aria-label="Pause scene immediately (X-Card safety tool)"
             title="Pause scene immediately (X-Card safety tool)"
-            className="flex items-center gap-1 rounded border border-red-800/70 bg-red-950/60 px-2 py-1 text-[10px] font-bold text-red-200 hover:bg-red-900/80"
+            className="flex items-center gap-1 rounded border border-red-800/70 bg-red-950/60 px-2 py-1 text-xs font-bold text-red-200 hover:bg-red-900/80"
           >
             <ShieldAlert className="h-3 w-3" />
             X
@@ -510,13 +516,13 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
 
         {/* Damage / Heal / Soak Popover */}
         {healthPopoverOpen && (
-          <div className="absolute right-0 bottom-full z-40 mb-2 w-60 rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-xs shadow-2xl">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-1.5">
-              <span className="font-bold uppercase text-zinc-200">Health &amp; Soak</span>
+          <div className="absolute right-0 bottom-full z-drawer mb-2 w-60 rounded-xl border border-stone-700 bg-zinc-950 p-3 text-xs shadow-2xl">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-1.5">
+              <span className="font-bold uppercase text-stone-200">Health &amp; Soak</span>
               <button
                 type="button"
                 onClick={() => setHealthPopoverOpen(false)}
-                className="text-zinc-400 hover:text-zinc-200"
+                className="text-stone-400 hover:text-stone-200"
               >
                 ×
               </button>
@@ -528,10 +534,10 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
                   key={m}
                   type="button"
                   onClick={() => setHealthMode(m)}
-                  className={`rounded py-1 text-[10px] font-bold uppercase ${
+                  className={`rounded py-1 text-xs font-bold uppercase ${
                     healthMode === m
-                      ? 'bg-red-700 text-white'
-                      : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'
+                      ? 'bg-red-800/90 text-amber-50'
+                      : 'bg-zinc-900 text-stone-400 hover:text-stone-200'
                   }`}
                 >
                   {m}
@@ -541,26 +547,28 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
 
             <div className="mt-2 flex gap-2">
               <select
+                aria-label="Health type"
                 value={healthType}
                 onChange={(e) => setHealthType(e.target.value as Exclude<DamageType, 'none'>)}
-                className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px]"
+                className="flex-1 rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs"
               >
                 <option value="bashing">Bashing (/)</option>
                 <option value="lethal">Lethal (X)</option>
                 <option value="aggravated">Aggravated (*)</option>
               </select>
               <input
+                aria-label="Health levels"
                 type="number"
                 min={1}
                 max={20}
                 value={healthLevels}
                 onChange={(e) => setHealthLevels(Number(e.target.value))}
-                className="w-14 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-center font-mono text-[11px]"
+                className="w-14 rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-center font-mono text-xs"
               />
             </div>
 
             {healthMode !== 'heal' && (
-              <label className="mt-2 flex items-center gap-2 text-[11px] text-amber-300">
+              <label className="mt-2 flex items-center gap-2 text-xs text-amber-300">
                 <input
                   type="checkbox"
                   checked={healthSilver}
@@ -573,7 +581,7 @@ export const GarouCharacterHud: React.FC<GarouCharacterHudProps> = ({
             <button
               type="button"
               onClick={applyHealthChange}
-              className="mt-2.5 w-full rounded bg-red-700 py-1.5 text-[11px] font-bold uppercase text-white hover:bg-red-600"
+              className="mt-2.5 w-full rounded bg-red-800/90 py-1.5 text-xs font-bold uppercase text-amber-50 hover:bg-red-700"
             >
               Apply {healthMode}
             </button>

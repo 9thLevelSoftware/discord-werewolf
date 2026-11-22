@@ -159,16 +159,17 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
   const characterList = Object.values(characters);
 
   return (
-    <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-xs text-zinc-100 shadow-2xl">
-      <div className="mb-3 flex items-center justify-between gap-2 border-b border-zinc-800 pb-2">
-        <h3 className="text-sm font-extrabold tracking-wide uppercase">
+    <div className="w-full text-xs text-stone-100">
+      <div className="mb-3 flex items-center justify-between gap-2 border-b border-stone-800 pb-2">
+        <h3 className="text-sm font-display font-extrabold tracking-wide uppercase text-amber-100">
           W20 Gift &amp; Fetish Macro Builder
         </h3>
         <div className="flex items-center gap-1.5">
           <select
+            aria-label="Load a preset"
             value={selectedPreset}
             onChange={(e) => loadPreset(e.target.value as CanonicalMacroPresetKey)}
-            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px]"
+            className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs"
           >
             {(Object.keys(CANONICAL_W20_PRESETS) as CanonicalMacroPresetKey[]).map((key) => (
               <option key={key} value={key}>
@@ -180,7 +181,8 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              aria-label="Close macro builder"
+              className="rounded p-1 text-stone-400 hover:bg-zinc-800 hover:text-stone-100"
             >
               <X className="h-4 w-4" />
             </button>
@@ -191,13 +193,15 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
       <div className="space-y-2.5">
         <div className="grid grid-cols-12 gap-2">
           <input
+            aria-label="Gift, Rite, or Fetish Name"
             type="text"
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value, id: crypto.randomUUID() })}
             placeholder="Gift, Rite, or Fetish Name"
-            className="col-span-6 rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 font-semibold"
+            className="col-span-6 rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 font-semibold"
           />
           <select
+            aria-label="Category"
             value={draft.category}
             onChange={(e) =>
               setDraft({
@@ -205,7 +209,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                 category: e.target.value as W20MacroDefinition['category'],
               })
             }
-            className="col-span-4 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 capitalize"
+            className="col-span-4 rounded border border-stone-700 bg-zinc-900 px-2 py-1.5 capitalize"
           >
             <option value="gift">Gift</option>
             <option value="rite">Rite</option>
@@ -213,6 +217,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
             <option value="talen">Talen</option>
           </select>
           <input
+            aria-label="Rank or level"
             type="number"
             min={0}
             max={6}
@@ -224,22 +229,22 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
               })
             }
             title="Rank / Level (0-6)"
-            className="col-span-2 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-center font-mono"
+            className="col-span-2 rounded border border-stone-700 bg-zinc-900 px-2 py-1.5 text-center font-mono"
           />
         </div>
 
         {/* Resource Costs (Mutually Exclusive Rage vs Gnosis) */}
-        <div className="grid grid-cols-3 gap-2 rounded-lg border border-zinc-800 bg-zinc-900/70 p-2">
+        <div className="grid grid-cols-3 gap-2 rounded-lg border border-stone-800 bg-zinc-900/70 p-2">
           {(['rage', 'gnosis', 'willpower'] as const).map((res) => (
             <label key={res} className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase text-zinc-400">{res} Cost</span>
+              <span className="text-xs font-bold uppercase text-stone-400">{res} Cost</span>
               <input
                 type="number"
                 min={0}
                 max={5}
                 value={draft.costs[res]}
                 onChange={(e) => setCost(res, Number(e.target.value))}
-                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono"
+                className="rounded border border-stone-700 bg-zinc-950 px-2 py-1 font-mono"
               />
             </label>
           ))}
@@ -247,8 +252,9 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
 
         {/* Roll Pool Selector */}
         <div className="space-y-1.5">
-          <span className="font-semibold text-zinc-300">Activation Roll Type</span>
+          <span className="font-semibold text-stone-300">Activation Roll Type</span>
           <select
+            aria-label="Activation roll type"
             value={draft.pool.kind}
             onChange={(e) => {
               const kind = e.target.value;
@@ -265,7 +271,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                 });
               }
             }}
-            className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5"
+            className="w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1.5"
           >
             <option value="no_roll_instant">Instant Spend (No Dice Roll)</option>
             <option value="attribute_ability">Attribute + Ability Pool</option>
@@ -276,6 +282,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
           {draft.pool.kind === 'attribute_ability' && (
             <div className="flex gap-2">
               <select
+                aria-label="Pool attribute"
                 value={draft.pool.attribute}
                 onChange={(e) => {
                   const pool = draft.pool;
@@ -285,7 +292,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                     pool: { ...pool, attribute: e.target.value as AttributeKey },
                   });
                 }}
-                className="w-1/2 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 capitalize"
+                className="w-1/2 rounded border border-stone-700 bg-zinc-900 px-2 py-1 capitalize"
               >
                 {ALL_ATTRIBUTES.map((attr) => (
                   <option key={attr} value={attr}>
@@ -294,6 +301,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                 ))}
               </select>
               <input
+                aria-label="Ability"
                 type="text"
                 value={draft.pool.ability ?? ''}
                 onChange={(e) => {
@@ -310,13 +318,14 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                   });
                 }}
                 placeholder="Ability (e.g. occult)"
-                className="w-1/2 rounded border border-zinc-700 bg-zinc-900 px-2 py-1"
+                className="w-1/2 rounded border border-stone-700 bg-zinc-900 px-2 py-1"
               />
             </div>
           )}
 
           {draft.pool.kind === 'permanent_trait' && (
             <select
+              aria-label="Pool trait"
               value={draft.pool.trait}
               onChange={(e) =>
                 setDraft({
@@ -327,7 +336,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                   },
                 })
               }
-              className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 capitalize"
+              className="w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 capitalize"
             >
               <option value="gnosis">Permanent Gnosis</option>
               <option value="rage">Permanent Rage</option>
@@ -336,8 +345,8 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
           )}
 
           {draft.pool.kind === 'fetish_gnosis_rating' && (
-            <label className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-900 px-2.5 py-1">
-              <span className="text-zinc-300">Fetish Gnosis Rating (1-10)</span>
+            <label className="flex items-center justify-between rounded border border-stone-800 bg-zinc-900 px-2.5 py-1">
+              <span className="text-stone-300">Fetish Gnosis Rating (1-10)</span>
               <input
                 type="number"
                 min={1}
@@ -352,7 +361,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                     },
                   })
                 }
-                className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-center font-mono"
+                className="w-16 rounded border border-stone-700 bg-zinc-950 px-2 py-0.5 text-center font-mono"
               />
             </label>
           )}
@@ -360,9 +369,10 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
 
         {/* Difficulty Source */}
         <div className="space-y-1.5">
-          <span className="font-semibold text-zinc-300">Difficulty Formula</span>
+          <span className="font-semibold text-stone-300">Difficulty Formula</span>
           <div className="flex gap-2">
             <select
+              aria-label="Difficulty formula"
               value={draft.difficulty.kind}
               onChange={(e) => {
                 const kind = e.target.value as MacroDifficultySource['kind'];
@@ -373,7 +383,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                   setDraft({ ...draft, difficulty: { kind: 'target_trait', trait: 'rage' } });
                 }
               }}
-              className="w-1/2 rounded border border-zinc-700 bg-zinc-900 px-2 py-1"
+              className="w-1/2 rounded border border-stone-700 bg-zinc-900 px-2 py-1"
             >
               <option value="static">Static Number</option>
               <option value="local_gauntlet">Local Gauntlet</option>
@@ -382,6 +392,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
 
             {draft.difficulty.kind === 'static' && (
               <input
+                aria-label="Difficulty"
                 type="number"
                 min={2}
                 max={10}
@@ -395,12 +406,13 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                     },
                   })
                 }
-                className="w-1/2 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono"
+                className="w-1/2 rounded border border-stone-700 bg-zinc-900 px-2 py-1 font-mono"
               />
             )}
 
             {draft.difficulty.kind === 'local_gauntlet' && (
               <input
+                aria-label="Difficulty modifier"
                 type="number"
                 min={-5}
                 max={5}
@@ -415,12 +427,13 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                   })
                 }
                 title="Gauntlet modifier (-5 to +5)"
-                className="w-1/2 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono"
+                className="w-1/2 rounded border border-stone-700 bg-zinc-900 px-2 py-1 font-mono"
               />
             )}
 
             {draft.difficulty.kind === 'target_trait' && (
               <select
+                aria-label="Difficulty trait"
                 value={draft.difficulty.trait}
                 onChange={(e) =>
                   setDraft({
@@ -431,7 +444,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                     },
                   })
                 }
-                className="w-1/2 rounded border border-zinc-700 bg-zinc-900 px-2 py-1"
+                className="w-1/2 rounded border border-stone-700 bg-zinc-900 px-2 py-1"
               >
                 <option value="willpower">Target Willpower</option>
                 <option value="rage">Target Rage</option>
@@ -443,12 +456,13 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
         </div>
 
         {/* Effect Payload */}
-        <div className="space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-900/50 p-2">
-          <span className="font-semibold text-zinc-300">Primary Mechanical Effect</span>
+        <div className="space-y-1.5 rounded-lg border border-stone-800 bg-zinc-900/50 p-2">
+          <span className="font-semibold text-stone-300">Primary Mechanical Effect</span>
           <select
+            aria-label="Primary effect type"
             value={primaryEffect.type}
             onChange={(e) => setPrimaryEffectType(e.target.value as MacroEffectPayload['type'])}
-            className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1"
+            className="w-full rounded border border-stone-700 bg-zinc-950 px-2 py-1"
           >
             <option value="buff_claw_damage">Buff Claw Damage (+Dice)</option>
             <option value="buff_soak_per_success">Buff Soak (+1/Success)</option>
@@ -461,6 +475,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
           {primaryEffect.type === 'weapon_strike' && (
             <div className="flex items-center gap-2">
               <input
+                aria-label="Primary effect damage bonus"
                 type="number"
                 min={0}
                 max={20}
@@ -476,9 +491,10 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                     ],
                   })
                 }
-                className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono"
+                className="w-16 rounded border border-stone-700 bg-zinc-950 px-2 py-1 font-mono"
               />
               <select
+                aria-label="Primary effect damage type"
                 value={primaryEffect.damageType}
                 onChange={(e) =>
                   setDraft({
@@ -491,7 +507,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                     ],
                   })
                 }
-                className="flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1"
+                className="flex-1 rounded border border-stone-700 bg-zinc-950 px-2 py-1"
               >
                 <option value="bashing">Bashing</option>
                 <option value="lethal">Lethal</option>
@@ -516,7 +532,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
 
         {/* Form Restrictions */}
         <div>
-          <span className="block font-semibold text-zinc-300">Form Restrictions (Empty = Any)</span>
+          <span className="block font-semibold text-stone-300">Form Restrictions (Empty = Any)</span>
           <div className="mt-1 flex gap-1">
             {ALL_FORMS.map((f) => {
               const selected = draft.requiredForms?.includes(f);
@@ -525,10 +541,10 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
                   key={f}
                   type="button"
                   onClick={() => toggleRequiredForm(f)}
-                  className={`flex-1 rounded border py-1 text-[10px] font-bold uppercase ${
+                  className={`flex-1 rounded border py-1 text-xs font-bold uppercase ${
                     selected
                       ? 'border-red-500 bg-red-950/70 text-red-200'
-                      : 'border-zinc-800 bg-zinc-900 text-zinc-500'
+                      : 'border-stone-800 bg-zinc-900 text-stone-400'
                   }`}
                 >
                   {f}
@@ -539,18 +555,20 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
         </div>
 
         <textarea
+          aria-label="Summary"
           rows={2}
           value={draft.summary}
           onChange={(e) => setDraft({ ...draft, summary: e.target.value })}
-          className="w-full rounded border border-zinc-700 bg-zinc-900 p-2 text-zinc-300"
+          className="w-full rounded border border-stone-700 bg-zinc-900 p-2 text-stone-300"
         />
 
         {/* Execution Target & Willpower */}
         <div className="flex items-center gap-2">
           <select
+            aria-label="Target"
             value={execTargetId}
             onChange={(e) => setExecTargetId(e.target.value)}
-            className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px]"
+            className="flex-1 rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs"
           >
             <option value="">Target: None / Self</option>
             {characterList.map((c) => (
@@ -559,7 +577,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-1.5 text-[11px] text-indigo-300">
+          <label className="flex items-center gap-1.5 text-xs text-indigo-300">
             <input
               type="checkbox"
               checked={spendWpOnRoll}
@@ -574,7 +592,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
             type="button"
             disabled={!targetCharId}
             onClick={() => handleSaveAndTest(false)}
-            className="flex-1 rounded border border-zinc-700 bg-zinc-800 py-1.5 font-bold hover:bg-zinc-700 disabled:opacity-45"
+            className="flex-1 rounded border border-stone-700 bg-zinc-800 py-1.5 font-bold hover:bg-zinc-700 disabled:opacity-45"
           >
             Save to Sheet
           </button>
@@ -582,7 +600,7 @@ export const GiftMacroBuilder: React.FC<GiftMacroBuilderProps> = ({
             type="button"
             disabled={!targetCharId}
             onClick={() => handleSaveAndTest(true)}
-            className="flex-1 rounded bg-red-700 py-1.5 font-bold text-white hover:bg-red-600 disabled:opacity-45"
+            className="flex-1 rounded bg-red-800/90 py-1.5 font-bold text-amber-50 hover:bg-red-700 disabled:opacity-45"
           >
             Save &amp; Roll Now
           </button>

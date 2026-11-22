@@ -276,12 +276,12 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
   if (bootState === 'loading') {
     return (
       <div className="flex h-full w-full items-center justify-center bg-zinc-950 p-6">
-        <div className="flex max-w-md flex-col items-center rounded-2xl border border-zinc-800 bg-zinc-900/70 p-8 text-center shadow-2xl">
+        <div className="flex max-w-md flex-col items-center rounded-2xl border border-stone-800 bg-zinc-900/70 p-8 text-center shadow-2xl">
           <Loader2 className="h-10 w-10 animate-spin text-red-500" />
-          <h1 className="mt-4 text-lg font-extrabold tracking-wider uppercase text-zinc-100">
+          <h1 className="mt-4 text-lg font-display font-extrabold tracking-wider uppercase text-amber-100">
             Attuning to the Umbra
           </h1>
-          <p className="mt-2 text-xs text-zinc-400">
+          <p className="mt-2 text-xs text-stone-400">
             Completing Discord Activity OAuth2 &amp; voice channel handshake...
           </p>
         </div>
@@ -298,17 +298,17 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
               <AlertTriangle className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-base font-extrabold tracking-wide uppercase text-red-200">
+              <h1 className="text-base font-display font-extrabold tracking-wide uppercase text-amber-100 text-red-200">
                 Discord Activity Connection Required
               </h1>
-              <p className="mt-1 text-xs text-zinc-300">
+              <p className="mt-1 text-xs text-stone-300">
                 {bootError ?? 'Unable to establish an authenticated Discord Activity session.'}
               </p>
             </div>
           </div>
 
-          <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/90 p-4 text-xs text-zinc-400">
-            <p className="font-bold uppercase tracking-wider text-zinc-300">
+          <div className="mt-4 rounded-xl border border-stone-800 bg-zinc-950/90 p-4 text-xs text-stone-400">
+            <p className="font-bold uppercase tracking-wider text-stone-300">
               Setup &amp; Launch Checklist
             </p>
             <ul className="mt-2 list-disc space-y-1.5 pl-4">
@@ -322,8 +322,8 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
               </li>
               <li>
                 Verify Discord Developer Portal <strong>URL Mappings</strong> map{' '}
-                <code className="text-zinc-200">/</code> to your Worker/tunnel and{' '}
-                <code className="text-zinc-200">/supabase</code> to your Supabase project host.
+                <code className="text-stone-200">/</code> to your Worker/tunnel and{' '}
+                <code className="text-stone-200">/supabase</code> to your Supabase project host.
               </li>
             </ul>
           </div>
@@ -331,7 +331,7 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
           <button
             type="button"
             onClick={() => void runBootstrap(true)}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-red-700 py-2.5 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-red-600"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-red-800/90 py-2.5 text-xs font-bold uppercase tracking-wider text-amber-50 transition hover:bg-red-700"
           >
             <RefreshCw className="h-4 w-4" />
             Retry Discord Handshake
@@ -351,38 +351,38 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
   );
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-950 text-zinc-100">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-950 text-stone-100">
       {/* Top Identity Header */}
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/90 bg-zinc-900/60 px-4 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-800/90 bg-zinc-900/60 px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-800/70 bg-red-950/60 text-red-400">
             <Flame className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-sm font-black tracking-wider uppercase text-zinc-100">
+            <h1 className="text-sm font-display font-black tracking-wider uppercase text-amber-100">
               W20 Chronicle Gate
             </h1>
-            <p className="text-[11px] text-zinc-400">
+            <p className="text-xs text-stone-400">
               Werewolf: The Apocalypse 20th Anniversary • Authoritative VTT
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 rounded-lg border border-zinc-800 bg-zinc-950/90 px-3 py-1.5">
+        <div className="flex items-center gap-2.5 rounded-lg border border-stone-800 bg-zinc-950/90 px-3 py-1.5">
           {session.avatarUrl ? (
             <img
               src={session.avatarUrl}
               alt={session.username}
-              className="h-6 w-6 rounded-full border border-zinc-700 object-cover"
+              className="h-6 w-6 rounded-full border border-stone-700 object-cover"
             />
           ) : (
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-bold">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 text-xs font-bold">
               {session.username.slice(0, 2).toUpperCase()}
             </span>
           )}
           <div className="text-xs">
-            <div className="font-bold text-zinc-200">{session.username}</div>
-            <div className="text-[10px] text-zinc-500">
+            <div className="font-bold text-stone-200">{session.username}</div>
+            <div className="text-xs text-stone-400">
               {session.guildId ? `Guild ${session.guildId}` : 'Voice Call Session'}
             </div>
           </div>
@@ -393,9 +393,9 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto grid max-w-5xl grid-cols-1 gap-4 lg:grid-cols-12">
           {/* Left Column: Chronicles */}
-          <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 lg:col-span-5">
+          <section className="rounded-xl border border-stone-800 bg-zinc-900/50 p-4 lg:col-span-5">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="flex items-center gap-1.5 text-xs font-extrabold tracking-wider uppercase text-zinc-200">
+              <h2 className="flex items-center gap-1.5 text-xs font-display font-extrabold tracking-wider uppercase text-amber-100">
                 <Shield className="h-4 w-4 text-red-400" />
                 Server Chronicles
               </h2>
@@ -403,15 +403,16 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
                 <button
                   type="button"
                   onClick={() => void fetchCampaigns()}
+                  aria-label="Refresh chronicles"
                   title="Refresh chronicles"
-                  className="rounded border border-zinc-700 bg-zinc-900 p-1.5 text-zinc-400 hover:text-zinc-200"
+                  className="rounded border border-stone-700 bg-zinc-900 p-1.5 text-stone-400 hover:text-stone-200"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${loadingCampaigns ? 'animate-spin' : ''}`} />
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowCreateCampaign((v) => !v)}
-                  className="flex items-center gap-1 rounded bg-red-700 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-red-600"
+                  className="flex items-center gap-1 rounded bg-red-800/90 px-2.5 py-1 text-xs font-bold text-amber-50 hover:bg-red-700"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   New Chronicle
@@ -421,21 +422,22 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
 
             {!session.guildId && (
               <div className="mt-3">
-                <label className="block text-[11px] font-semibold text-zinc-400">
+                <label className="block text-xs font-semibold text-stone-400">
                   Guild / Channel Chronicle Scope ID
                 </label>
                 <div className="mt-1 flex gap-1.5">
                   <input
+                    aria-label="Discord Guild or Channel ID"
                     type="text"
                     value={guildIdInput}
                     onChange={(e) => setGuildIdInput(e.target.value)}
                     placeholder="Discord Guild or Channel ID"
-                    className="flex-1 rounded border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-xs"
+                    className="flex-1 rounded border border-stone-700 bg-zinc-950 px-2.5 py-1.5 text-xs"
                   />
                   <button
                     type="button"
                     onClick={() => void fetchCampaigns()}
-                    className="rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs font-semibold hover:bg-zinc-700"
+                    className="rounded border border-stone-700 bg-zinc-800 px-2.5 py-1 text-xs font-semibold hover:bg-zinc-700"
                   >
                     Load
                   </button>
@@ -452,54 +454,58 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
             {showCreateCampaign && (
               <form
                 onSubmit={(e) => void handleCreateCampaign(e)}
-                className="mt-3 space-y-2 rounded-lg border border-zinc-700 bg-zinc-950 p-3 text-xs"
+                className="mt-3 space-y-2 rounded-lg border border-stone-700 bg-zinc-950 p-3 text-xs"
               >
                 <p className="font-bold uppercase tracking-wide text-red-300">
                   Found New Chronicle (You = Storyteller)
                 </p>
                 <input
+                  aria-label="Chronicle Name"
                   type="text"
                   required
                   value={newCampaignName}
                   onChange={(e) => setNewCampaignName(e.target.value)}
                   placeholder="Chronicle Name (e.g. Rage Across Seattle)"
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5"
+                  className="w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5"
                 />
                 <input
+                  aria-label="Dice log Discord webhook URL (optional)"
                   type="url"
                   value={newWebhookUrl}
                   onChange={(e) => setNewWebhookUrl(e.target.value)}
                   placeholder="Optional #dice-log Discord Webhook URL"
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5"
+                  className="w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5"
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <input
+                    aria-label="Pack name (optional)"
                     type="text"
                     value={newPackName}
                     onChange={(e) => setNewPackName(e.target.value)}
                     placeholder="Optional Pack Name"
-                    className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5"
+                    className="rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5"
                   />
                   <input
+                    aria-label="Totem (optional)"
                     type="text"
                     value={newTotemName}
                     onChange={(e) => setNewTotemName(e.target.value)}
                     placeholder="Optional Totem (e.g. Stag)"
-                    className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5"
+                    className="rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5"
                   />
                 </div>
                 <div className="flex gap-2">
                   <button
                     type="submit"
                     disabled={creatingCampaign || !effectiveGuildId}
-                    className="flex-1 rounded bg-red-700 py-1.5 font-bold text-white hover:bg-red-600 disabled:opacity-50"
+                    className="flex-1 rounded bg-red-800/90 py-1.5 font-bold text-amber-50 hover:bg-red-700 disabled:opacity-50"
                   >
                     {creatingCampaign ? 'Founding...' : 'Create Chronicle'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowCreateCampaign(false)}
-                    className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-zinc-400 hover:text-zinc-200"
+                    className="rounded border border-stone-700 bg-zinc-900 px-3 py-1.5 text-stone-400 hover:text-stone-200"
                   >
                     Cancel
                   </button>
@@ -509,11 +515,11 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
 
             <div className="mt-3 space-y-2">
               {loadingCampaigns && campaigns.length === 0 ? (
-                <p className="py-6 text-center text-xs text-zinc-500">Loading chronicles...</p>
+                <p className="py-6 text-center text-xs text-stone-400">Loading chronicles...</p>
               ) : campaigns.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-zinc-800 p-5 text-center text-xs text-zinc-400">
+                <div className="rounded-lg border border-dashed border-stone-800 p-5 text-center text-xs text-stone-400">
                   No chronicles found for this server yet. Click{' '}
-                  <strong className="text-zinc-200">New Chronicle</strong> to start one as
+                  <strong className="text-stone-200">New Chronicle</strong> to start one as
                   Storyteller.
                 </div>
               ) : (
@@ -528,23 +534,23 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
                       className={`flex w-full items-center justify-between rounded-lg border p-3 text-left transition ${
                         isSelected
                           ? 'border-red-500/80 bg-red-950/35'
-                          : 'border-zinc-800 bg-zinc-950/70 hover:border-zinc-700'
+                          : 'border-stone-800 bg-zinc-950/70 hover:border-stone-700'
                       }`}
                     >
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-zinc-100">{camp.name}</span>
+                          <span className="text-xs font-bold text-stone-100">{camp.name}</span>
                           {isSt && (
-                            <span className="inline-flex items-center gap-1 rounded bg-amber-950/80 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                            <span className="inline-flex items-center gap-1 rounded bg-amber-950/80 px-1.5 py-0.5 text-xs font-bold text-amber-300">
                               <Crown className="h-3 w-3" /> ST
                             </span>
                           )}
                         </div>
-                        <p className="mt-0.5 text-[11px] capitalize text-zinc-400">
+                        <p className="mt-0.5 text-xs capitalize text-stone-400">
                           {camp.moonPhase} Moon • Gauntlet {camp.localGauntlet}
                         </p>
                       </div>
-                      <span className="text-[10px] font-semibold uppercase text-zinc-500">
+                      <span className="text-xs font-semibold uppercase text-stone-400">
                         {isSelected ? 'Selected' : 'Select'}
                       </span>
                     </button>
@@ -555,22 +561,22 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
           </section>
 
           {/* Right Column: Garou Roster & Entry */}
-          <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 lg:col-span-7">
+          <section className="rounded-xl border border-stone-800 bg-zinc-900/50 p-4 lg:col-span-7">
             {!selectedCampaign ? (
-              <div className="flex h-full min-h-48 items-center justify-center text-xs text-zinc-500">
+              <div className="flex h-full min-h-48 items-center justify-center text-xs text-stone-400">
                 Select or create a Chronicle on the left to choose your Garou or join as
                 Storyteller.
               </div>
             ) : (
               <div className="flex h-full flex-col justify-between gap-4">
                 <div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-800 pb-3">
                     <div>
-                      <h2 className="flex items-center gap-1.5 text-sm font-extrabold text-zinc-100">
+                      <h2 className="flex items-center gap-1.5 text-sm font-extrabold text-stone-100">
                         <Users className="h-4 w-4 text-emerald-400" />
                         {selectedCampaign.name} — Pack Roster
                       </h2>
-                      <p className="text-[11px] text-zinc-400">
+                      <p className="text-xs text-stone-400">
                         Choose your Garou character or create a Rank 1 Cliath.
                       </p>
                     </div>
@@ -585,7 +591,7 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
                   </div>
 
                   {loadingChars ? (
-                    <p className="py-8 text-center text-xs text-zinc-500">
+                    <p className="py-8 text-center text-xs text-stone-400">
                       Summoning pack records...
                     </p>
                   ) : (
@@ -596,7 +602,7 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
                             <p className="text-xs font-bold text-amber-200">
                               Storyteller Control Seat
                             </p>
-                            <p className="text-[11px] text-amber-300/80">
+                            <p className="text-xs text-amber-300/80">
                               Enter as GM with full Fog of War, NPC Spawner, Gauntlet &amp; Combat
                               override authority.
                             </p>
@@ -604,7 +610,7 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
                           <button
                             type="button"
                             onClick={() => handleEnterRoom(null)}
-                            className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-extrabold text-zinc-950 hover:bg-amber-500"
+                            className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-extrabold text-stone-950 hover:bg-amber-500"
                           >
                             Enter as Storyteller
                           </button>
@@ -612,13 +618,13 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
                       )}
 
                       <div>
-                        <h3 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                        <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wider text-stone-400">
                           Your Garou ({myCharacters.length})
                         </h3>
                         {myCharacters.length === 0 ? (
-                          <p className="rounded-lg border border-dashed border-zinc-800 p-3 text-xs text-zinc-500">
+                          <p className="rounded-lg border border-dashed border-stone-800 p-3 text-xs text-stone-400">
                             You have no Garou in this chronicle yet. Click{' '}
-                            <strong className="text-zinc-300">Create Rank 1 Garou</strong> to forge
+                            <strong className="text-stone-300">Create Rank 1 Garou</strong> to forge
                             one.
                           </p>
                         ) : (
@@ -633,21 +639,21 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
                                   className={`rounded-lg border p-3 text-left transition ${
                                     chosen
                                       ? 'border-emerald-500 bg-emerald-950/35'
-                                      : 'border-zinc-800 bg-zinc-950/80 hover:border-zinc-700'
+                                      : 'border-stone-800 bg-zinc-950/80 hover:border-stone-700'
                                   }`}
                                 >
                                   <div className="flex items-center justify-between">
-                                    <span className="text-xs font-extrabold text-zinc-100">
+                                    <span className="text-xs font-extrabold text-stone-100">
                                       {char.name}
                                     </span>
-                                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] uppercase text-zinc-300">
+                                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs uppercase text-stone-300">
                                       Rank {char.rank}
                                     </span>
                                   </div>
-                                  <p className="mt-1 text-[11px] capitalize text-zinc-400">
+                                  <p className="mt-1 text-xs capitalize text-stone-400">
                                     {char.breed} • {char.auspice} • {char.tribe.replace(/_/g, ' ')}
                                   </p>
-                                  <p className="mt-1 font-mono text-[10px] text-zinc-500">
+                                  <p className="mt-1 font-mono text-xs text-stone-400">
                                     Rage {char.rage.permanent} • Gnosis {char.gnosis.permanent} • WP{' '}
                                     {char.willpower.permanent}
                                   </p>
@@ -660,16 +666,16 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
 
                       {packmateCharacters.length > 0 && (
                         <div>
-                          <h3 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                          <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wider text-stone-400">
                             Packmates in Chronicle ({packmateCharacters.length})
                           </h3>
                           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                             {packmateCharacters.map((pm) => (
                               <div
                                 key={pm.id}
-                                className="rounded border border-zinc-800/80 bg-zinc-950/50 px-2.5 py-2 text-[11px] text-zinc-400"
+                                className="rounded border border-stone-800/80 bg-zinc-950/50 px-2.5 py-2 text-xs text-stone-400"
                               >
-                                <span className="font-semibold text-zinc-200">{pm.name}</span>{' '}
+                                <span className="font-semibold text-stone-200">{pm.name}</span>{' '}
                                 <span className="capitalize">
                                   ({pm.breed} {pm.auspice}, {pm.tribe.replace(/_/g, ' ')})
                                 </span>
@@ -682,12 +688,12 @@ export const CampaignLobbyGate: React.FC<CampaignLobbyGateProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center justify-end gap-2 border-t border-zinc-800 pt-3">
+                <div className="flex items-center justify-end gap-2 border-t border-stone-800 pt-3">
                   <button
                     type="button"
                     disabled={!selectedCharacterId}
                     onClick={() => handleEnterRoom()}
-                    className="rounded-lg bg-red-700 px-5 py-2 text-xs font-extrabold uppercase tracking-wider text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="rounded-lg bg-red-800/90 px-5 py-2 text-xs font-extrabold uppercase tracking-wider text-amber-50 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     Enter Chronicle with Selected Garou
                   </button>

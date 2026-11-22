@@ -57,8 +57,8 @@ export const TacticalViewport: React.FC<{ mapAssetUrl?: string | null }> = ({
       />
 
       {/* Top-Right Realm & Gauntlet HUD Pill */}
-      <div className="pointer-events-auto absolute top-3 right-3 z-20 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/90 px-3 py-1.5 text-xs shadow-lg backdrop-blur">
-        <span className="font-semibold tracking-wide uppercase text-zinc-400">
+      <div className="pointer-events-auto absolute top-3 right-3 z-20 flex items-center gap-2 rounded-lg border border-stone-800 bg-zinc-950/90 px-3 py-1.5 text-xs shadow-lg backdrop-blur">
+        <span className="font-semibold tracking-wide uppercase text-stone-400">
           Gauntlet {localGauntlet}
         </span>
         <span className="h-3 w-px bg-zinc-700" />
@@ -72,7 +72,7 @@ export const TacticalViewport: React.FC<{ mapAssetUrl?: string | null }> = ({
                 className={`rounded px-2 py-1 capitalize transition ${
                   stPreview === mode
                     ? 'bg-indigo-600 text-white'
-                    : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                    : 'bg-zinc-800 text-stone-400 hover:text-stone-200'
                 }`}
               >
                 {mode}
