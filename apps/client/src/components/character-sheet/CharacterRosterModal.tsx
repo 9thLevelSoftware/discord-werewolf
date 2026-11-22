@@ -182,7 +182,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
           <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-100">
             Table Seats ({seats.length}/8)
           </h3>
-          <span className="text-[10px] text-stone-400">
+          <span className="text-caption text-stone-400">
             Same-screen co-op or solo table
           </span>
         </div>
@@ -193,7 +193,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
             const newId = addSeat();
             if (newId) setActiveSeat(newId);
           }}
-          className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-950/35 px-2.5 py-1 text-[11px] font-bold text-amber-200 transition hover:bg-amber-900/45 disabled:opacity-40"
+          className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-950/35 px-2.5 py-1 text-xs font-bold text-amber-200 transition hover:bg-amber-900/45 disabled:opacity-40"
         >
           <Plus className="h-3.5 w-3.5" />
           Add Same-Screen Player
@@ -231,7 +231,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
               }`}
             >
               <div className="flex items-center justify-between gap-1">
-                <span className="font-mono text-[10px] font-bold uppercase text-amber-300/80">
+                <span className="font-mono text-caption font-bold uppercase text-amber-300/80">
                   {seat.seatId === 'primary' ? 'Primary Seat' : `Seat ${idx + 1}`}
                 </span>
                 {seat.seatId !== 'primary' && (
@@ -242,7 +242,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                       removeSeat(seat.seatId);
                     }}
                     aria-label={`Remove ${seat.playerName}`}
-                    className="rounded p-0.5 text-stone-500 hover:bg-red-950/60 hover:text-red-300"
+                    className="rounded p-0.5 text-stone-400 hover:bg-red-950/60 hover:text-red-300"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -257,10 +257,10 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                 onChange={(ev) => updateSeatPlayerName(seat.seatId, ev.target.value)}
                 placeholder="Player Name"
                 aria-label={`Player name for ${seat.seatId}`}
-                className="w-full rounded border border-stone-700/80 bg-zinc-950 px-2 py-1 text-xs font-semibold text-stone-100 focus:border-amber-400/75 focus:outline-none"
+                className="w-full rounded border border-stone-700/80 bg-zinc-950 px-2 py-1 text-xs font-semibold text-stone-100 focus:border-amber-400/75"
               />
 
-              <div className="flex items-center justify-between gap-1 text-[10px]">
+              <div className="flex items-center justify-between gap-1 text-caption">
                 {boundSheet ? (
                   <span className="truncate font-semibold text-emerald-300">
                     {boundSheet.name} ({formatFormName(boundSheet.activeForm)})
@@ -283,7 +283,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                         setRosterModalOpen(false);
                         setSheetModalOpen(true);
                       }}
-                      className="flex-1 rounded border border-amber-500/40 bg-amber-950/35 px-2 py-1 text-[10px] font-bold text-amber-200 hover:bg-amber-900/50"
+                      className="flex-1 rounded border border-amber-500/40 bg-amber-950/35 px-2 py-1 text-caption font-bold text-amber-200 hover:bg-amber-900/50"
                     >
                       Sheet
                     </button>
@@ -293,7 +293,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                         ev.stopPropagation();
                         assignSheetToSeat(seat.seatId, null);
                       }}
-                      className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-[10px] text-stone-300 hover:border-stone-500"
+                      className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-caption text-stone-300 hover:border-stone-500"
                       title="Roll Unbound (Storyteller / Guest)"
                     >
                       Roll Unbound
@@ -307,7 +307,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                       setActiveSeat(seat.seatId);
                       assignSheetToSeat(seat.seatId, null);
                     }}
-                    className="w-full rounded border border-stone-700/70 bg-zinc-900/90 px-2 py-1 text-[10px] font-semibold text-stone-300 hover:border-amber-500/40"
+                    className="w-full rounded border border-stone-700/70 bg-zinc-900/90 px-2 py-1 text-caption font-semibold text-stone-300 hover:border-amber-500/40"
                   >
                     Roll Unbound (Storyteller / Guest)
                   </button>
@@ -326,7 +326,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
         <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-100">
           Saved Garou ({sortedSheets.length})
         </h3>
-        <span className="text-[11px] text-stone-400">
+        <span className="text-xs text-stone-400">
           Assigning to: <strong className="text-amber-200">{activeSeat.playerName}</strong>
         </span>
       </div>
@@ -341,7 +341,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
           <p className="font-display text-amber-200/85 uppercase tracking-wider">
             No Saved Garou Yet
           </p>
-          <p className="mt-1 text-[11px] text-stone-500">
+          <p className="mt-1 text-xs text-stone-400">
             Use the Guided W20 Creation Wizard, create a Blank Fillable Sheet, load an 8-char Sync Code, or roll Unbound.
           </p>
         </div>
@@ -369,24 +369,24 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                           {sheet.name || 'New Garou'}
                         </h4>
                         {sheet.deedName && (
-                          <span className="truncate text-[10px] italic text-amber-300/85">
+                          <span className="truncate text-caption italic text-amber-300/85">
                             “{sheet.deedName}”
                           </span>
                         )}
                       </div>
-                      <p className="mt-0.5 text-[11px] text-stone-400">
+                      <p className="mt-0.5 text-xs text-stone-400">
                         Rank {sheet.rank} • {formatTraitName(sheet.breed)} •{' '}
                         {formatTraitName(sheet.auspice)} •{' '}
                         {sheet.tribe ? formatTraitName(sheet.tribe) : 'No Tribe'}
                       </p>
                     </div>
 
-                    <span className="shrink-0 rounded-full border border-red-700/65 bg-red-950/75 px-2 py-0.5 text-[10px] font-bold uppercase text-red-200">
+                    <span className="shrink-0 rounded-full border border-red-700/65 bg-red-950/75 px-2 py-0.5 text-caption font-bold uppercase text-red-200">
                       {formatFormName(sheet.activeForm)}
                     </span>
                   </div>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-caption">
                     {sheet.player.trim() && (
                       <span className="rounded bg-zinc-800/90 px-2 py-0.5 font-semibold text-stone-300">
                         Player: {sheet.player}
@@ -424,7 +424,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                         isForeign ? sheet.syncCode ?? null : null
                       )
                     }
-                    className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${
+                    className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
                       isAssignedToActive
                         ? 'border border-emerald-500/60 bg-emerald-950/60 text-emerald-200'
                         : 'w20-crimson-seal text-amber-50'
@@ -437,7 +437,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                   <button
                     type="button"
                     onClick={() => handleEditSheet(sheet)}
-                    className="flex items-center gap-1 rounded-lg border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-[11px] font-semibold text-stone-200 hover:border-amber-500/55 hover:text-amber-100"
+                    className="flex items-center gap-1 rounded-lg border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs font-semibold text-stone-200 hover:border-amber-500/55 hover:text-amber-100"
                   >
                     <FileText className="h-3 w-3 text-amber-300" />
                     Edit Sheet
@@ -446,7 +446,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                   <button
                     type="button"
                     onClick={() => exportSheetJson(sheet.id)}
-                    className="flex items-center gap-1 rounded-lg border border-stone-700 bg-zinc-900 px-2 py-1.5 text-[11px] text-stone-300 hover:border-stone-500"
+                    className="flex items-center gap-1 rounded-lg border border-stone-700 bg-zinc-900 px-2 py-1.5 text-xs text-stone-300 hover:border-stone-500"
                     title="Export .w20sheet.json"
                   >
                     <Download className="h-3 w-3" />
@@ -461,14 +461,14 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                           void deleteSheet(sheet.id);
                           setConfirmDeleteId(null);
                         }}
-                        className="rounded-lg bg-red-700 px-2 py-1.5 text-[10px] font-bold text-white hover:bg-red-600"
+                        className="rounded-lg bg-red-700 px-2 py-1.5 text-caption font-bold text-white hover:bg-red-600"
                       >
                         Confirm
                       </button>
                       <button
                         type="button"
                         onClick={() => setConfirmDeleteId(null)}
-                        className="rounded-lg bg-zinc-800 px-2 py-1.5 text-[10px] text-stone-300 hover:bg-zinc-700"
+                        className="rounded-lg bg-zinc-800 px-2 py-1.5 text-caption text-stone-300 hover:bg-zinc-700"
                       >
                         Cancel
                       </button>
@@ -500,7 +500,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
           <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-100">
             Create New Garou for {activeSeat.playerName}
           </h3>
-          <p className="text-[11px] text-stone-400">
+          <p className="text-xs text-stone-400">
             Follow canonical W20 step-by-step rules or start with a blank fillable sheet.
           </p>
         </div>
@@ -518,25 +518,25 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
       <div className="w20-gold-divider" />
 
       <form onSubmit={(e) => void handleCreateBlank(e)} className="space-y-3">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-stone-300">
+        <div className="text-xs font-bold uppercase tracking-wider text-stone-300">
           New Blank Fillable Sheet
         </div>
 
         <div className={isMobile ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-4 gap-2'}>
           <label className="block">
-            <span className="text-[10px] uppercase text-stone-400">Name</span>
+            <span className="text-caption uppercase text-stone-400">Name</span>
             <input
               type="text"
               value={blankName}
               maxLength={120}
               onChange={(e) => setBlankName(e.target.value)}
               placeholder="e.g. Walks-the-Ash"
-              className="mt-1 w-full rounded-lg border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75 focus:outline-none"
+              className="mt-1 w-full rounded-lg border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100 focus:border-amber-400/75"
             />
           </label>
 
           <label className="block">
-            <span className="text-[10px] uppercase text-stone-400">Breed</span>
+            <span className="text-caption uppercase text-stone-400">Breed</span>
             <select
               value={blankBreed}
               onChange={(e) => setBlankBreed(e.target.value as Breed)}
@@ -551,7 +551,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
           </label>
 
           <label className="block">
-            <span className="text-[10px] uppercase text-stone-400">Auspice</span>
+            <span className="text-caption uppercase text-stone-400">Auspice</span>
             <select
               value={blankAuspice}
               onChange={(e) => setBlankAuspice(e.target.value as Auspice)}
@@ -566,7 +566,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
           </label>
 
           <label className="block">
-            <span className="text-[10px] uppercase text-stone-400">Tribe</span>
+            <span className="text-caption uppercase text-stone-400">Tribe</span>
             <select
               value={blankTribe}
               onChange={(e) => setBlankTribe(e.target.value)}
@@ -613,11 +613,11 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
 
       <div className={isMobile ? 'space-y-3' : 'grid grid-cols-1 gap-3 md:grid-cols-2'}>
         <form onSubmit={(e) => void handleLoadSyncCode(e)} className="space-y-2 rounded-lg border border-stone-800 bg-zinc-900/50 p-3">
-          <div className="flex items-center gap-1.5 text-[11px] font-bold text-stone-200">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-stone-200">
             <KeyRound className="h-3.5 w-3.5 text-amber-300" />
             8-Char Sync Code
           </div>
-          <p className="text-[10px] text-stone-400">
+          <p className="text-caption text-stone-400">
             Load &amp; sync a character sheet shared from another Discord account onto{' '}
             <strong className="text-amber-200">{activeSeat.playerName}</strong>.
           </p>
@@ -628,7 +628,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
               maxLength={12}
               onChange={(e) => setSyncCodeInput(e.target.value.toUpperCase())}
               placeholder="ABCD-2345"
-              className="min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs uppercase tracking-widest text-amber-100 placeholder-stone-500 focus:border-amber-400/75 focus:outline-none"
+              className="min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs uppercase tracking-widest text-amber-100 placeholder-stone-500 focus:border-amber-400/75"
             />
             <button
               type="submit"
@@ -642,11 +642,11 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
 
         <div className="flex flex-col justify-between space-y-2 rounded-lg border border-stone-800 bg-zinc-900/50 p-3">
           <div>
-            <div className="flex items-center gap-1.5 text-[11px] font-bold text-stone-200">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-stone-200">
               <Upload className="h-3.5 w-3.5 text-cyan-300" />
               Import .w20sheet.json Backup
             </div>
-            <p className="mt-1 text-[10px] text-stone-400">
+            <p className="mt-1 text-caption text-stone-400">
               Import an exported JSON sheet into your library and bind it to{' '}
               <strong className="text-amber-200">{activeSeat.playerName}</strong>.
             </p>
@@ -680,14 +680,14 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
         <div
           className={
             isMobile
-              ? 'fixed inset-0 z-40 flex flex-col bg-[#070609]'
-              : 'fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm'
+              ? 'fixed inset-0 z-drawer flex flex-col bg-obsidian-950'
+              : 'fixed inset-0 z-drawer flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm'
           }
         >
           <div
             className={
               isMobile
-                ? 'flex h-[100dvh] w-full flex-col overflow-hidden bg-[#070609] text-stone-100'
+                ? 'flex h-[100dvh] w-full flex-col overflow-hidden bg-obsidian-950 text-stone-100'
                 : 'w20-obsidian-panel flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl text-stone-100'
             }
           >
@@ -701,7 +701,7 @@ export const CharacterRosterModal: React.FC<CharacterRosterModalProps> = ({ sess
                   <h2 className="font-display truncate text-sm font-black tracking-wider uppercase text-amber-100">
                     Garou Roster &amp; Table Seats
                   </h2>
-                  <p className="truncate text-[11px] text-stone-400">
+                  <p className="truncate text-xs text-stone-400">
                     Signed in as {session.username} • Status: {saveStatus.replace('_', ' ')}
                   </p>
                 </div>

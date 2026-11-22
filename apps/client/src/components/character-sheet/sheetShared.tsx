@@ -1,3 +1,4 @@
+import { PipTrack, type PipTone } from '../ui';
 import React from 'react';
 import {
   AbilityCategory,
@@ -139,35 +140,7 @@ export function shortcutToRollRequest(
   };
 }
 
-export type PipTone = 'amber' | 'crimson' | 'cyan' | 'indigo' | 'emerald';
-
-const PIP_TONE_STYLES: Record<PipTone, { filled: string; empty: string }> = {
-  amber: {
-    filled:
-      'border-amber-200/85 bg-gradient-to-br from-amber-300 to-amber-700 shadow-[0_0_6px_rgba(245,158,11,0.5)]',
-    empty: 'border-stone-600/60 bg-zinc-950/90 hover:border-amber-400/70',
-  },
-  crimson: {
-    filled:
-      'border-red-300/85 bg-gradient-to-br from-red-500 to-red-900 shadow-[0_0_6px_rgba(220,38,38,0.6)]',
-    empty: 'border-stone-600/60 bg-zinc-950/90 hover:border-red-400/70',
-  },
-  cyan: {
-    filled:
-      'border-cyan-200/85 bg-gradient-to-br from-cyan-400 to-cyan-800 shadow-[0_0_6px_rgba(34,211,238,0.5)]',
-    empty: 'border-stone-600/60 bg-zinc-950/90 hover:border-cyan-400/70',
-  },
-  indigo: {
-    filled:
-      'border-indigo-200/85 bg-gradient-to-br from-indigo-400 to-indigo-800 shadow-[0_0_6px_rgba(129,140,248,0.5)]',
-    empty: 'border-stone-600/60 bg-zinc-950/90 hover:border-indigo-400/70',
-  },
-  emerald: {
-    filled:
-      'border-emerald-200/85 bg-gradient-to-br from-emerald-400 to-emerald-800 shadow-[0_0_6px_rgba(52,211,153,0.45)]',
-    empty: 'border-stone-600/60 bg-zinc-950/90 hover:border-emerald-400/70',
-  },
-};
+export type { PipTone } from '../ui';
 
 interface SheetPipTrackProps {
   label: string;
@@ -179,6 +152,7 @@ interface SheetPipTrackProps {
   onChange: (nextValue: number) => void;
 }
 
+/** Character-sheet dot rating: the shared PipTrack plus the pip click sound. */
 export const SheetPipTrack: React.FC<SheetPipTrackProps> = ({
   label,
   value,
@@ -187,38 +161,17 @@ export const SheetPipTrack: React.FC<SheetPipTrackProps> = ({
   tone = 'amber',
   isMobile,
   onChange,
-}) => {
-  const styles = PIP_TONE_STYLES[tone];
-  const clamped = Math.max(0, Math.min(max, Math.floor(value)));
-  const sizeClass = isMobile ? 'h-6 w-6' : 'h-3.5 w-3.5';
-  const radiusClass = shape === 'circle' ? 'rounded-full' : 'rounded-[3px]';
-
-  return (
-    <div
-      className={`flex flex-wrap items-center ${isMobile ? 'gap-1.5' : 'gap-1'}`}
-      role="group"
-      aria-label={label}
-    >
-      {Array.from({ length: max }, (_, idx) => {
-        const rating = idx + 1;
-        const active = rating <= clamped;
-        const nextValue = clamped === rating ? rating - 1 : rating;
-        return (
-          <button
-            key={rating}
-            type="button"
-            onClick={() => {
-              diceSoundEngine.playPipClick();
-              onChange(nextValue);
-            }}
-            aria-label={`Set ${label} to ${nextValue}`}
-            aria-pressed={active}
-            className={`${sizeClass} ${radiusClass} border transition-transform duration-100 hover:scale-110 active:scale-95 focus:outline-none focus:ring-1 focus:ring-amber-400/65 ${
-              active ? styles.filled : styles.empty
-            }`}
-          />
-        );
-      })}
-    </div>
-  );
-};
+}) => (
+  <PipTrack
+    label={label}
+    value={value}
+    max={max}
+    shape={shape}
+    tone={tone}
+    size={isMobile ? 'touch' : 'sm'}
+    onChange={(next) => {
+      diceSoundEngine.playPipClick();
+      onChange(next);
+    }}
+  />
+);

@@ -308,19 +308,19 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               <h4 className="font-display text-sm font-black uppercase text-amber-100">
                 {formatFormName(form)}
               </h4>
-              <div className="flex flex-wrap items-center gap-1 text-[10px]">
+              <div className="flex flex-wrap items-center gap-1 text-caption">
                 <span className="font-mono text-stone-400">
                   Shift Diff {spec.shiftDifficulty}
                 </span>
                 {isNatural && (
-                  <span className="rounded bg-cyan-950/80 px-1.5 py-0.2 text-[9px] font-bold text-cyan-200">
+                  <span className="rounded bg-cyan-950/80 px-1.5 py-0.5 text-caption font-bold text-cyan-200">
                     Breed
                   </span>
                 )}
               </div>
             </div>
             {isActive && (
-              <span className="rounded-full border border-red-500/75 bg-red-900/80 px-2 py-0.5 text-[9px] font-extrabold uppercase text-amber-50">
+              <span className="rounded-full border border-red-500/75 bg-red-900/80 px-2 py-0.5 text-caption font-extrabold uppercase text-amber-50">
                 Active
               </span>
             )}
@@ -335,10 +335,10 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   <span className="text-stone-400">{row.label}</span>
                   <div className="flex items-center gap-1.5 font-mono">
                     {row.key === 'appearance' && spec.overrideAppearanceZero ? (
-                      <span className="text-[10px] text-red-300">=0</span>
+                      <span className="text-caption text-red-300">=0</span>
                     ) : delta !== 0 ? (
                       <span
-                        className={`text-[10px] ${
+                        className={`text-caption ${
                           delta > 0 ? 'text-emerald-400' : 'text-amber-400'
                         }`}
                       >
@@ -352,7 +352,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
             })}
           </div>
 
-          <div className="mt-2 flex flex-wrap gap-1 text-[9px]">
+          <div className="mt-2 flex flex-wrap gap-1 text-caption">
             {spec.incitesDelirium && (
               <span className="rounded border border-red-700/60 bg-red-950/60 px-1.5 py-0.5 font-bold text-red-200">
                 Delirium
@@ -381,7 +381,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
             type="button"
             disabled={isActive}
             onClick={() => onSetActiveForm(form)}
-            className={`w-full rounded-lg px-2 py-1.5 text-[11px] font-bold transition ${
+            className={`w-full rounded-lg px-2 py-1.5 text-xs font-bold transition ${
               isActive
                 ? 'border border-emerald-600/50 bg-emerald-950/40 text-emerald-200'
                 : 'border border-amber-500/45 bg-amber-950/35 text-amber-100 hover:bg-amber-900/50'
@@ -393,7 +393,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
           <button
             type="button"
             onClick={() => handleRollShift(form)}
-            className="w20-crimson-seal flex w-full items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-amber-50"
+            className="w20-crimson-seal flex w-full items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-amber-50"
           >
             <Dices className="h-3.5 w-3.5" />
             Roll Shift (Diff {spec.shiftDifficulty})
@@ -537,7 +537,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               <Flame className="h-3.5 w-3.5 text-red-400" />
               Five Garou Forms
             </h3>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-stone-400">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-stone-400">
               <span>
                 Active:{' '}
                 <strong className="text-red-300">{formatFormName(sheet.activeForm)}</strong>
@@ -555,8 +555,9 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                     initiativeModifier: stats.initiativeBonus,
                   })
                 }
+                aria-label={`Roll 1d10 ${stats.initiativeBonus >= 0 ? `+ ${stats.initiativeBonus}` : `- ${Math.abs(stats.initiativeBonus)}`} Initiative`}
                 title={`Roll 1d10 ${stats.initiativeBonus >= 0 ? `+ ${stats.initiativeBonus}` : `- ${Math.abs(stats.initiativeBonus)}`} Initiative`}
-                className="flex items-center gap-1 rounded-lg border border-amber-500/55 bg-amber-950/45 px-2.5 py-1 text-[11px] font-bold text-amber-100 transition hover:border-amber-400 hover:bg-amber-900/55"
+                className="flex items-center gap-1 rounded-lg border border-amber-500/55 bg-amber-950/45 px-2.5 py-1 text-xs font-bold text-amber-100 transition hover:border-amber-400 hover:bg-amber-900/55"
               >
                 <Zap className="h-3 w-3 text-amber-300" />
                 Roll Init (1d10{stats.initiativeBonus >= 0 ? `+${stats.initiativeBonus}` : stats.initiativeBonus})
@@ -575,7 +576,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                       key={f}
                       type="button"
                       onClick={() => setInspectedForm(f)}
-                      className={`relative rounded-lg px-1 py-2 text-[11px] font-bold transition ${
+                      className={`relative rounded-lg px-1 py-2 text-xs font-bold transition ${
                         isViewed
                           ? 'bg-red-800/90 text-amber-50 shadow'
                           : 'text-stone-400 hover:text-stone-200'
@@ -614,7 +615,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 <button
                   type="button"
                   onClick={() => onRoll(shortcutToRollRequest(sheet, soakShortcut))}
-                  className="w20-crimson-seal flex items-center gap-1.5 rounded-lg px-3 py-1 text-[11px] font-bold text-amber-50"
+                  className="w20-crimson-seal flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold text-amber-50"
                 >
                   <Dices className="h-3.5 w-3.5" />
                   Roll Soak ({stats.soakCapabilities.soakPool}d10)
@@ -622,6 +623,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 <button
                   type="button"
                   onClick={() => togglePin(soakShortcut)}
+                  aria-label={soakPinned ? 'Unpin Soak' : 'Pin Soak'}
                   title={soakPinned ? 'Unpin Soak' : 'Pin Soak'}
                   className={`rounded-lg border p-1.5 transition ${
                     soakPinned
@@ -636,7 +638,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
 
             <div className={isMobile ? 'space-y-2.5' : 'grid grid-cols-3 items-end gap-3'}>
               <label className="block">
-                <span className="text-[10px] uppercase text-stone-400">Armor Rating (0–15)</span>
+                <span className="text-caption uppercase text-stone-400">Armor Rating (0–15)</span>
                 <input
                   type="number"
                   min={0}
@@ -656,7 +658,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               </label>
 
               <label className="block">
-                <span className="text-[10px] uppercase text-stone-400">Armor Description</span>
+                <span className="text-caption uppercase text-stone-400">Armor Description</span>
                 <input
                   type="text"
                   maxLength={500}
@@ -672,40 +674,53 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 />
               </label>
 
-              <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-stone-800 bg-zinc-900/60 p-2 text-[10px]">
+              <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-stone-800 bg-zinc-900/60 p-2 text-caption">
                 <span className="font-mono font-bold text-cyan-200">
                   Stamina {stats.soakCapabilities.naturalSoakPool} + Armor{' '}
                   {stats.soakCapabilities.armorRating}
                 </span>
                 <span className="rounded bg-emerald-950/70 px-1.5 py-0.5 text-emerald-300">
-                  Bashing ✓
+                  Bashing <span aria-hidden="true">✓</span>
+                  <span className="sr-only"> can be soaked</span>
                 </span>
                 <span
                   className={`rounded px-1.5 py-0.5 ${
                     stats.soakCapabilities.canSoakLethal
-                      ? 'bg-emerald-950/70 text-emerald-300'
-                      : 'bg-zinc-800 text-stone-500'
+                      ? 'border border-emerald-700/50 bg-emerald-950/70 text-emerald-300'
+                      : 'border border-stone-600 bg-zinc-800 text-stone-300'
                   }`}
                 >
-                  Lethal {stats.soakCapabilities.canSoakLethal ? '✓' : '✗'}
+                  Lethal{' '}
+                  <span aria-hidden="true">{stats.soakCapabilities.canSoakLethal ? '✓' : '✗'}</span>
+                  <span className="sr-only">
+                    {stats.soakCapabilities.canSoakLethal ? ' can be soaked' : ' cannot be soaked'}
+                  </span>
                 </span>
                 <span
                   className={`rounded px-1.5 py-0.5 ${
                     stats.soakCapabilities.canSoakAggravated
-                      ? 'bg-emerald-950/70 text-emerald-300'
-                      : 'bg-zinc-800 text-stone-500'
+                      ? 'border border-emerald-700/50 bg-emerald-950/70 text-emerald-300'
+                      : 'border border-stone-600 bg-zinc-800 text-stone-300'
                   }`}
                 >
-                  Agg {stats.soakCapabilities.canSoakAggravated ? '✓' : '✗'}
+                  Agg{' '}
+                  <span aria-hidden="true">{stats.soakCapabilities.canSoakAggravated ? '✓' : '✗'}</span>
+                  <span className="sr-only">
+                    {stats.soakCapabilities.canSoakAggravated ? ' can be soaked' : ' cannot be soaked'}
+                  </span>
                 </span>
                 <span
                   className={`rounded px-1.5 py-0.5 ${
                     stats.soakCapabilities.canSoakSilver
-                      ? 'bg-emerald-950/70 text-emerald-300'
-                      : 'bg-zinc-800 text-stone-500'
+                      ? 'border border-emerald-700/50 bg-emerald-950/70 text-emerald-300'
+                      : 'border border-stone-600 bg-zinc-800 text-stone-300'
                   }`}
                 >
-                  Silver {stats.soakCapabilities.canSoakSilver ? '✓' : '✗'}
+                  Silver{' '}
+                  <span aria-hidden="true">{stats.soakCapabilities.canSoakSilver ? '✓' : '✗'}</span>
+                  <span className="sr-only">
+                    {stats.soakCapabilities.canSoakSilver ? ' can be soaked' : ' cannot be soaked'}
+                  </span>
                 </span>
               </div>
             </div>
@@ -722,28 +737,28 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 <button
                   type="button"
                   onClick={() => addWeaponPreset('klaive')}
-                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:border-amber-500/60"
+                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-caption font-semibold text-amber-200 hover:border-amber-500/60"
                 >
                   + Klaive
                 </button>
                 <button
                   type="button"
                   onClick={() => addWeaponPreset('silver_knife')}
-                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-[10px] font-semibold text-stone-200 hover:border-stone-500"
+                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-caption font-semibold text-stone-200 hover:border-stone-500"
                 >
                   + Silver Knife
                 </button>
                 <button
                   type="button"
                   onClick={() => addWeaponPreset('pistol')}
-                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-[10px] font-semibold text-stone-200 hover:border-stone-500"
+                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-caption font-semibold text-stone-200 hover:border-stone-500"
                 >
                   + Heavy Pistol
                 </button>
                 <button
                   type="button"
                   onClick={() => addWeaponPreset('blank')}
-                  className="flex items-center gap-1 rounded border border-amber-500/40 bg-amber-950/35 px-2.5 py-1 text-[10px] font-bold text-amber-200 hover:bg-amber-900/45"
+                  className="flex items-center gap-1 rounded border border-amber-500/40 bg-amber-950/35 px-2.5 py-1 text-caption font-bold text-amber-200 hover:bg-amber-900/45"
                 >
                   <Plus className="h-3 w-3" />
                   Custom Weapon
@@ -752,7 +767,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
             </div>
 
             {sheet.combatWeapons.length === 0 ? (
-              <p className="text-[11px] text-stone-500">
+              <p className="text-xs text-stone-400">
                 No weapons equipped. Add a Klaive, firearm, or custom weapon above.
               </p>
             ) : isMobile ? (
@@ -793,9 +808,9 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+                      <div className="grid grid-cols-3 gap-1.5 text-xs">
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Attr</span>
+                          <span className="text-caption text-stone-400">Attr</span>
                           <select
                             value={weapon.rollAttribute}
                             onChange={(e) =>
@@ -813,7 +828,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           </select>
                         </label>
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Ability</span>
+                          <span className="text-caption text-stone-400">Ability</span>
                           <select
                             value={
                               customAbilityWeaponId === weapon.id
@@ -833,12 +848,12 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                 value={weaponCustomAbilityDraft}
                                 onChange={(e) => setWeaponCustomAbilityDraft(e.target.value)}
                                 placeholder="Custom ability..."
-                                className="min-w-0 flex-1 rounded border border-amber-500/50 bg-zinc-950 px-1.5 py-0.5 text-[10px]"
+                                className="min-w-0 flex-1 rounded border border-amber-500/50 bg-zinc-950 px-1.5 py-0.5 text-caption"
                               />
                               <button
                                 type="button"
                                 onClick={() => commitCustomWeaponAbility(weapon.id)}
-                                className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950"
+                                className="rounded bg-amber-600 px-1.5 py-0.5 text-caption font-bold text-zinc-950"
                               >
                                 OK
                               </button>
@@ -846,7 +861,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           )}
                         </label>
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Diff</span>
+                          <span className="text-caption text-stone-400">Diff</span>
                           <input
                             type="number"
                             min={2}
@@ -862,9 +877,9 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                         </label>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+                      <div className="grid grid-cols-3 gap-1.5 text-xs">
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Dmg Mode</span>
+                          <span className="text-caption text-stone-400">Dmg Mode</span>
                           <select
                             value={weapon.damageMode}
                             onChange={(e) =>
@@ -879,7 +894,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           </select>
                         </label>
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Dice</span>
+                          <span className="text-caption text-stone-400">Dice</span>
                           <input
                             type="number"
                             min={0}
@@ -894,7 +909,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           />
                         </label>
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Type</span>
+                          <span className="text-caption text-stone-400">Type</span>
                           <select
                             value={weapon.damageType}
                             onChange={(e) =>
@@ -911,9 +926,9 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                         </label>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+                      <div className="grid grid-cols-3 gap-1.5 text-xs">
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Range</span>
+                          <span className="text-caption text-stone-400">Range</span>
                           <input
                             type="text"
                             maxLength={60}
@@ -923,7 +938,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           />
                         </label>
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Rate</span>
+                          <span className="text-caption text-stone-400">Rate</span>
                           <input
                             type="text"
                             maxLength={60}
@@ -933,7 +948,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           />
                         </label>
                         <label className="block">
-                          <span className="text-[9px] text-stone-400">Clip</span>
+                          <span className="text-caption text-stone-400">Clip</span>
                           <input
                             type="text"
                             maxLength={60}
@@ -949,13 +964,15 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           <button
                             type="button"
                             onClick={() => onRoll(atkReq)}
-                            className="w20-crimson-seal flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-amber-50"
+                            className="w20-crimson-seal flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-amber-50"
                           >
                             <Dices className="h-3.5 w-3.5" />
                             Atk ({atkReq.pool}d10)
                           </button>
                           <button
                             type="button"
+                            aria-label={`Pin ${atkShortcut.name} to quick rolls`}
+                            aria-pressed={atkPinned}
                             onClick={() => togglePin(atkShortcut)}
                             className={`rounded-lg border px-2 ${
                               atkPinned
@@ -971,13 +988,15 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           <button
                             type="button"
                             onClick={() => onRoll(dmgReq)}
-                            className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-amber-500/45 bg-amber-950/40 px-2 py-1.5 text-[11px] font-bold text-amber-100"
+                            className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-amber-500/45 bg-amber-950/40 px-2 py-1.5 text-xs font-bold text-amber-100"
                           >
                             <Dices className="h-3.5 w-3.5" />
                             Dmg ({dmgReq.pool}d10)
                           </button>
                           <button
                             type="button"
+                            aria-label={`Pin ${dmgShortcut.name} to quick rolls`}
+                            aria-pressed={dmgPinned}
                             onClick={() => togglePin(dmgShortcut)}
                             className={`rounded-lg border px-2 ${
                               dmgPinned
@@ -997,7 +1016,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-xs">
                   <thead>
-                    <tr className="border-b border-stone-800 text-[10px] uppercase text-stone-400">
+                    <tr className="border-b border-stone-800 text-caption uppercase text-stone-400">
                       <th className="py-1.5 pr-2">Weapon</th>
                       <th className="py-1.5 pr-2">Pool</th>
                       <th className="py-1.5 pr-2">Diff</th>
@@ -1037,7 +1056,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                     rollAttribute: e.target.value as AttributeKey,
                                   })
                                 }
-                                className="rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-[11px] capitalize"
+                                className="rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-xs capitalize"
                               >
                                 {ALL_ATTRIBUTES.map((a) => (
                                   <option key={a} value={a}>
@@ -1055,7 +1074,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                 onChange={(e) =>
                                   handleWeaponAbilitySelectChange(weapon, e.target.value)
                                 }
-                                className="rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-[11px]"
+                                className="rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-xs"
                               >
                                 {renderWeaponAbilityOptions(weapon.rollAbility)}
                               </select>
@@ -1073,12 +1092,12 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                       }
                                     }}
                                     placeholder="Custom ability..."
-                                    className="w-24 rounded border border-amber-500/50 bg-zinc-950 px-1.5 py-0.5 text-[11px]"
+                                    className="w-24 rounded border border-amber-500/50 bg-zinc-950 px-1.5 py-0.5 text-xs"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => commitCustomWeaponAbility(weapon.id)}
-                                    className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950"
+                                    className="rounded bg-amber-600 px-1.5 py-0.5 text-caption font-bold text-zinc-950"
                                   >
                                     OK
                                   </button>
@@ -1112,7 +1131,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                     damageMode: e.target.value as 'strength_plus' | 'flat',
                                   })
                                 }
-                                className="rounded border border-stone-700 bg-zinc-900 px-1 py-1 text-[11px]"
+                                className="rounded border border-stone-700 bg-zinc-900 px-1 py-1 text-xs"
                               >
                                 <option value="strength_plus">Str+</option>
                                 <option value="flat">Flat</option>
@@ -1139,7 +1158,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                     damageType: e.target.value as Exclude<DamageType, 'none'>,
                                   })
                                 }
-                                className="rounded border border-stone-700 bg-zinc-900 px-1 py-1 text-[11px]"
+                                className="rounded border border-stone-700 bg-zinc-900 px-1 py-1 text-xs"
                               >
                                 <option value="bashing">B</option>
                                 <option value="lethal">L</option>
@@ -1156,7 +1175,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                 onChange={(e) =>
                                   updateWeaponField(weapon.id, { range: e.target.value })
                                 }
-                                className="w-14 rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-[11px]"
+                                className="w-14 rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-xs"
                                 title="Range"
                               />
                               <input
@@ -1166,7 +1185,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                 onChange={(e) =>
                                   updateWeaponField(weapon.id, { rate: e.target.value })
                                 }
-                                className="w-10 rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-center text-[11px]"
+                                className="w-10 rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-center text-xs"
                                 title="Rate"
                               />
                               <input
@@ -1176,7 +1195,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                 onChange={(e) =>
                                   updateWeaponField(weapon.id, { clip: e.target.value })
                                 }
-                                className="w-10 rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-center text-[11px]"
+                                className="w-10 rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-center text-xs"
                                 title="Clip"
                               />
                             </div>
@@ -1186,13 +1205,14 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                               <button
                                 type="button"
                                 onClick={() => onRoll(atkReq)}
-                                className="rounded bg-red-800/90 px-2 py-1 text-[10px] font-bold text-amber-50 hover:bg-red-700"
+                                className="rounded bg-red-800/90 px-2 py-1 text-caption font-bold text-amber-50 hover:bg-red-700"
                               >
                                 Atk ({atkReq.pool})
                               </button>
                               <button
                                 type="button"
                                 onClick={() => togglePin(atkShortcut)}
+                                aria-label="Pin Attack"
                                 title="Pin Attack"
                                 className={`rounded border p-1 ${
                                   atkPinned
@@ -1206,13 +1226,14 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                               <button
                                 type="button"
                                 onClick={() => onRoll(dmgReq)}
-                                className="rounded border border-amber-500/45 bg-amber-950/40 px-2 py-1 text-[10px] font-bold text-amber-100 hover:bg-amber-900/50"
+                                className="rounded border border-amber-500/45 bg-amber-950/40 px-2 py-1 text-caption font-bold text-amber-100 hover:bg-amber-900/50"
                               >
                                 Dmg ({dmgReq.pool})
                               </button>
                               <button
                                 type="button"
                                 onClick={() => togglePin(dmgShortcut)}
+                                aria-label="Pin Damage"
                                 title="Pin Damage"
                                 className={`rounded border p-1 ${
                                   dmgPinned
@@ -1233,7 +1254,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                     ),
                                   }))
                                 }
-                                className="p-1 text-stone-500 hover:text-red-300"
+                                className="p-1 text-stone-400 hover:text-red-300"
                                 aria-label={`Delete ${weapon.name}`}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -1255,7 +1276,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
                 W20 Brawling Maneuvers ({formatFormName(sheet.activeForm)})
               </h3>
-              <span className="text-[10px] text-stone-400">
+              <span className="text-caption text-stone-400">
                 Dexterity + Brawl • Natural Weapons
               </span>
             </div>
@@ -1281,12 +1302,12 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                         <div>
                           <span className="font-bold text-amber-100">{row.name}</span>
                           {!row.availableInCurrentForm && (
-                            <span className="ml-2 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] text-stone-400">
+                            <span className="ml-2 rounded bg-zinc-800 px-1.5 py-0.5 text-caption text-stone-400">
                               No {row.name} in {formatFormName(sheet.activeForm)}
                             </span>
                           )}
                         </div>
-                        <span className="font-mono text-[11px] text-stone-300">
+                        <span className="font-mono text-xs text-stone-300">
                           Diff {row.difficulty} • Dmg {row.damageLabel}
                         </span>
                       </div>
@@ -1296,13 +1317,15 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           <button
                             type="button"
                             onClick={() => onRoll(shortcutToRollRequest(sheet, atkShortcut))}
-                            className="w20-crimson-seal flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-amber-50"
+                            className="w20-crimson-seal flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-amber-50"
                           >
                             <Dices className="h-3.5 w-3.5" />
                             Atk ({row.attackPool}d10)
                           </button>
                           <button
                             type="button"
+                            aria-label={`Pin ${atkShortcut.name} to quick rolls`}
+                            aria-pressed={atkPinned}
                             onClick={() => togglePin(atkShortcut)}
                             className={`rounded-lg border px-2 ${
                               atkPinned
@@ -1319,13 +1342,15 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                             <button
                               type="button"
                               onClick={() => onRoll(shortcutToRollRequest(sheet, dmgShortcut))}
-                              className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-amber-500/45 bg-amber-950/40 px-2 py-1.5 text-[11px] font-bold text-amber-100"
+                              className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-amber-500/45 bg-amber-950/40 px-2 py-1.5 text-xs font-bold text-amber-100"
                             >
                               <Dices className="h-3.5 w-3.5" />
                               Dmg ({row.damagePool}d10)
                             </button>
                             <button
                               type="button"
+                              aria-label={`Pin ${dmgShortcut.name} to quick rolls`}
+                              aria-pressed={dmgPinned}
                               onClick={() => togglePin(dmgShortcut)}
                               className={`rounded-lg border px-2 ${
                                 dmgPinned
@@ -1337,7 +1362,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                             </button>
                           </div>
                         ) : (
-                          <div className="flex items-center justify-center rounded-lg border border-stone-800 bg-zinc-950 text-[10px] text-stone-400">
+                          <div className="flex items-center justify-center rounded-lg border border-stone-800 bg-zinc-950 text-caption text-stone-400">
                             Knockdown / Special
                           </div>
                         )}
@@ -1349,7 +1374,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
             ) : (
               <table className="w-full border-collapse text-left text-xs">
                 <thead>
-                  <tr className="border-b border-stone-800 text-[10px] uppercase text-stone-400">
+                  <tr className="border-b border-stone-800 text-caption uppercase text-stone-400">
                     <th className="py-1.5 pr-2">Maneuver</th>
                     <th className="py-1.5 pr-2">Attack Pool</th>
                     <th className="py-1.5 pr-2">Diff</th>
@@ -1372,7 +1397,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                         <td className="py-2 pr-2 font-bold text-amber-100">
                           {row.name}
                           {!row.availableInCurrentForm && (
-                            <span className="ml-2 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-normal text-stone-400">
+                            <span className="ml-2 rounded bg-zinc-800 px-1.5 py-0.5 text-caption font-normal text-stone-400">
                               Requires shifted form
                             </span>
                           )}
@@ -1385,13 +1410,14 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                             <button
                               type="button"
                               onClick={() => onRoll(shortcutToRollRequest(sheet, atkShortcut))}
-                              className="rounded bg-red-800/90 px-2 py-1 text-[10px] font-bold text-amber-50 hover:bg-red-700"
+                              className="rounded bg-red-800/90 px-2 py-1 text-caption font-bold text-amber-50 hover:bg-red-700"
                             >
                               Attack
                             </button>
                             <button
                               type="button"
                               onClick={() => togglePin(atkShortcut)}
+                              aria-label={`Pin ${row.name} Attack`}
                               title={`Pin ${row.name} Attack`}
                               className={`rounded border p-1 ${
                                 atkPinned
@@ -1406,13 +1432,14 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => onRoll(shortcutToRollRequest(sheet, dmgShortcut))}
-                                  className="rounded border border-amber-500/45 bg-amber-950/40 px-2 py-1 text-[10px] font-bold text-amber-100 hover:bg-amber-900/50"
+                                  className="rounded border border-amber-500/45 bg-amber-950/40 px-2 py-1 text-caption font-bold text-amber-100 hover:bg-amber-900/50"
                                 >
                                   Damage
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => togglePin(dmgShortcut)}
+                                  aria-label={`Pin ${row.name} Damage`}
                                   title={`Pin ${row.name} Damage`}
                                   className={`rounded border p-1 ${
                                     dmgPinned
@@ -1458,7 +1485,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowFetishForm((v) => !v)}
-                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-0.5 text-[10px] font-bold text-amber-200 hover:border-amber-500/60"
+                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-0.5 text-caption font-bold text-amber-200 hover:border-amber-500/60"
                 >
                   + Add
                 </button>
@@ -1480,7 +1507,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   />
                   <div className="grid grid-cols-2 gap-2">
                     <label className="block">
-                      <span className="text-[10px] text-stone-400">Level (0=Talen)</span>
+                      <span className="text-caption text-stone-400">Level (0=Talen)</span>
                       <input
                         type="number"
                         min={0}
@@ -1491,7 +1518,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                       />
                     </label>
                     <label className="block">
-                      <span className="text-[10px] text-stone-400">Gnosis Rating</span>
+                      <span className="text-caption text-stone-400">Gnosis Rating</span>
                       <input
                         type="number"
                         min={1}
@@ -1502,7 +1529,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                       />
                     </label>
                   </div>
-                  <label className="flex items-center gap-2 text-[11px] text-stone-300">
+                  <label className="flex items-center gap-2 text-xs text-stone-300">
                     <input
                       type="checkbox"
                       checked={fetishSilver}
@@ -1523,13 +1550,13 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                     <button
                       type="button"
                       onClick={() => setShowFetishForm(false)}
-                      className="rounded border border-stone-700 px-2 py-1 text-[10px]"
+                      className="rounded border border-stone-700 px-2 py-1 text-caption"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="rounded bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-zinc-950"
+                      className="rounded bg-amber-600 px-2.5 py-1 text-caption font-bold text-zinc-950"
                     >
                       Save
                     </button>
@@ -1538,7 +1565,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               )}
 
               {sheet.fetishes.length === 0 ? (
-                <p className="text-[11px] text-stone-500">No Fetishes or Talens bound.</p>
+                <p className="text-xs text-stone-400">No Fetishes or Talens bound.</p>
               ) : (
                 <div className="space-y-2">
                   {sheet.fetishes.map((f) => {
@@ -1562,11 +1589,11 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           <div>
                             <div className="flex flex-wrap items-center gap-1">
                               <span className="font-bold text-amber-100">{f.name}</span>
-                              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] text-stone-300">
+                              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-caption text-stone-300">
                                 {f.level === 0 ? 'Talen' : `Lv ${f.level}`} • Gn {f.gnosisRating}
                               </span>
                               {f.isSilver && (
-                                <span className="rounded border border-stone-500/70 bg-stone-800 px-1.5 py-0.5 text-[9px] font-bold text-stone-100">
+                                <span className="rounded border border-stone-500/70 bg-stone-800 px-1.5 py-0.5 text-caption font-bold text-stone-100">
                                   Silver
                                 </span>
                               )}
@@ -1576,7 +1603,8 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                             <button
                               type="button"
                               onClick={() => onRoll(shortcutToRollRequest(sheet, fetishShortcut))}
-                              className="flex items-center gap-1 rounded bg-red-800/85 px-1.5 py-0.5 text-[10px] font-bold text-amber-50 hover:bg-red-700"
+                              className="flex items-center gap-1 rounded bg-red-800/85 px-1.5 py-0.5 text-caption font-bold text-amber-50 hover:bg-red-700"
+                              aria-label={`Roll Gnosis Activation (${f.gnosisRating}d10)`}
                               title={`Roll Gnosis Activation (${f.gnosisRating}d10)`}
                             >
                               <Dices className="h-3 w-3" />
@@ -1584,6 +1612,8 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                             </button>
                             <button
                               type="button"
+                              aria-label={`Pin ${fetishShortcut.name} to quick rolls`}
+                              aria-pressed={pinned}
                               onClick={() => togglePin(fetishShortcut)}
                               className={`rounded border p-0.5 ${
                                 pinned
@@ -1601,14 +1631,14 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                                   fetishes: p.fetishes.filter((item) => item.id !== f.id),
                                 }))
                               }
-                              className="p-0.5 text-stone-500 hover:text-red-300"
+                              className="p-0.5 text-stone-400 hover:text-red-300"
                               aria-label={`Remove ${f.name}`}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </div>
                         </div>
-                        {f.power && <p className="mt-1 text-[10px] text-stone-400">{f.power}</p>}
+                        {f.power && <p className="mt-1 text-caption text-stone-400">{f.power}</p>}
                       </div>
                     );
                   })}
@@ -1626,7 +1656,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowRiteForm((v) => !v)}
-                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-0.5 text-[10px] font-bold text-amber-200 hover:border-amber-500/60"
+                  className="rounded border border-stone-700 bg-zinc-900 px-2 py-0.5 text-caption font-bold text-amber-200 hover:border-amber-500/60"
                 >
                   + Add
                 </button>
@@ -1669,13 +1699,13 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                     <button
                       type="button"
                       onClick={() => setShowRiteForm(false)}
-                      className="rounded border border-stone-700 px-2 py-1 text-[10px]"
+                      className="rounded border border-stone-700 px-2 py-1 text-caption"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="rounded bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-zinc-950"
+                      className="rounded bg-amber-600 px-2.5 py-1 text-caption font-bold text-zinc-950"
                     >
                       Save
                     </button>
@@ -1684,7 +1714,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               )}
 
               {sheet.rites.length === 0 ? (
-                <p className="text-[11px] text-stone-500">No Rites learned yet.</p>
+                <p className="text-xs text-stone-400">No Rites learned yet.</p>
               ) : (
                 <div className="space-y-2">
                   {sheet.rites.map((r) => (
@@ -1696,7 +1726,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                         <div>
                           <span className="font-bold text-amber-100">{r.name}</span>
                           {r.level !== undefined && (
-                            <span className="ml-1.5 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] text-stone-300">
+                            <span className="ml-1.5 rounded bg-zinc-800 px-1.5 py-0.5 text-caption text-stone-300">
                               Lv {r.level}
                             </span>
                           )}
@@ -1709,13 +1739,13 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                               rites: p.rites.filter((item) => item.id !== r.id),
                             }))
                           }
-                          className="p-0.5 text-stone-500 hover:text-red-300"
+                          className="p-0.5 text-stone-400 hover:text-red-300"
                           aria-label={`Remove ${r.name}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
-                      {r.summary && <p className="mt-1 text-[10px] text-stone-400">{r.summary}</p>}
+                      {r.summary && <p className="mt-1 text-caption text-stone-400">{r.summary}</p>}
                     </div>
                   ))}
                 </div>
@@ -1797,7 +1827,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 >
                   <div className="flex min-w-0 items-center gap-1.5">
                     <span
-                      className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider ${badgeClasses}`}
+                      className={`shrink-0 rounded border px-1.5 py-0.5 text-caption font-extrabold uppercase tracking-wider ${badgeClasses}`}
                     >
                       {badgeText}
                     </span>
@@ -1832,7 +1862,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           otherTraits: prev.otherTraits.filter((item) => item.id !== ot.id),
                         }))
                       }
-                      className="text-stone-500 hover:text-red-300"
+                      className="text-stone-400 hover:text-red-300"
                       aria-label={`Remove ${ot.name}`}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -1852,7 +1882,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   <h3 className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
                     Merits, Flaws &amp; Other Traits
                   </h3>
-                  <div className="flex items-center gap-1.5 text-[10px] font-bold">
+                  <div className="flex items-center gap-1.5 text-caption font-bold">
                     <span className="rounded bg-emerald-950/80 px-1.5 py-0.5 text-emerald-300 border border-emerald-700/50">
                       {meritEntries.length} Merit{meritEntries.length === 1 ? '' : 's'}
                     </span>
@@ -1865,12 +1895,12 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                 {/* Visually Separated Lists */}
                 <div className="space-y-3">
                   <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/10 p-2.5">
-                    <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-caption font-extrabold uppercase tracking-wider text-emerald-300">
                       <ShieldCheck className="h-3.5 w-3.5" />
                       <span>Merits (Boons)</span>
                     </div>
                     {meritEntries.length === 0 ? (
-                      <p className="text-[11px] text-stone-500">No Merits recorded.</p>
+                      <p className="text-xs text-stone-400">No Merits recorded.</p>
                     ) : (
                       <div className="space-y-1.5">
                         {meritEntries.map((ot) => renderEntryRow(ot, 'merit'))}
@@ -1879,12 +1909,12 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   </div>
 
                   <div className="rounded-lg border border-rose-800/45 bg-rose-950/10 p-2.5">
-                    <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-rose-300">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-caption font-extrabold uppercase tracking-wider text-rose-300">
                       <AlertTriangle className="h-3.5 w-3.5" />
                       <span>Flaws (Drawbacks)</span>
                     </div>
                     {flawEntries.length === 0 ? (
-                      <p className="text-[11px] text-stone-500">No Flaws recorded.</p>
+                      <p className="text-xs text-stone-400">No Flaws recorded.</p>
                     ) : (
                       <div className="space-y-1.5">
                         {flawEntries.map((ot) => renderEntryRow(ot, 'flaw'))}
@@ -1894,7 +1924,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
 
                   {otherEntries.length > 0 && (
                     <div className="rounded-lg border border-stone-800 bg-zinc-900/40 p-2.5">
-                      <div className="mb-1.5 text-[10px] font-extrabold uppercase tracking-wider text-amber-200">
+                      <div className="mb-1.5 text-caption font-extrabold uppercase tracking-wider text-amber-200">
                         Other Traits &amp; Lore
                       </div>
                       <div className="space-y-1.5">
@@ -1910,7 +1940,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                     <div
                       role="group"
                       aria-label="New Entry Classification"
-                      className="grid grid-cols-3 gap-1 rounded-lg border border-stone-800 bg-zinc-950 p-0.5 text-[10px] font-bold"
+                      className="grid grid-cols-3 gap-1 rounded-lg border border-stone-800 bg-zinc-950 p-0.5 text-caption font-bold"
                     >
                       <button
                         type="button"
@@ -1951,7 +1981,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                       <button
                         type="button"
                         onClick={() => setShowPresetMeritsFlaws((v) => !v)}
-                        className="text-[10px] font-semibold text-amber-300 underline decoration-amber-500/40 underline-offset-2 hover:text-amber-200"
+                        className="text-caption font-semibold text-amber-300 underline decoration-amber-500/40 underline-offset-2 hover:text-amber-200"
                       >
                         {showPresetMeritsFlaws
                           ? 'Hide W20 Presets'
@@ -1974,8 +2004,9 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                               category: item.category,
                             })
                           }
+                          aria-label={item.summary}
                           title={item.summary}
-                          className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${
+                          className={`rounded border px-2 py-1 text-caption font-semibold transition ${
                             item.kind === 'merit'
                               ? 'border-emerald-800/60 bg-emerald-950/35 text-emerald-200 hover:border-emerald-400'
                               : 'border-rose-800/60 bg-rose-950/35 text-rose-200 hover:border-rose-400'
@@ -1990,6 +2021,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   <div className="flex flex-wrap gap-1.5">
                     <input
                       type="text"
+                      aria-label="New trait name"
                       maxLength={120}
                       value={newTraitName}
                       onChange={(e) => setNewTraitName(e.target.value)}
