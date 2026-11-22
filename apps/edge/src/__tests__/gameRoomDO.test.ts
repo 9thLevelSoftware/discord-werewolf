@@ -1102,4 +1102,232 @@ describe('GameRoomDO authoritative W20 engine & projection security', () => {
       expect(p2Seat?.isConnected).toBe(true);
     }
   });
+
+  it('delivers all 4 simultaneous voice-table ROLL_TABLE_POOL bursts without drops or SEQ_MISMATCH', async () => {
+    const env = createMockEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+
+    const playerIds = [
+      'concurrent-p1',
+      'concurrent-p2',
+      'concurrent-p3',
+      'concurrent-p4',
+    ] as const;
+
+    const conns: Array<{ discordId: string; jwt: string; ws: MockWebSocket }> = [];
+    for (let idx = 0; idx < playerIds.length; idx += 1) {
+      const discordId = playerIds[idx]!;
+      const jwt = await mintJwtForUser(
+        discordId,
+        `Player${idx + 1}`,
+        [GUILD_ID],
+        env.SUPABASE_JWT_SECRET,
+      );
+      const res = await room.fetch(
+        new Request('https://vtt.example/ws/room/dice-room-burst-4', {
+          headers: { Upgrade: 'websocket' },
+        }),
+      );
+      expect(res.status).toBe(101);
+      const ws = state.acceptedSockets[state.acceptedSockets.length - 1]!;
+      await sendCommand(room, ws, 0, {
+        type: 'HELLO_AUTH',
+        sessionJwt: jwt,
+        campaignId: 'dice-room-burst-4',
+        characterId: null,
+        lastSeenSeq: null,
+      });
+      conns.push({ discordId, jwt, ws });
+    }
+    expect(new Set(conns.map((c) => c.ws)).size).toBe(4);
+
+    for (const c of conns) {
+      c.ws.drainJson();
+    }
+
+    await Promise.all([
+      sendCommand(room, conns[0]!.ws, 0, {
+        type: 'ROLL_TABLE_POOL',
+        pool: 5,
+        rageDiceCount: 0,
+        difficulty: 6,
+        hasSpecialty: false,
+        spendWillpower: false,
+        applyWoundPenalty: false,
+        label: 'P1 Perception',
+        rollClientId: 'burst-1',
+        physicalDiceValues: [9, 8, 5, 3, 2],
+      }),
+      sendCommand(room, conns[1]!.ws, 0, {
+        type: 'ROLL_TABLE_POOL',
+        pool: 4,
+        rageDiceCount: 2,
+        difficulty: 7,
+        hasSpecialty: true,
+        spendWillpower: false,
+        applyWoundPenalty: false,
+        label: 'P2 Rage Claw',
+        rollClientId: 'burst-2',
+        physicalDiceValues: [10, 7, 4, 2],
+      }),
+      sendCommand(room, conns[2]!.ws, 0, {
+        type: 'ROLL_TABLE_POOL',
+        pool: 3,
+        rageDiceCount: 0,
+        difficulty: 6,
+        hasSpecialty: false,
+        spendWillpower: true,
+        applyWoundPenalty: false,
+        label: 'P3 Willpower Resist',
+        rollClientId: 'burst-3',
+        physicalDiceValues: [8, 6, 3],
+      }),
+      sendCommand(room, conns[3]!.ws, 0, {
+        type: 'ROLL_TABLE_POOL',
+        pool: 1,
+        rageDiceCount: 0,
+        difficulty: 6,
+        hasSpecialty: false,
+        spendWillpower: false,
+        applyWoundPenalty: false,
+        rollMode: 'initiative',
+        initiativeModifier: 6,
+        label: 'P4 Initiative',
+        rollClientId: 'burst-4',
+        physicalDiceValues: [8],
+      }),
+    ]);
+
+    const perSocketRolls = conns.map((c) => {
+      const drained = c.ws.drainJson<ServerEnvelope<ServerEvent>>();
+      expect(drained.some((e) => e.event.type === 'COMMAND_REJECTED')).toBe(false);
+      return drained
+        .filter((e) => e.event.type === 'DICE_ROLLED_3D')
+        .map((e) => ({
+          seq: e.seq,
+          label: e.event.type === 'DICE_ROLLED_3D' ? e.event.label : '',
+          rollClientId: e.event.type === 'DICE_ROLLED_3D' ? e.event.rollClientId : '',
+        }));
+    });
+
+    const baselineOrder = perSocketRolls[0]!;
+    expect(baselineOrder).toHaveLength(4);
+    expect(baselineOrder.map((r) => r.seq)).toEqual([1, 2, 3, 4]);
+    expect(new Set(baselineOrder.map((r) => r.rollClientId))).toEqual(
+      new Set(['burst-1', 'burst-2', 'burst-3', 'burst-4']),
+    );
+    for (const rolls of perSocketRolls) {
+      expect(rolls).toEqual(baselineOrder);
+    }
+
+    // Reconnecting viewer receives all 4 rolls in rollHistory
+    const reRes = await room.fetch(
+      new Request('https://vtt.example/ws/room/dice-room-burst-4', {
+        headers: { Upgrade: 'websocket' },
+      }),
+    );
+    expect(reRes.status).toBe(101);
+    const reWs = state.acceptedSockets[state.acceptedSockets.length - 1]!;
+    await sendCommand(room, reWs, 0, {
+      type: 'HELLO_AUTH',
+      sessionJwt: conns[0]!.jwt,
+      campaignId: 'dice-room-burst-4',
+      characterId: null,
+      lastSeenSeq: null,
+    });
+    const reSnap = reWs.drainJson<ServerEnvelope<ServerEvent>>()[0]!;
+    expect(reSnap.event.type).toBe('SYNC_SNAPSHOT');
+    if (reSnap.event.type === 'SYNC_SNAPSHOT') {
+      expect(reSnap.event.snapshot.rollHistory).toHaveLength(4);
+      expect(new Set(reSnap.event.snapshot.rollHistory?.map((h) => h.label))).toEqual(
+        new Set(['P1 Perception', 'P2 Rage Claw', 'P3 Willpower Resist', 'P4 Initiative']),
+      );
+    }
+  });
+
+  it('allows simultaneous ROLL_FREEFORM_POOL commands from two campaign players with identical expectedSeq', async () => {
+    const fetchSpy = mockSupabaseForRoom();
+    const env = createMockEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+
+    const p1Jwt = await mintJwtForUser(PLAYER1_DISCORD_ID, 'PlayerOne', [GUILD_ID], env.SUPABASE_JWT_SECRET);
+    const p2Jwt = await mintJwtForUser(PLAYER2_DISCORD_ID, 'PlayerTwo', [GUILD_ID], env.SUPABASE_JWT_SECRET);
+
+    const r1 = await room.fetch(
+      new Request(`https://vtt.example/ws/room/${CAMPAIGN_ID}`, {
+        headers: { Upgrade: 'websocket' },
+      }),
+    );
+    expect(r1.status).toBe(101);
+    const p1Ws = state.acceptedSockets[0]!;
+
+    const r2 = await room.fetch(
+      new Request(`https://vtt.example/ws/room/${CAMPAIGN_ID}`, {
+        headers: { Upgrade: 'websocket' },
+      }),
+    );
+    expect(r2.status).toBe(101);
+    const p2Ws = state.acceptedSockets[1]!;
+
+    await Promise.all([
+      sendCommand(room, p1Ws, 0, {
+        type: 'HELLO_AUTH',
+        sessionJwt: p1Jwt,
+        campaignId: CAMPAIGN_ID,
+        characterId: PC1_ID,
+        lastSeenSeq: null,
+      }),
+      sendCommand(room, p2Ws, 0, {
+        type: 'HELLO_AUTH',
+        sessionJwt: p2Jwt,
+        campaignId: CAMPAIGN_ID,
+        characterId: PC2_ID,
+        lastSeenSeq: null,
+      }),
+    ]);
+    // Concurrent cold HELLO_AUTH coalesced onto one Supabase hydration pass (campaigns + packs + characters = 3 fetches)
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+    const p1Hello = p1Ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const p2Hello = p2Ws.drainJson<ServerEnvelope<ServerEvent>>();
+    expect(p1Hello[0]?.event.type).toBe('SYNC_SNAPSHOT');
+    expect(p2Hello[0]?.event.type).toBe('SYNC_SNAPSHOT');
+
+    const sharedSeq = p1Hello[0]!.seq;
+    await Promise.all([
+      sendCommand(room, p1Ws, sharedSeq, {
+        type: 'ROLL_FREEFORM_POOL',
+        characterId: PC1_ID,
+        label: 'Kaelen Brawl',
+        attributeKey: 'dexterity',
+        abilityKey: 'brawl',
+        difficulty: 6,
+      }),
+      sendCommand(room, p2Ws, sharedSeq, {
+        type: 'ROLL_FREEFORM_POOL',
+        characterId: PC2_ID,
+        label: 'Whisper Alertness',
+        attributeKey: 'perception',
+        abilityKey: 'alertness',
+        difficulty: 6,
+      }),
+    ]);
+
+    const p1Drained = p1Ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const p2Drained = p2Ws.drainJson<ServerEnvelope<ServerEvent>>();
+    expect(p1Drained.some((e) => e.event.type === 'COMMAND_REJECTED')).toBe(false);
+    expect(p2Drained.some((e) => e.event.type === 'COMMAND_REJECTED')).toBe(false);
+
+    const p1RollLabels = p1Drained
+      .filter((e) => e.event.type === 'DICE_ROLLED_3D')
+      .map((e) => (e.event.type === 'DICE_ROLLED_3D' ? e.event.label : ''));
+    const p2RollLabels = p2Drained
+      .filter((e) => e.event.type === 'DICE_ROLLED_3D')
+      .map((e) => (e.event.type === 'DICE_ROLLED_3D' ? e.event.label : ''));
+
+    expect(new Set(p1RollLabels)).toEqual(new Set(['Kaelen Brawl', 'Whisper Alertness']));
+    expect(p2RollLabels).toEqual(p1RollLabels);
+  });
 });

@@ -169,6 +169,7 @@ function isAllowedWebhookUrl(rawUrl: string | null | undefined): rawUrl is strin
 export class GameRoomDO extends DurableObject<WorkerEnv> {
   private roomState: PersistedRoomState = createEmptyRoomState();
   private eventRing: BufferedRoomEvent[] = [];
+  private hydrationPromise: Promise<boolean> | null = null;
 
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env);
@@ -317,7 +318,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return;
     }
 
-    if (!this.isExpectedSeqAcceptable(envelope.expectedSeq, attachment)) {
+    const isSeqExemptRollCommand =
+      envelope.command.type === 'ROLL_FREEFORM_POOL' ||
+      envelope.command.type === 'FRENZY_ROLL_CHECK';
+
+    if (!isSeqExemptRollCommand && !this.isExpectedSeqAcceptable(envelope.expectedSeq, attachment)) {
       this.sendRejection(
         ws,
         envelope.reqId,
@@ -943,6 +948,18 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   }
 
   private async ensureRoomHydrated(campaignId: string): Promise<boolean> {
+    if (this.hydrationPromise) {
+      return this.hydrationPromise;
+    }
+    this.hydrationPromise = this.performEnsureRoomHydrated(campaignId);
+    try {
+      return await this.hydrationPromise;
+    } finally {
+      this.hydrationPromise = null;
+    }
+  }
+
+  private async performEnsureRoomHydrated(campaignId: string): Promise<boolean> {
     if (campaignId.startsWith('dice-room-')) {
       this.roomState.campaignId = campaignId;
       this.roomState.tableParticipants ??= {};

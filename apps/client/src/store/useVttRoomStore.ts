@@ -148,9 +148,19 @@ interface VttRoomStoreState {
     reaction: ReactionChoice
   ) => void;
   dequeue3DRoll: (id: string) => void;
+  consume3DRollByClientId: (rollClientId: string) => Queued3DRoll | null;
   dismissWhisper: (id: string) => void;
   dismissFrenzyPrompt: () => void;
 }
+
+const MAX_SEEN_ROLL_IDS = 150;
+const MAX_PENDING_OUTBOUND_COMMANDS = 32;
+const QUEUEABLE_RECONNECT_COMMANDS = new Set<ClientCommand['type']>([
+  'ROLL_TABLE_POOL',
+  'ROLL_FREEFORM_POOL',
+  'UPDATE_LIGHT_TRACKERS',
+  'SYNC_CLIENT_SEATS',
+]);
 
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -158,6 +168,48 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectAttempt = 0;
 let connectionGeneration = 0;
 let latestConnectParams: ConnectRoomParams | null = null;
+const seenRollHistoryIds = new Set<string>();
+let pendingOutboundCommands: Array<{ reqId: string; command: ClientCommand }> = [];
+
+function recordSeenRollHistoryId(id: string): void {
+  if (seenRollHistoryIds.has(id)) return;
+  seenRollHistoryIds.add(id);
+  while (seenRollHistoryIds.size > MAX_SEEN_ROLL_IDS) {
+    const oldest = seenRollHistoryIds.values().next().value;
+    if (oldest === undefined) break;
+    seenRollHistoryIds.delete(oldest);
+  }
+}
+
+function clearTransientRollBuffers(): void {
+  seenRollHistoryIds.clear();
+  pendingOutboundCommands = [];
+}
+
+function flushPendingOutboundCommands(
+  getState: () => Pick<VttRoomStoreState, 'connectionStatus' | 'lastSeq'>
+): void {
+  if (pendingOutboundCommands.length === 0) return;
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  if (getState().connectionStatus !== 'authenticated') return;
+
+  const queued = pendingOutboundCommands;
+  pendingOutboundCommands = [];
+  for (let i = 0; i < queued.length; i += 1) {
+    const item = queued[i]!;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      pendingOutboundCommands = queued.slice(i).concat(pendingOutboundCommands);
+      break;
+    }
+    const envelope: ClientEnvelope = {
+      reqId: item.reqId,
+      expectedSeq: getState().lastSeq,
+      sentAt: Date.now(),
+      command: item.command,
+    };
+    socket.send(JSON.stringify(envelope));
+  }
+}
 
 function clearTimers(): void {
   if (reconnectTimer !== null) {
@@ -234,6 +286,9 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
         latestConnectParams.campaignId === params.campaignId &&
         latestConnectParams.characterId === params.characterId;
       latestConnectParams = { ...params };
+      if (!isSameRoom) {
+        clearTransientRollBuffers();
+      }
 
       clearTimers();
       closeActiveSocket();
@@ -312,6 +367,9 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
           case 'SYNC_SNAPSHOT': {
             const { snapshot } = event;
             const prevRealm = get().viewerRealm;
+            for (const entry of snapshot.rollHistory ?? []) {
+              recordSeenRollHistoryId(entry.id);
+            }
             set({
               connectionStatus: 'authenticated',
               lastSeq: seq,
@@ -338,6 +396,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               rollHistory: snapshot.rollHistory ?? [],
               lastError: null,
             });
+            flushPendingOutboundCommands(get);
             if (snapshot.audioState) {
               soundscapeEngine.syncState(
                 snapshot.audioState,
@@ -367,6 +426,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               serverClockOffsetMs: offsetMs,
               participants: event.participants,
             });
+            flushPendingOutboundCommands(get);
             break;
           }
 
@@ -391,6 +451,9 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
                 isSecretRoll: Boolean(event.isSecretStRoll),
                 roll: event.roll,
               };
+              const alreadySeen = seenRollHistoryIds.has(historyEntry.id);
+              recordSeenRollHistoryId(historyEntry.id);
+
               const nextHistory = [
                 historyEntry,
                 ...state.rollHistory.filter((item) => item.id !== historyEntry.id),
@@ -401,23 +464,26 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
                 lastSeq: seq,
                 serverClockOffsetMs: offsetMs,
                 rollHistory: nextHistory,
-                diceQueue: [
-                  ...state.diceQueue,
-                  {
-                    id: `${seq}-${event.roll.physicsSeed}-${state.diceQueue.length}`,
-                    rollerDiscordId: event.rollerDiscordId,
-                    characterId: event.characterId,
-                    label: event.label,
-                    roll: event.roll,
-                    rollerName: historyEntry.rollerName,
-                    rollerAvatarUrl: historyEntry.rollerAvatarUrl,
-                    rageDiceCount: event.rageDiceCount,
-                    rollClientId: event.rollClientId,
-                    isSecretRoll: event.isSecretStRoll,
-                  },
-                ],
+                diceQueue: alreadySeen
+                  ? state.diceQueue
+                  : [
+                      ...state.diceQueue,
+                      {
+                        id: historyEntry.id,
+                        rollerDiscordId: event.rollerDiscordId,
+                        characterId: event.characterId,
+                        label: event.label,
+                        roll: event.roll,
+                        rollerName: historyEntry.rollerName,
+                        rollerAvatarUrl: historyEntry.rollerAvatarUrl,
+                        rageDiceCount: event.rageDiceCount,
+                        rollClientId: event.rollClientId,
+                        isSecretRoll: event.isSecretStRoll,
+                      },
+                    ],
               };
             });
+            flushPendingOutboundCommands(get);
             break;
           }
 
@@ -628,6 +694,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
       latestConnectParams = null;
       clearTimers();
       closeActiveSocket();
+      clearTransientRollBuffers();
       set({
         connectionStatus: 'disconnected',
         lastSeq: 0,
@@ -653,15 +720,48 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
 
     sendCommand: (command) => {
       const reqId = crypto.randomUUID();
-      if (!socket || socket.readyState !== WebSocket.OPEN) return reqId;
+      const isOpen = Boolean(socket && socket.readyState === WebSocket.OPEN);
 
-      const envelope: ClientEnvelope = {
-        reqId,
-        expectedSeq: get().lastSeq,
-        sentAt: Date.now(),
-        command,
-      };
-      socket.send(JSON.stringify(envelope));
+      // HELLO_AUTH and PING must always send immediately while socket is open (before authenticated)
+      if (command.type === 'HELLO_AUTH' || command.type === 'PING') {
+        if (!isOpen || !socket) return reqId;
+        const envelope: ClientEnvelope = {
+          reqId,
+          expectedSeq: get().lastSeq,
+          sentAt: Date.now(),
+          command,
+        };
+        socket.send(JSON.stringify(envelope));
+        return reqId;
+      }
+
+      if (get().connectionStatus === 'authenticated' && isOpen && socket) {
+        const envelope: ClientEnvelope = {
+          reqId,
+          expectedSeq: get().lastSeq,
+          sentAt: Date.now(),
+          command,
+        };
+        socket.send(JSON.stringify(envelope));
+        return reqId;
+      }
+
+      if (QUEUEABLE_RECONNECT_COMMANDS.has(command.type) && latestConnectParams !== null) {
+        if (command.type === 'SYNC_CLIENT_SEATS') {
+          pendingOutboundCommands = [
+            ...pendingOutboundCommands.filter(
+              (item) => item.command.type !== 'SYNC_CLIENT_SEATS'
+            ),
+            { reqId, command },
+          ];
+        } else {
+          if (pendingOutboundCommands.length >= MAX_PENDING_OUTBOUND_COMMANDS) {
+            pendingOutboundCommands.shift();
+          }
+          pendingOutboundCommands.push({ reqId, command });
+        }
+      }
+
       return reqId;
     },
 
@@ -738,6 +838,15 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
       set((state) => ({
         diceQueue: state.diceQueue.filter((item) => item.id !== id),
       }));
+    },
+
+    consume3DRollByClientId: (rollClientId) => {
+      const match = get().diceQueue.find((item) => item.rollClientId === rollClientId) ?? null;
+      if (!match) return null;
+      set((state) => ({
+        diceQueue: state.diceQueue.filter((item) => item.id !== match.id),
+      }));
+      return match;
     },
 
     dismissWhisper: (id) => {

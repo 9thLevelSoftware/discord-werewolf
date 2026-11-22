@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import DiceBox from '@3d-dice/dice-box';
 import { Queued3DRoll, useVttRoomStore } from '../store/useVttRoomStore';
+import { SafeDiceBoxController } from './dice-table/rollQueueController';
 
 /**
  * Splits effective pool into Obsidian base d10s (#18181b) and Blood-Red Rage d10s (#991b1b).
@@ -29,7 +30,10 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const boxRef = useRef<DiceBox | null>(null);
-  const readyRef = useRef(false);
+  const safeBoxRef = useRef<SafeDiceBoxController | null>(null);
+  if (!safeBoxRef.current) {
+    safeBoxRef.current = new SafeDiceBoxController();
+  }
   const busyRollIdRef = useRef<string | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -66,7 +70,13 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
         .then(() => {
           if (!cancelled) {
             boxRef.current = box;
-            readyRef.current = true;
+            safeBoxRef.current?.setBox(box, true);
+          } else {
+            try {
+              box.clear();
+            } catch {
+              // Ignore teardown errors
+            }
           }
         })
         .catch((err: unknown) => {
@@ -74,19 +84,19 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
             '3D DiceBox WebGL unavailable; falling back to authoritative 2D dice banner.',
             err
           );
-          readyRef.current = false;
+          safeBoxRef.current?.setBox(null, false);
         });
     } catch (err: unknown) {
       console.warn(
         '3D DiceBox initialization failed; falling back to authoritative 2D dice banner.',
         err
       );
-      readyRef.current = false;
+      safeBoxRef.current?.setBox(null, false);
     }
 
     return () => {
       cancelled = true;
-      readyRef.current = false;
+      safeBoxRef.current?.setBox(null, false);
       try {
         boxRef.current?.clear();
       } catch {
@@ -138,15 +148,11 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
         rollGroups.push({ qty: rageCount, sides: 10, themeColor: '#991b1b' });
       }
 
-      if (readyRef.current && boxRef.current && rollGroups.length > 0) {
-        try {
-          boxRef.current.clear();
-          await boxRef.current.roll(rollGroups, {
-            seed: headRoll.roll.physicsSeed,
-          });
-        } catch {
-          // Graceful fallback to authoritative banner if WebGL context is throttled
-        }
+      if (safeBoxRef.current?.isReady() && rollGroups.length > 0) {
+        safeBoxRef.current.clearBoxSafely();
+        await safeBoxRef.current.throwDice(rollGroups, {
+          rollOptions: { seed: headRoll.roll.physicsSeed },
+        });
       }
 
       if (cancelled) return;
@@ -158,11 +164,7 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
       }
       dismissTimerRef.current = setTimeout(() => {
         dismissTimerRef.current = null;
-        try {
-          boxRef.current?.clear();
-        } catch {
-          // Ignore WebGL clear errors on dismiss
-        }
+        safeBoxRef.current?.interruptCurrentThrow();
         setActiveBanner(null);
         busyRollIdRef.current = null;
         dequeue3DRoll(headRoll.id);
@@ -173,6 +175,8 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
 
     return () => {
       cancelled = true;
+      safeBoxRef.current?.interruptCurrentThrow();
+      busyRollIdRef.current = null;
       if (dismissTimerRef.current !== null) {
         clearTimeout(dismissTimerRef.current);
         dismissTimerRef.current = null;
@@ -186,11 +190,7 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
       clearTimeout(dismissTimerRef.current);
       dismissTimerRef.current = null;
     }
-    try {
-      boxRef.current?.clear();
-    } catch {
-      // Ignore WebGL clear errors
-    }
+    safeBoxRef.current?.interruptCurrentThrow();
     const id = activeBanner.id;
     setActiveBanner(null);
     busyRollIdRef.current = null;

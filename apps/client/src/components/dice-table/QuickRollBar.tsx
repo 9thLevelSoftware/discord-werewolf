@@ -28,6 +28,7 @@ import type {
   ResolvedTraitRollSelection,
   RollSourceMode,
 } from './traitRollMath';
+import type { RollStageStatus } from './rollQueueController';
 
 export interface QuickRollPreset {
   id: string;
@@ -82,6 +83,7 @@ export interface DiceTableHudProps {
   effectiveRollLabel: string;
   manualControlsOpen: boolean;
   isThrowing: boolean;
+  rollStageStatus: RollStageStatus;
   effectivePreviewPool: number;
   clampedPreviewRage: number;
   obsidianPreviewCount: number;
