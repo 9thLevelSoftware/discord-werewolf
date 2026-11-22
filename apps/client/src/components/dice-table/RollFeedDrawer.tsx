@@ -30,10 +30,9 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
   const entries = (
     <>
         {rollHistory.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-stone-700/60 bg-zinc-950/50 p-6 text-center text-xs text-stone-400">
-            <p className="font-display text-amber-200/80 uppercase tracking-wider">
-              No rolls yet
-            </p>
+          <div className="flex flex-col items-center rounded-xl border border-dashed border-stone-700/60 bg-zinc-950/50 px-4 py-8 text-center">
+            <ScrollText className="h-6 w-6 text-gold-500" aria-hidden="true" />
+            <p className="mt-2 text-sm font-semibold text-stone-200">No rolls yet</p>
             <p className="mt-1 text-xs text-stone-400">
               Rolls from everyone at this table appear here.
             </p>

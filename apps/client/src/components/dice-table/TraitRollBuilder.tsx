@@ -116,7 +116,7 @@ export const DifficultyQuickControl: React.FC<DifficultyQuickControlProps> = ({
         <div
           role="dialog"
           aria-label="Difficulty presets"
-          className="w20-obsidian-panel absolute right-0 bottom-full z-modal mb-2 w-max max-w-[90vw] rounded-xl p-2 shadow-2xl"
+          className="w20-obsidian-panel animate-pop-in absolute right-0 bottom-full z-modal mb-2 w-max max-w-[90vw] rounded-xl p-2 shadow-2xl"
         >
           <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
             <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200/80">
@@ -302,7 +302,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
           <div
             role="dialog"
             aria-label="Choose an Attribute or Inner Trait"
-            className="w20-obsidian-panel absolute bottom-full left-0 z-modal mb-2 w-[min(92vw,560px)] rounded-2xl p-3 shadow-2xl"
+            className="w20-obsidian-panel animate-pop-in absolute bottom-full left-0 z-modal mb-2 w-[min(92vw,560px)] rounded-2xl p-3 shadow-2xl"
           >
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -455,7 +455,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
           <div
             role="dialog"
             aria-label="Choose a Skill or Ability"
-            className="w20-obsidian-panel absolute bottom-full left-0 z-modal mb-2 w-[min(94vw,660px)] rounded-2xl p-3 shadow-2xl"
+            className="w20-obsidian-panel animate-pop-in absolute bottom-full left-0 z-modal mb-2 w-[min(94vw,660px)] rounded-2xl p-3 shadow-2xl"
           >
             <div className="mb-2.5 flex flex-wrap items-center gap-2">
               <div className="relative min-w-[180px] flex-1">

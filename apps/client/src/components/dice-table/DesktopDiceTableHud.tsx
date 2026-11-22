@@ -6,19 +6,16 @@ import {
   Flame,
   Hash,
   Minus,
-  Monitor,
   Pin,
   Plus,
   ScrollText,
   SlidersHorizontal,
-  Smartphone,
   Sparkles,
   Users,
-  Volume2,
-  VolumeX,
   Zap,
 } from 'lucide-react';
 import { formatFormName, W20_FORMS } from '../character-sheet/sheetShared';
+import { TableSettingsMenu } from './console/TableSettingsMenu';
 import {
   BonusDiceStepper,
   ConnectionDot,
@@ -242,8 +239,6 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
       ? `Init ${initiativeModifier >= 0 ? `+${initiativeModifier}` : initiativeModifier}`
       : 'Init 1d10';
 
-  const layoutLabel =
-    layoutMode === 'auto' ? 'Auto' : layoutMode === 'desktop' ? 'PC' : 'Mobile';
 
   const handleSaveOrPinAction = () => {
     if (activeSheet) {
@@ -272,11 +267,11 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
       {/* Slim Floating Top Presence & Tracker Bar */}
       <header
         ref={headerRef}
-        className="pointer-events-none absolute inset-x-3 top-3 z-hud flex flex-wrap items-center justify-between gap-2"
+        className="pointer-events-none absolute inset-x-3 top-3 z-hud flex flex-wrap items-center gap-2"
       >
         {/* Left: Compact W20 Crest + Left Pack Drawer Toggle Pill */}
         <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
-          <div className="w20-obsidian-panel flex items-center gap-2 rounded-full px-3 py-1.5">
+          <div className="w20-obsidian-panel flex h-8 items-center gap-2 rounded-full px-3">
             <div className="flex h-5 w-5 items-center justify-center rounded-full border border-red-700/70 bg-red-950/80 text-red-300">
               <Flame className="h-3 w-3" />
             </div>
@@ -299,7 +294,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             onClick={onTogglePack}
             aria-expanded={packOpen}
             title="Show or hide the Pack: everyone in this voice channel"
-            className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition hover:border-amber-400/55 ${
+            className={`w20-obsidian-panel flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-bold transition hover:border-amber-400/55 ${
               packOpen
                 ? '!border-amber-500/50 text-amber-200'
                 : anySpeaking
@@ -315,13 +310,13 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
           </button>
         </div>
 
-        {/* Right: Hot-Seat Switcher + Sheet + SFX + Trackers + View Mode + Clear + Feed */}
-        <div className="pointer-events-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+        {/* Centre: who is rolling. Stays centred; a long seat list scrolls sideways. */}
+        <div className="pointer-events-auto flex min-w-[220px] flex-1 justify-center">
           {/* Hot-Seat Switcher */}
-          <div className="w20-obsidian-panel flex items-center gap-1 rounded-2xl px-1.5 py-1">
+          <div className="w20-obsidian-panel flex min-w-0 max-w-full items-center gap-1 rounded-2xl px-1.5 py-1">
             {seats.length >= 2 ? (
               <>
-                <div className="w20-thin-scrollbar flex max-w-[380px] max-h-[54px] flex-wrap items-center gap-1 overflow-y-auto">
+                <div className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto">
                   {seats.map((seat, idx) => {
                     const seatSheet = seat.sheetId ? sheetsById[seat.sheetId] : undefined;
                     const isActive = seat.seatId === activeSeat.seatId;
@@ -396,74 +391,44 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               </button>
             )}
           </div>
+        </div>
 
-          {/* SFX Volume Pill */}
-          <div className="w20-obsidian-panel flex items-center gap-1.5 rounded-full px-2.5 py-1.5">
-            <button
-              type="button"
-              onClick={onToggleMuteSfx}
-              aria-label={sfxPrefs.muted ? 'Unmute dice sound effects' : 'Mute dice sound effects'}
-              title={sfxPrefs.muted ? 'Unmute dice SFX' : 'Mute dice SFX'}
-              className="flex items-center justify-center rounded-full text-stone-200 transition hover:text-amber-200"
-            >
-              {sfxPrefs.muted ? (
-                <VolumeX className="h-3.5 w-3.5 text-red-400" />
-              ) : (
-                <Volume2 className="h-3.5 w-3.5 text-amber-300" />
-              )}
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={sfxPrefs.muted ? 0 : Math.round(sfxPrefs.volume * 100)}
-              onChange={(e) => onSfxVolumeChange(Number(e.target.value))}
-              aria-label="Dice sound volume"
-              className="hidden h-1 w-14 cursor-pointer accent-amber-400 xl:block"
-            />
-          </div>
-
-          {/* Synced Personal W20 Dot Trackers */}
+        {/* Right: my resources, then table tools. Occasional settings live in one menu.
+            If the bar runs out of room, this zone wraps below as a unit. */}
+        <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1.5">
           <PersonalTrackersControl trackers={activeTrackers} onUpdate={onUpdateTrackers} />
 
-          {/* Layout View Mode Toggle (Auto / PC / Mobile) */}
           <button
             type="button"
-            onClick={onCycleLayoutMode}
-            title={`Layout View Mode: ${layoutLabel} (click to cycle Auto / Mobile / PC)`}
-            className="w20-obsidian-panel flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-bold text-stone-200 transition hover:border-amber-400/55 hover:text-amber-100"
+            onClick={onClearTable}
+            disabled={!(hasDiceOnTable || activeBanner || rollStageStatus.isRolling)}
+            aria-label="Clear dice from the felt"
+            title="Clear dice from the felt"
+            className="w20-obsidian-panel flex h-8 w-8 items-center justify-center rounded-full text-amber-300 transition hover:not-disabled:border-amber-400/55 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {layoutMode === 'mobile' ? (
-              <Smartphone className="h-3.5 w-3.5 text-amber-300" />
-            ) : (
-              <Monitor className="h-3.5 w-3.5 text-amber-300" />
-            )}
-            <span>{layoutLabel}</span>
+            <Eraser className="h-3.5 w-3.5" />
           </button>
-
-          {(hasDiceOnTable || activeBanner || rollStageStatus.isRolling) && (
-            <button
-              type="button"
-              onClick={onClearTable}
-              aria-label="Clear dice from the felt"
-              title="Clear dice from the felt"
-              className="w20-obsidian-panel flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-bold text-stone-200 transition hover:border-amber-400/55"
-            >
-              <Eraser className="h-3.5 w-3.5 text-amber-300" />
-              <span className="hidden xl:inline">Clear Felt</span>
-            </button>
-          )}
 
           <button
             type="button"
             onClick={onToggleFeed}
-            className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition hover:border-amber-400/55 ${
+            aria-expanded={feedOpen}
+            className={`w20-obsidian-panel flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-bold transition hover:border-amber-400/55 ${
               feedOpen ? '!border-amber-500/50 text-amber-200' : 'text-stone-200'
             }`}
           >
             <ScrollText className="h-3.5 w-3.5 text-amber-300" />
             <span>Roll Log ({rollHistoryCount})</span>
           </button>
+
+          <TableSettingsMenu
+            muted={sfxPrefs.muted}
+            volume={sfxPrefs.volume}
+            layoutMode={layoutMode}
+            onToggleMute={onToggleMuteSfx}
+            onVolumeChange={onSfxVolumeChange}
+            onCycleLayoutMode={onCycleLayoutMode}
+          />
         </div>
       </header>
 
@@ -479,6 +444,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
       {/* Dismissible Floating Roll Result Plaque */}
       {activeBanner && (
         <RollResultPlaque
+          key={activeBanner.id}
           banner={activeBanner}
           onDismiss={onDismissBanner}
           queuedCount={rollStageStatus.queuedCount}
@@ -774,7 +740,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             disabled={isDisabled}
             onClick={onRollInitiative}
             title={`Roll W20 Initiative (${initiativeFormula})`}
-            className="flex h-9 shrink-0 items-center gap-1 rounded-xl border border-amber-500/65 bg-gradient-to-b from-amber-950/75 to-zinc-950 px-2.5 text-xs font-extrabold tracking-wide text-amber-100 shadow-[0_0_10px_rgba(245,158,11,0.18)] transition hover:border-amber-400 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+            className="flex h-9 shrink-0 items-center gap-1 rounded-xl border border-stone-700/80 bg-zinc-950/90 px-2.5 text-xs font-bold text-amber-100 transition hover:not-disabled:border-amber-500/55 disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Zap className="h-3.5 w-3.5 shrink-0 text-amber-300" />
             <span>{initButtonLabel}</span>
@@ -802,27 +768,6 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             </button>
           )}
 
-          {/* Crimson Roll CTA */}
-          <button
-            type="button"
-            disabled={isDisabled || rollBlockedByEmptyTraits}
-            onClick={onExecuteRoll}
-            title={
-              effectiveRollLabel
-                ? `Roll ${effectiveRollLabel}: ${effectivePreviewPool}d10 at Difficulty ${difficulty}`
-                : undefined
-            }
-            className="w20-crimson-seal font-display flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-4 text-xs font-black tracking-widest uppercase text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Dices className={`h-4 w-4 shrink-0 ${isThrowing ? 'animate-spin' : ''}`} />
-            <span>{primaryRollCtaText}</span>
-            {rollStageStatus.localPendingCount > 0 && (
-              <span className="rounded-full bg-amber-300/20 px-1.5 py-0.5 font-mono text-xs font-extrabold text-amber-200">
-                +{rollStageStatus.localPendingCount}
-              </span>
-            )}
-          </button>
-
           {/* Modifiers Drawer Toggle */}
           <button
             type="button"
@@ -840,6 +785,27 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             {activeModifierCount > 0 && (
               <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-xs font-black text-zinc-950">
                 {activeModifierCount}
+              </span>
+            )}
+          </button>
+
+          {/* Crimson Roll CTA */}
+          <button
+            type="button"
+            disabled={isDisabled || rollBlockedByEmptyTraits}
+            onClick={onExecuteRoll}
+            title={
+              effectiveRollLabel
+                ? `Roll ${effectiveRollLabel}: ${effectivePreviewPool}d10 at Difficulty ${difficulty}`
+                : undefined
+            }
+            className="w20-crimson-seal font-display flex h-11 min-w-[11rem] shrink-0 items-center justify-center gap-2 rounded-xl px-6 text-sm font-black tracking-widest uppercase text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Dices className={`h-5 w-5 shrink-0 ${isThrowing ? 'animate-spin' : ''}`} />
+            <span>{primaryRollCtaText}</span>
+            {rollStageStatus.localPendingCount > 0 && (
+              <span className="rounded-full bg-amber-300/20 px-1.5 py-0.5 font-mono text-xs font-extrabold text-amber-200">
+                +{rollStageStatus.localPendingCount}
               </span>
             )}
           </button>

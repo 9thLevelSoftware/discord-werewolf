@@ -93,7 +93,7 @@ const ToastCard: React.FC<{ item: ToastItem }> = ({ item }) => {
     <div
       role={item.tone === 'error' ? 'alert' : 'status'}
       className={cx(
-        'w20-obsidian-panel pointer-events-auto flex w-full items-start gap-2 rounded-xl px-3 py-2 text-xs',
+        'w20-obsidian-panel animate-toast-in pointer-events-auto flex w-full items-start gap-2 rounded-xl px-3 py-2 text-xs',
         style.border,
         style.text
       )}

@@ -71,6 +71,57 @@
   --duration-fast: 120ms;
   --duration-base: 180ms;
   --duration-slow: 280ms;
+
+  /* Entrances. Each answers something the player did or a result arriving.
+     All are switched off under prefers-reduced-motion (see the end of this file). */
+  --animate-plaque-in: w20-plaque-in 260ms var(--ease-out-soft) both;
+  --animate-pop-in: w20-pop-in 140ms var(--ease-out-soft) both;
+  --animate-toast-in: w20-toast-in 180ms var(--ease-out-soft) both;
+  --animate-sheet-up: w20-sheet-up 240ms var(--ease-out-soft) both;
+
+  @keyframes w20-plaque-in {
+    from {
+      opacity: 0;
+      transform: translateY(-10px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes w20-pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes w20-toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes w20-sheet-up {
+    from {
+      transform: translateY(24px);
+      opacity: 0.6;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
 }
 
 /* Named stacking layers. Use these instead of raw z-30 / z-40 / z-50. */
