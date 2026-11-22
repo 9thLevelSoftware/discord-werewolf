@@ -1,3 +1,4 @@
+import { IconButton, Modal } from './ui';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ABILITY_GROUPS,
@@ -321,22 +322,22 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
     : [];
 
   return (
-    <aside className="pointer-events-auto fixed inset-y-0 left-0 z-40 flex w-full max-w-xl flex-col border-r border-zinc-800 bg-zinc-950/97 text-xs text-zinc-100 shadow-2xl backdrop-blur">
+    <aside className="pointer-events-auto fixed inset-y-0 left-0 z-drawer flex w-full max-w-xl flex-col w20-obsidian-panel border-y-0 border-l-0 text-xs text-stone-100">
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-900/90 px-4 py-3">
+      <div className="flex items-center justify-between gap-2 border-b border-stone-800 bg-zinc-900/90 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-sm font-black tracking-wide uppercase">
+            <h2 className="truncate text-sm font-display font-black tracking-wide uppercase text-amber-100">
               {character ? character.name : 'Pack Sheet Inspector'}
             </h2>
             {character?.deedName && (
-              <span className="truncate rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] italic text-amber-300">
+              <span className="truncate rounded bg-zinc-800 px-1.5 py-0.5 text-xs italic text-amber-300">
                 “{character.deedName}”
               </span>
             )}
           </div>
           {character && (
-            <p className="text-[11px] capitalize text-zinc-400">
+            <p className="text-xs capitalize text-stone-400">
               Rank {character.rank} • {character.breed} • {character.auspice} •{' '}
               {character.tribe.replace(/_/g, ' ')}
               {character.caughtInGauntlet && (
@@ -349,9 +350,10 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
         <div className="flex items-center gap-2">
           {viewerRole === 'storyteller' && allCharEntries.length > 0 && (
             <select
+              aria-label="Character"
               value={effectiveCharId ?? ''}
               onChange={(e) => setInspectedCharId(e.target.value)}
-              className="max-w-40 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px]"
+              className="max-w-40 rounded border border-stone-700 bg-zinc-950 px-2 py-1 text-xs"
             >
               {allCharEntries.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -360,18 +362,17 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
               ))}
             </select>
           )}
-          <button
-            type="button"
+          <IconButton
+            label="Close character sheet"
+            icon={<X className="h-4 w-4" />}
+            size="sm"
             onClick={onClose}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          />
         </div>
       </div>
 
       {!character || !computed ? (
-        <div className="flex flex-1 items-center justify-center p-6 text-zinc-500">
+        <div className="flex flex-1 items-center justify-center p-6 text-stone-400">
           No Garou character loaded in room yet.
         </div>
       ) : (
@@ -382,7 +383,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
               {character.activeBuffs.map((b) => (
                 <span
                   key={b.sourceMacroId}
-                  className="rounded bg-emerald-900/60 px-2 py-0.5 text-[10px] font-semibold text-emerald-200"
+                  className="rounded bg-emerald-900/60 px-2 py-0.5 text-xs font-semibold text-emerald-200"
                 >
                   {b.label} ({b.remainingRounds}r)
                 </span>
@@ -393,7 +394,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
           {/* Compact Roll Composer Popover */}
           {composerOpen && (
             <div className="rounded-xl border border-red-700/70 bg-zinc-900 p-3 shadow-lg">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div className="flex items-center justify-between border-b border-stone-800 pb-2">
                 <span className="flex items-center gap-1.5 font-extrabold uppercase text-red-300">
                   <Dices className="h-4 w-4" />
                   Dice Pool Composer
@@ -401,7 +402,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                 <button
                   type="button"
                   onClick={() => setComposerOpen(false)}
-                  className="text-zinc-400 hover:text-zinc-100"
+                  className="text-stone-400 hover:text-stone-100"
                 >
                   ×
                 </button>
@@ -409,11 +410,11 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
 
               <div className="mt-2.5 grid grid-cols-2 gap-2">
                 <label className="block">
-                  <span className="text-[10px] uppercase text-zinc-400">Attribute</span>
+                  <span className="text-xs uppercase text-stone-400">Attribute</span>
                   <select
                     value={rollAttr}
                     onChange={(e) => setRollAttr(e.target.value as AttributeKey)}
-                    className="mt-0.5 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 capitalize"
+                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-950 px-2 py-1 capitalize"
                   >
                     {(
                       [
@@ -430,33 +431,33 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                 </label>
 
                 <label className="block">
-                  <span className="text-[10px] uppercase text-zinc-400">Ability</span>
+                  <span className="text-xs uppercase text-stone-400">Ability</span>
                   <input
                     type="text"
                     value={rollAbility}
                     onChange={(e) => setRollAbility(e.target.value)}
-                    className="mt-0.5 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1"
+                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-950 px-2 py-1"
                   />
                 </label>
 
                 <label className="block">
-                  <span className="text-[10px] uppercase text-zinc-400">Difficulty (2-10)</span>
+                  <span className="text-xs uppercase text-stone-400">Difficulty (2-10)</span>
                   <input
                     type="number"
                     min={2}
                     max={10}
                     value={rollDiff}
                     onChange={(e) => setRollDiff(Number(e.target.value))}
-                    className="mt-0.5 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono"
+                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-950 px-2 py-1 font-mono"
                   />
                 </label>
 
                 <label className="block">
-                  <span className="text-[10px] uppercase text-zinc-400">Specialty</span>
+                  <span className="text-xs uppercase text-stone-400">Specialty</span>
                   <select
                     value={rollSpecialtyId}
                     onChange={(e) => setRollSpecialtyId(e.target.value)}
-                    className="mt-0.5 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1"
+                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-950 px-2 py-1"
                   >
                     <option value="">None</option>
                     {character.specialties.map((sp) => (
@@ -493,7 +494,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                 <button
                   type="button"
                   onClick={submitComposedRoll}
-                  className="rounded-lg bg-red-700 px-3 py-1.5 font-bold uppercase text-white hover:bg-red-600"
+                  className="rounded-lg bg-red-800/90 px-3 py-1.5 font-bold uppercase text-amber-50 hover:bg-red-700"
                 >
                   Roll{' '}
                   {Math.max(
@@ -510,16 +511,16 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
 
           {/* 1. All 9 Effective Attributes */}
           <section>
-            <h3 className="mb-2 text-[11px] font-extrabold tracking-wider uppercase text-zinc-400">
+            <h3 className="mb-2 text-xs font-display font-extrabold tracking-wider uppercase text-amber-100">
               Attributes (Effective in {character.activeForm})
             </h3>
             <div className="grid grid-cols-3 gap-2">
               {(['physical', 'social', 'mental'] as AttributeCategory[]).map((cat) => (
                 <div
                   key={cat}
-                  className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5"
+                  className="rounded-lg border border-stone-800 bg-zinc-900/60 p-2.5"
                 >
-                  <div className="mb-1.5 text-[10px] font-bold uppercase text-zinc-500">{cat}</div>
+                  <div className="mb-1.5 text-xs font-bold uppercase text-stone-400">{cat}</div>
                   <div className="space-y-1">
                     {ATTRIBUTE_GROUPS[cat].map((attr) => {
                       const eff = computed.effectiveAttributes[attr];
@@ -537,7 +538,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                           }}
                           className="flex w-full items-center justify-between rounded px-1.5 py-0.5 text-left hover:bg-zinc-800"
                         >
-                          <span className="capitalize text-zinc-300">{attr}</span>
+                          <span className="capitalize text-stone-300">{attr}</span>
                           <span className="font-mono font-bold">
                             <span
                               className={
@@ -545,13 +546,13 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                                   ? 'text-emerald-400'
                                   : eff < base
                                     ? 'text-amber-400'
-                                    : 'text-zinc-100'
+                                    : 'text-stone-100'
                               }
                             >
                               {eff}
                             </span>
                             {eff !== base && (
-                              <span className="ml-1 text-[10px] text-zinc-500">({base})</span>
+                              <span className="ml-1 text-xs text-stone-400">({base})</span>
                             )}
                           </span>
                         </button>
@@ -565,16 +566,16 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
 
           {/* 2. All 30 Abilities */}
           <section>
-            <h3 className="mb-2 text-[11px] font-extrabold tracking-wider uppercase text-zinc-400">
+            <h3 className="mb-2 text-xs font-display font-extrabold tracking-wider uppercase text-amber-100">
               Abilities (Click any Ability to compose dice roll)
             </h3>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {(['talents', 'skills', 'knowledges'] as AbilityCategory[]).map((cat) => (
                 <div
                   key={cat}
-                  className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5"
+                  className="rounded-lg border border-stone-800 bg-zinc-900/60 p-2.5"
                 >
-                  <div className="mb-1.5 text-[10px] font-bold uppercase text-zinc-500">{cat}</div>
+                  <div className="mb-1.5 text-xs font-bold uppercase text-stone-400">{cat}</div>
                   <div className="space-y-0.5">
                     {ABILITY_GROUPS[cat].map((abil) => {
                       const val = character.abilities[abil] ?? 0;
@@ -585,12 +586,12 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                           onClick={() => openAbilityRollComposer(abil)}
                           className="flex w-full items-center justify-between rounded px-1.5 py-0.5 text-left hover:bg-zinc-800"
                         >
-                          <span className={val > 0 ? 'text-zinc-200' : 'text-zinc-500'}>
+                          <span className={val > 0 ? 'text-stone-200' : 'text-stone-400'}>
                             {formatTrait(abil)}
                           </span>
                           <span
                             className={`font-mono font-bold ${
-                              val > 0 ? 'text-emerald-300' : 'text-zinc-600'
+                              val > 0 ? 'text-emerald-300' : 'text-stone-400'
                             }`}
                           >
                             {val}
@@ -610,7 +611,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                     key={k}
                     type="button"
                     onClick={() => openAbilityRollComposer(k)}
-                    className="rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-[11px] hover:border-zinc-600"
+                    className="rounded border border-stone-800 bg-zinc-900 px-2 py-1 text-xs hover:border-stone-600"
                   >
                     {formatTrait(k)}: <strong className="font-mono">{v}</strong>
                   </button>
@@ -621,18 +622,18 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
 
           {/* 3. Specialties, Backgrounds, Renown & Merits */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
-              <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase text-zinc-300">
+            <section className="rounded-lg border border-stone-800 bg-zinc-900/60 p-3">
+              <h3 className="flex items-center gap-1.5 text-xs font-extrabold uppercase text-stone-300">
                 <Award className="h-3.5 w-3.5 text-amber-400" />
                 Renown &amp; Specialties
               </h3>
               <div className="mt-2 grid grid-cols-3 gap-1.5 text-center">
                 {(['glory', 'honor', 'wisdom'] as const).map((r) => (
-                  <div key={r} className="rounded border border-zinc-800 bg-zinc-950 p-1.5">
-                    <div className="text-[10px] capitalize text-zinc-400">{r}</div>
+                  <div key={r} className="rounded border border-stone-800 bg-zinc-950 p-1.5">
+                    <div className="text-xs capitalize text-stone-400">{r}</div>
                     <div className="font-mono font-bold text-amber-300">
                       {character.renown[r].permanent}{' '}
-                      <span className="text-[10px] text-zinc-500">
+                      <span className="text-xs text-stone-400">
                         ({character.renown[r].temporary}t)
                       </span>
                     </div>
@@ -641,15 +642,15 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
               </div>
 
               <div className="mt-2.5">
-                <div className="text-[10px] font-bold uppercase text-zinc-500">Specialties</div>
+                <div className="text-xs font-bold uppercase text-stone-400">Specialties</div>
                 {character.specialties.length === 0 ? (
-                  <p className="mt-1 text-[11px] text-zinc-500">None recorded.</p>
+                  <p className="mt-1 text-xs text-stone-400">None recorded.</p>
                 ) : (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {character.specialties.map((s) => (
                       <span
                         key={s.id}
-                        className="rounded bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-200"
+                        className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-stone-200"
                       >
                         {formatTrait(s.traitKey)}: {s.name}
                       </span>
@@ -659,8 +660,8 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
               </div>
             </section>
 
-            <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
-              <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase text-zinc-300">
+            <section className="rounded-lg border border-stone-800 bg-zinc-900/60 p-3">
+              <h3 className="flex items-center gap-1.5 text-xs font-extrabold uppercase text-stone-300">
                 <Shield className="h-3.5 w-3.5 text-cyan-400" />
                 Backgrounds, Silver &amp; Fetishes
               </h3>
@@ -669,7 +670,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
               <div className="mt-2 flex items-center justify-between rounded border border-amber-900/50 bg-amber-950/20 px-2.5 py-1.5">
                 <div>
                   <div className="font-bold text-amber-200">Silver Items Carried</div>
-                  <div className="text-[10px] text-amber-300/80">
+                  <div className="text-xs text-amber-300/80">
                     Effective Gnosis: {computed.effectiveGnosisPool} / {character.gnosis.permanent}
                   </div>
                 </div>
@@ -685,7 +686,8 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                         delta: -1,
                       })
                     }
-                    className="rounded bg-zinc-800 px-2 py-0.5 font-bold hover:bg-zinc-700 disabled:opacity-40"
+                    aria-label="Carry one fewer silver item"
+                    className="flex h-6 w-6 items-center justify-center rounded bg-zinc-800 font-bold hover:bg-zinc-700 disabled:opacity-40"
                   >
                     -
                   </button>
@@ -702,7 +704,8 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                         delta: 1,
                       })
                     }
-                    className="rounded bg-zinc-800 px-2 py-0.5 font-bold hover:bg-zinc-700"
+                    aria-label="Carry one more silver item"
+                    className="flex h-6 w-6 items-center justify-center rounded bg-zinc-800 font-bold hover:bg-zinc-700"
                   >
                     +
                   </button>
@@ -715,7 +718,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                   .map(([k, v]) => (
                     <span
                       key={k}
-                      className="rounded border border-zinc-800 bg-zinc-950 px-2 py-0.5 text-[10px]"
+                      className="rounded border border-stone-800 bg-zinc-950 px-2 py-0.5 text-xs"
                     >
                       {formatTrait(k)} <strong>{v}</strong>
                     </span>
@@ -727,9 +730,9 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                   {character.fetishes.map((f) => (
                     <div
                       key={f.id}
-                      className="rounded border border-zinc-800 bg-zinc-950 px-2 py-1 text-[10px]"
+                      className="rounded border border-stone-800 bg-zinc-950 px-2 py-1 text-xs"
                     >
-                      <span className="font-bold text-zinc-200">{f.name}</span> (Lv {f.level} •
+                      <span className="font-bold text-stone-200">{f.name}</span> (Lv {f.level} •
                       Gnosis {f.gnosisRating}
                       {f.isSilver ? ' • Silver' : ''})
                     </div>
@@ -740,17 +743,18 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
           </div>
 
           {/* 4. Saved Gift / Rite / Fetish Macros */}
-          <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+          <section className="rounded-lg border border-stone-800 bg-zinc-900/60 p-3">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase text-zinc-300">
+              <h3 className="flex items-center gap-1.5 text-xs font-extrabold uppercase text-stone-300">
                 <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
                 Saved Gift &amp; Fetish Macros ({character.macros.length})
               </h3>
               <div className="flex items-center gap-2">
                 <select
+                  aria-label="Macro target"
                   value={macroTargetId}
                   onChange={(e) => setMacroTargetId(e.target.value)}
-                  className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px]"
+                  className="rounded border border-stone-700 bg-zinc-950 px-2 py-1 text-xs"
                 >
                   <option value="">Target: None / Self</option>
                   {allCharEntries.map((c) => (
@@ -762,7 +766,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                 <button
                   type="button"
                   onClick={() => setMacroModalOpen(true)}
-                  className="flex items-center gap-1 rounded bg-red-700 px-2 py-1 text-[10px] font-bold text-white hover:bg-red-600"
+                  className="flex items-center gap-1 rounded bg-red-800/90 px-2 py-1 text-xs font-bold text-amber-50 hover:bg-red-700"
                 >
                   <Plus className="h-3 w-3" />
                   New Macro
@@ -771,7 +775,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
             </div>
 
             {character.macros.length === 0 ? (
-              <p className="mt-2 text-[11px] text-zinc-500">
+              <p className="mt-2 text-xs text-stone-400">
                 No saved macros yet. Click <strong>New Macro</strong> to load W20 presets or create
                 one.
               </p>
@@ -780,11 +784,11 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                 {character.macros.map((m) => (
                   <div
                     key={m.id}
-                    className="flex items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-950 p-2"
+                    className="flex items-center justify-between gap-2 rounded border border-stone-800 bg-zinc-950 p-2"
                   >
                     <div className="min-w-0">
-                      <div className="truncate font-bold text-zinc-200">{m.name}</div>
-                      <div className="truncate text-[10px] text-zinc-400">{m.summary}</div>
+                      <div className="truncate font-bold text-stone-200">{m.name}</div>
+                      <div className="truncate text-xs text-stone-400">{m.summary}</div>
                     </div>
                     <button
                       type="button"
@@ -796,7 +800,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                           targetCharacterId: macroTargetId || undefined,
                         })
                       }
-                      className="flex shrink-0 items-center gap-1 rounded bg-emerald-700 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-600"
+                      className="flex shrink-0 items-center gap-1 rounded bg-emerald-700 px-2 py-1 text-xs font-bold text-white hover:bg-emerald-600"
                     >
                       <Swords className="h-3 w-3" />
                       Run
@@ -808,9 +812,9 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
           </section>
 
           {/* 5. XP Ledger & Advancement */}
-          <section className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+          <section className="rounded-lg border border-stone-800 bg-zinc-900/60 p-3">
             <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase text-zinc-300">
+              <h3 className="flex items-center gap-1.5 text-xs font-extrabold uppercase text-stone-300">
                 <Flame className="h-3.5 w-3.5 text-amber-400" />
                 Experience Ledger
               </h3>
@@ -820,20 +824,20 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
             </div>
 
             {xpError && (
-              <div className="mt-2 rounded border border-red-800 bg-red-950/60 p-2 text-[11px] text-red-200">
+              <div className="mt-2 rounded border border-red-800 bg-red-950/60 p-2 text-xs text-red-200">
                 {xpError}
               </div>
             )}
             {xpStatus && (
-              <div className="mt-2 rounded border border-emerald-800 bg-emerald-950/60 p-2 text-[11px] text-emerald-200">
+              <div className="mt-2 rounded border border-emerald-800 bg-emerald-950/60 p-2 text-xs text-emerald-200">
                 {xpStatus}
               </div>
             )}
 
             {/* Spend XP Form */}
-            <div className="mt-2.5 flex flex-wrap items-end gap-2 rounded border border-zinc-800 bg-zinc-950 p-2.5">
+            <div className="mt-2.5 flex flex-wrap items-end gap-2 rounded border border-stone-800 bg-zinc-950 p-2.5">
               <label className="flex-1">
-                <span className="block text-[10px] text-zinc-400">Category</span>
+                <span className="block text-xs text-stone-400">Category</span>
                 <select
                   value={xpCategory}
                   onChange={(e) => {
@@ -842,7 +846,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                     if (nextCat === 'attribute') setXpTraitKey('strength');
                     else if (nextCat === 'ability') setXpTraitKey('brawl');
                   }}
-                  className="mt-0.5 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1"
+                  className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1"
                 >
                   <option value="attribute">Attribute (Current × 4)</option>
                   <option value="ability">Ability (New=3, Current × 2)</option>
@@ -856,11 +860,11 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
 
               {xpCategory === 'attribute' && (
                 <label className="w-32">
-                  <span className="block text-[10px] text-zinc-400">Attribute</span>
+                  <span className="block text-xs text-stone-400">Attribute</span>
                   <select
                     value={xpTraitKey}
                     onChange={(e) => setXpTraitKey(e.target.value)}
-                    className="mt-0.5 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 capitalize"
+                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 capitalize"
                   >
                     {[
                       ...ATTRIBUTE_GROUPS.physical,
@@ -877,11 +881,11 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
 
               {xpCategory === 'ability' && (
                 <label className="w-36">
-                  <span className="block text-[10px] text-zinc-400">Ability</span>
+                  <span className="block text-xs text-stone-400">Ability</span>
                   <select
                     value={xpTraitKey}
                     onChange={(e) => setXpTraitKey(e.target.value)}
-                    className="mt-0.5 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1"
+                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1"
                   >
                     {[
                       ...ABILITY_GROUPS.talents,
@@ -898,14 +902,14 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
 
               {(xpCategory === 'in_tribe_gift' || xpCategory === 'out_of_tribe_gift') && (
                 <label className="w-20">
-                  <span className="block text-[10px] text-zinc-400">Gift Lv</span>
+                  <span className="block text-xs text-stone-400">Gift Lv</span>
                   <input
                     type="number"
                     min={1}
                     max={6}
                     value={xpGiftLevel}
                     onChange={(e) => setXpGiftLevel(Number(e.target.value))}
-                    className="mt-0.5 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono"
+                    className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 font-mono"
                   />
                 </label>
               )}
@@ -914,7 +918,7 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                 type="button"
                 disabled={!sessionJwt || xpSubmitting || xpBalance < computedXpCost}
                 onClick={() => void handleSpendXp()}
-                className="rounded bg-amber-600 px-3 py-1 font-bold text-zinc-950 hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-45"
+                className="rounded bg-amber-600 px-3 py-1 font-bold text-stone-950 hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-45"
               >
                 Spend {computedXpCost} XP
               </button>
@@ -927,19 +931,21 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
                 className="mt-2 flex flex-wrap items-center gap-2 rounded border border-amber-800/40 bg-amber-950/20 p-2"
               >
                 <input
+                  aria-label="XP amount"
                   type="number"
                   min={-20}
                   max={50}
                   value={awardDelta}
                   onChange={(e) => setAwardDelta(Number(e.target.value))}
-                  className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-center font-mono"
+                  className="w-16 rounded border border-stone-700 bg-zinc-950 px-2 py-1 text-center font-mono"
                 />
                 <input
+                  aria-label="Award reason"
                   type="text"
                   value={awardReason}
                   onChange={(e) => setAwardReason(e.target.value)}
                   placeholder="Award reason"
-                  className="flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1"
+                  className="flex-1 rounded border border-stone-700 bg-zinc-950 px-2 py-1"
                 />
                 <button
                   type="submit"
@@ -954,16 +960,16 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
             {/* Ledger History */}
             <div className="mt-2 max-h-28 space-y-1 overflow-y-auto">
               {xpLoading ? (
-                <p className="text-[11px] text-zinc-500">Loading ledger...</p>
+                <p className="text-xs text-stone-400">Loading ledger...</p>
               ) : xpRows.length === 0 ? (
-                <p className="text-[11px] text-zinc-500">No XP entries recorded yet.</p>
+                <p className="text-xs text-stone-400">No XP entries recorded yet.</p>
               ) : (
                 xpRows.map((row) => (
                   <div
                     key={row.id}
-                    className="flex items-center justify-between rounded bg-zinc-950/70 px-2 py-1 text-[11px]"
+                    className="flex items-center justify-between rounded bg-zinc-950/70 px-2 py-1 text-xs"
                   >
-                    <span className="truncate text-zinc-300">{row.reason}</span>
+                    <span className="truncate text-stone-300">{row.reason}</span>
                     <span
                       className={`font-mono font-bold ${
                         row.delta >= 0 ? 'text-emerald-400' : 'text-amber-300'
@@ -979,14 +985,15 @@ export const CharacterSheetDrawer: React.FC<CharacterSheetDrawerProps> = ({
         </div>
       )}
 
-      {macroModalOpen && character && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
-          <GiftMacroBuilder
-            characterId={character.id}
-            onClose={() => setMacroModalOpen(false)}
-          />
-        </div>
-      )}
+      <Modal
+        open={Boolean(macroModalOpen && character)}
+        onClose={() => setMacroModalOpen(false)}
+        title="Gift and Fetish macro builder"
+        size="sm"
+        bodyClassName="p-3"
+      >
+        {character && <GiftMacroBuilder characterId={character.id} />}
+      </Modal>
     </aside>
   );
 };

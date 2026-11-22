@@ -217,10 +217,10 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
             die.isOne
               ? 'border-red-500 bg-red-950/90 text-red-300'
               : isCanceled
-                ? 'border-zinc-600 bg-zinc-800/70 text-zinc-500 line-through'
+                ? 'border-stone-600 bg-zinc-800/70 text-stone-400 line-through'
                 : isSuccess
                   ? 'border-emerald-500 bg-emerald-950/80 text-emerald-200'
-                  : 'border-zinc-700 bg-zinc-900/90 text-zinc-400'
+                  : 'border-stone-700 bg-zinc-900/90 text-stone-400'
           }`}
           title={
             die.isOne
@@ -236,12 +236,12 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
         >
           {die.value}
           {die.contributedSuccesses === 2 && !isCanceled && (
-            <span className="absolute -top-1.5 -right-1.5 rounded bg-amber-500 px-1 text-[9px] font-black text-zinc-950">
+            <span className="absolute -top-1.5 -right-1.5 rounded bg-amber-500 px-1 text-xs font-black text-stone-950">
               x2
             </span>
           )}
           {die.isBonusExplosionDie && (
-            <span className="absolute -bottom-1.5 -right-1.5 rounded bg-cyan-500 px-1 text-[8px] font-black text-zinc-950">
+            <span className="absolute -bottom-1.5 -right-1.5 rounded bg-cyan-500 px-1 text-xs font-black text-stone-950">
               +
             </span>
           )}
@@ -251,7 +251,7 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
   };
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-40 overflow-hidden">
+    <div className="pointer-events-none fixed inset-0 z-drawer overflow-hidden">
       {/* Transparent Fullscreen 3D Physics Canvas */}
       <div
         id="w20-dice-canvas"
@@ -272,13 +272,13 @@ export const DiceOverlay3D: React.FC<{ assetPath?: string }> = ({
             activeBanner.roll.isBotch
               ? 'border-red-500/80 bg-red-950/90 text-red-100'
               : activeBanner.roll.netSuccesses > 0
-                ? 'border-emerald-500/60 bg-zinc-900/95 text-zinc-100'
-                : 'border-zinc-700 bg-zinc-900/95 text-zinc-300'
+                ? 'border-emerald-500/60 bg-zinc-900/95 text-stone-100'
+                : 'border-stone-700 bg-zinc-900/95 text-stone-300'
           }`}
         >
           <div className="flex items-center justify-between gap-6">
             <div>
-              <p className="text-xs font-semibold tracking-wider uppercase text-zinc-400">
+              <p className="text-xs font-semibold tracking-wider uppercase text-stone-400">
                 {activeBanner.label} • Diff {activeBanner.roll.clampedDifficulty}
               </p>
               <p className="mt-0.5 text-lg font-extrabold tracking-tight uppercase">

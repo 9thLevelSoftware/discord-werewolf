@@ -1,3 +1,4 @@
+import { ConfirmButton } from './ui';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActionCategory,
@@ -229,7 +230,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
         <button
           type="button"
           onClick={() => setCollapsed(false)}
-          className="pointer-events-auto absolute top-14 right-3 z-30 flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950/90 px-3 py-1.5 text-xs font-bold text-zinc-200 shadow-xl backdrop-blur hover:border-red-500/60"
+          className="pointer-events-auto absolute top-14 right-3 z-hud flex items-center gap-1.5 rounded-lg w20-obsidian-panel px-3 py-1.5 text-xs font-bold text-stone-200 hover:border-red-500/60"
         >
           <Swords className="h-3.5 w-3.5 text-red-400" />
           Start Combat
@@ -238,28 +239,28 @@ export const ReverseInitiativeTracker: React.FC = () => {
     }
 
     return (
-      <aside className="pointer-events-auto absolute top-14 right-3 z-30 flex max-h-[calc(100vh-8rem)] w-80 max-w-[calc(100vw-1.5rem)] flex-col rounded-xl border border-zinc-800 bg-zinc-950/92 p-3 text-xs text-zinc-100 shadow-2xl backdrop-blur">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-          <span className="flex items-center gap-1.5 font-extrabold tracking-wide uppercase">
+      <aside className="pointer-events-auto absolute top-14 right-3 z-hud flex max-h-[calc(100dvh-8rem)] w-80 max-w-[calc(100vw-1.5rem)] flex-col rounded-xl w20-obsidian-panel p-3 text-xs text-stone-100">
+        <div className="flex items-center justify-between border-b border-stone-800 pb-2">
+          <span className="flex items-center gap-1.5 font-display font-extrabold tracking-wide uppercase text-amber-100">
             <Swords className="h-4 w-4 text-red-400" />
             W20 Combat Staging
           </span>
           <button
             type="button"
             onClick={() => setCollapsed(true)}
-            className="rounded bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-300 hover:bg-zinc-700"
+            className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-semibold text-stone-300 hover:bg-zinc-700"
           >
             Minimize
           </button>
         </div>
 
-        <p className="mt-2 text-[11px] text-zinc-400">
+        <p className="mt-2 text-xs text-stone-400">
           Select combatants to begin W20 Reverse Initiative:
         </p>
 
         <div className="mt-2 max-h-48 space-y-1 overflow-y-auto pr-1">
           {charList.length === 0 ? (
-            <p className="py-3 text-center text-[11px] text-zinc-500">
+            <p className="py-3 text-center text-xs text-stone-400">
               No characters or NPCs in room yet.
             </p>
           ) : (
@@ -268,7 +269,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
               return (
                 <label
                   key={c.id}
-                  className="flex cursor-pointer items-center justify-between rounded border border-zinc-800 bg-zinc-900/70 px-2.5 py-1.5 hover:border-zinc-700"
+                  className="flex cursor-pointer items-center justify-between rounded border border-stone-800 bg-zinc-900/70 px-2.5 py-1.5 hover:border-stone-700"
                 >
                   <span className="flex items-center gap-2">
                     <input
@@ -282,9 +283,9 @@ export const ReverseInitiativeTracker: React.FC = () => {
                         );
                       }}
                     />
-                    <span className="font-semibold text-zinc-200">{c.name}</span>
+                    <span className="font-semibold text-stone-200">{c.name}</span>
                   </span>
-                  <span className="text-[10px] uppercase text-zinc-400">
+                  <span className="text-xs uppercase text-stone-400">
                     {c.isNpc ? 'NPC' : c.activeForm}
                   </span>
                 </label>
@@ -302,7 +303,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
               participantCharacterIds: selectedParticipantIds,
             })
           }
-          className="mt-3 w-full rounded-lg bg-red-700 py-2 font-extrabold uppercase tracking-wider text-white hover:bg-red-600 disabled:opacity-45"
+          className="mt-3 w-full rounded-lg bg-red-800/90 py-2 font-extrabold uppercase tracking-wider text-amber-50 hover:bg-red-700 disabled:opacity-45"
         >
           Begin Combat ({selectedParticipantIds.length})
         </button>
@@ -316,7 +317,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
       <button
         type="button"
         onClick={() => setCollapsed(false)}
-        className="pointer-events-auto absolute top-14 right-3 z-30 flex items-center gap-2 rounded-lg border border-amber-500/60 bg-zinc-950/92 px-3 py-1.5 text-xs font-bold text-amber-200 shadow-xl backdrop-blur"
+        className="pointer-events-auto absolute top-14 right-3 z-hud flex items-center gap-2 rounded-lg w20-obsidian-panel !border-amber-500/60 px-3 py-1.5 text-xs font-bold text-amber-200"
       >
         <Swords className="h-3.5 w-3.5 text-red-400" />
         <span>
@@ -462,13 +463,13 @@ export const ReverseInitiativeTracker: React.FC = () => {
                   reason: 'Force Soak Only',
                 })
               }
-              className="text-[10px] text-zinc-300 underline"
+              className="text-xs text-stone-300 underline"
             >
               Force Soak
             </button>
           )}
         </div>
-        <p className="mt-0.5 text-zinc-300">
+        <p className="mt-0.5 text-stone-300">
           {pending.slot.label} → <strong>{defender.name}</strong>
         </p>
 
@@ -484,10 +485,10 @@ export const ReverseInitiativeTracker: React.FC = () => {
               key={defKey}
               type="button"
               onClick={() => setReactionDefenseType(defKey)}
-              className={`flex-1 rounded border py-1 text-[10px] font-bold ${
+              className={`flex-1 rounded border py-1 text-xs font-bold ${
                 reactionDefenseType === defKey
                   ? 'border-emerald-500 bg-emerald-950/70 text-emerald-200'
-                  : 'border-zinc-700 bg-zinc-900 text-zinc-400'
+                  : 'border-stone-700 bg-zinc-900 text-stone-400'
               }`}
             >
               {defLabel}
@@ -499,7 +500,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
           <button
             type="button"
             onClick={() => sendReaction({ strategy: 'take_hit_soak_only' })}
-            className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-left font-semibold text-zinc-200 hover:border-zinc-500"
+            className="rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-left font-semibold text-stone-200 hover:border-stone-500"
           >
             Take Hit &amp; Roll Stamina Soak (Preserve Action)
           </button>
@@ -554,28 +555,28 @@ export const ReverseInitiativeTracker: React.FC = () => {
   };
 
   return (
-    <aside className="pointer-events-auto absolute top-14 right-3 bottom-3 z-30 flex w-84 max-w-[calc(100vw-1.5rem)] flex-col rounded-xl border border-zinc-800 bg-zinc-950/92 p-3 text-zinc-100 shadow-2xl backdrop-blur">
+    <aside className="pointer-events-auto absolute top-14 right-3 bottom-3 z-hud flex w-84 max-w-[calc(100vw-1.5rem)] flex-col rounded-xl w20-obsidian-panel p-3 text-stone-100">
       {/* 1. Round & Queue Direction Header */}
-      <div className="mb-2 flex items-start justify-between gap-2 border-b border-zinc-800 pb-2">
+      <div className="mb-2 flex items-start justify-between gap-2 border-b border-stone-800 pb-2">
         <div>
           <div className="flex items-center gap-1.5">
-            <h2 className="text-xs font-extrabold tracking-wide uppercase">
+            <h2 className="text-xs font-display font-extrabold tracking-wide uppercase text-amber-100">
               Round {combat.roundNumber} •{' '}
               {combat.currentPassNumber > 1 ? `Rage Pass ${combat.currentPassNumber}` : 'Pass 1'}
             </h2>
             {combat.phase === 'DECLARE_REVERSE' && (
-              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-bold text-amber-300">
                 ↑ Slowest First
               </span>
             )}
             {(combat.phase === 'RESOLVE_NORMAL_PASS' ||
               combat.phase === 'RESOLVE_RAGE_PASSES') && (
-              <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-bold text-red-300">
+              <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-xs font-bold text-red-300">
                 ↓ Fastest First
               </span>
             )}
           </div>
-          <p className="mt-0.5 text-[10px] text-zinc-400">
+          <p className="mt-0.5 text-xs text-stone-400">
             {combat.phase === 'PRE_ROUND_RAGE' && 'Declare Rage & Spirit of the Fray'}
             {combat.phase === 'ROLL_INITIATIVE' && 'Rolling 1d10 + Dex + Wits Initiative'}
             {combat.phase === 'DECLARE_REVERSE' && 'Reverse Declaration (Lowest → Highest)'}
@@ -592,26 +593,28 @@ export const ReverseInitiativeTracker: React.FC = () => {
               <button
                 type="button"
                 onClick={() => sendCommand({ type: 'COMBAT_ROLL_ALL_INITIATIVE' })}
-                className="rounded bg-red-700 px-2 py-1 text-[10px] font-bold text-white hover:bg-red-600"
+                className="rounded bg-red-800/90 px-2 py-1 text-xs font-bold text-amber-50 hover:bg-red-700"
               >
                 Roll Init
               </button>
             )}
           {viewerRole === 'storyteller' && (
-            <button
-              type="button"
-              onClick={() => sendCommand({ type: 'COMBAT_END' })}
-              title="End combat encounter"
-              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[10px] font-semibold text-zinc-300 hover:border-red-500 hover:text-red-300"
+            <ConfirmButton
+              variant="secondary"
+              label="End combat encounter"
+              prompt="End combat for everyone?"
+              confirmLabel="End combat"
+              onConfirm={() => sendCommand({ type: 'COMBAT_END' })}
             >
               End
-            </button>
+            </ConfirmButton>
           )}
           <button
             type="button"
             onClick={() => setCollapsed(true)}
+            aria-label="Minimize tracker"
             title="Minimize tracker"
-            className="rounded bg-zinc-800 p-1 text-zinc-300 hover:bg-zinc-700"
+            className="rounded bg-zinc-800 p-1 text-stone-300 hover:bg-zinc-700"
           >
             <ChevronUp className="h-3.5 w-3.5" />
           </button>
@@ -620,14 +623,15 @@ export const ReverseInitiativeTracker: React.FC = () => {
 
       {/* 2. Pre-Initiative Rage / Gnosis Staging Box */}
       {combat.phase === 'PRE_ROUND_RAGE' && preInitTarget && !preInitTarget.preInitReady && (
-        <div className="mb-2.5 rounded-lg border border-zinc-800 bg-zinc-900/90 p-2.5 text-xs">
+        <div className="mb-2.5 rounded-lg border border-stone-800 bg-zinc-900/90 p-2.5 text-xs">
           <div className="mb-1.5 flex items-center justify-between gap-2">
-            <span className="font-bold text-zinc-200">Pre-Initiative Staging</span>
+            <span className="font-bold text-stone-200">Pre-Initiative Staging</span>
             {viewerRole === 'storyteller' && unreadyCombatants.length > 0 && (
               <select
+                aria-label="Combatant"
                 value={preInitTarget.combatantId}
                 onChange={(e) => setStPreInitTargetId(e.target.value)}
-                className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-[10px]"
+                className="rounded border border-stone-700 bg-zinc-950 px-1.5 py-0.5 text-xs"
               >
                 {unreadyCombatants.map((c) => (
                   <option key={c.combatantId} value={c.combatantId}>
@@ -641,13 +645,14 @@ export const ReverseInitiativeTracker: React.FC = () => {
           <div className="flex items-center justify-between">
             <span>Extra Rage Actions:</span>
             <input
+              aria-label="Extra Rage actions"
               type="number"
               min={0}
               max={Math.ceil((characters[preInitTarget.characterId]?.rage.permanent ?? 1) / 2)}
               disabled={preSpiritGnosis}
               value={preRageCount}
               onChange={(e) => setPreRageCount(Number(e.target.value))}
-              className="w-14 rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-right font-mono"
+              className="w-14 rounded border border-stone-700 bg-zinc-950 px-2 py-0.5 text-right font-mono"
             />
           </div>
 
@@ -677,7 +682,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
           <button
             type="button"
             onClick={() => handleLockPreInit(preInitTarget.combatantId)}
-            className="mt-2 w-full rounded bg-red-700 py-1.5 font-bold text-white hover:bg-red-600"
+            className="mt-2 w-full rounded bg-red-800/90 py-1.5 font-bold text-amber-50 hover:bg-red-700"
           >
             Lock Resources ({preInitTarget.name})
           </button>
@@ -703,7 +708,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                     reason: 'AFK Default to Hold',
                   })
                 }
-                className="text-[10px] text-zinc-400 underline hover:text-zinc-200"
+                className="text-xs text-stone-400 underline hover:text-stone-200"
               >
                 Force Hold (AFK)
               </button>
@@ -716,10 +721,10 @@ export const ReverseInitiativeTracker: React.FC = () => {
                 key={m}
                 type="button"
                 onClick={() => setDeclMode(m)}
-                className={`rounded py-1 text-[10px] font-bold uppercase ${
+                className={`rounded py-1 text-xs font-bold uppercase ${
                   declMode === m
-                    ? 'bg-amber-600 text-zinc-950'
-                    : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                    ? 'bg-amber-600 text-stone-950'
+                    : 'bg-zinc-800 text-stone-400 hover:text-stone-200'
                 }`}
               >
                 {m.replace('_', ' ')}
@@ -730,8 +735,8 @@ export const ReverseInitiativeTracker: React.FC = () => {
           {(declMode === 'single' || declMode === 'split_pool') && (
             <div className="mt-2 space-y-2">
               {declMode === 'split_pool' && (
-                <div className="rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5">
-                  <div className="flex justify-between text-[11px] text-zinc-400">
+                <div className="rounded border border-stone-800 bg-zinc-950 px-2 py-1.5">
+                  <div className="flex justify-between text-xs text-stone-400">
                     <span>Smallest Pool Cap: {smallestPool}d</span>
                     <span
                       className={
@@ -747,10 +752,11 @@ export const ReverseInitiativeTracker: React.FC = () => {
               {visibleSlots.map((slot, idx) => (
                 <div
                   key={idx}
-                  className="space-y-1.5 rounded border border-zinc-800 bg-zinc-950/90 p-2"
+                  className="space-y-1.5 rounded border border-stone-800 bg-zinc-950/90 p-2"
                 >
                   <div className="flex items-center justify-between gap-1.5">
                     <select
+                      aria-label="Category"
                       value={slot.category}
                       onChange={(e) => {
                         const nextCat = e.target.value as ActionCategory;
@@ -773,7 +779,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                           )
                         );
                       }}
-                      className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-[11px]"
+                      className="flex-1 rounded border border-stone-700 bg-zinc-900 px-1.5 py-1 text-xs"
                     >
                       <option value="brawl_attack">Brawl (Claws / Bite)</option>
                       <option value="melee_attack">Melee Weapon</option>
@@ -788,8 +794,9 @@ export const ReverseInitiativeTracker: React.FC = () => {
 
                     {declMode === 'split_pool' && (
                       <div className="flex items-center gap-1">
-                        <span className="text-[10px] text-zinc-400">Dice:</span>
+                        <span className="text-xs text-stone-400">Dice:</span>
                         <input
+                          aria-label="Allocated dice"
                           type="number"
                           min={1}
                           max={20}
@@ -803,7 +810,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                               )
                             )
                           }
-                          className="w-12 rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-center font-mono"
+                          className="w-12 rounded border border-stone-700 bg-zinc-900 px-1.5 py-0.5 text-center font-mono"
                         />
                       </div>
                     )}
@@ -814,6 +821,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                     slot.category === 'ranged_attack' ||
                     slot.category === 'gift_or_rite') && (
                     <select
+                      aria-label="Target combatant"
                       value={slot.targetCombatantId}
                       onChange={(e) =>
                         setSlotsDraft((prev) =>
@@ -822,7 +830,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                           )
                         )
                       }
-                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px]"
+                      className="w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs"
                     >
                       {opponentOptions.map((opp) => (
                         <option key={opp.combatantId} value={opp.combatantId}>
@@ -834,6 +842,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
 
                   {slot.category === 'shift_form' && (
                     <select
+                      aria-label="Target form"
                       value={slot.targetForm}
                       onChange={(e) =>
                         setSlotsDraft((prev) =>
@@ -842,7 +851,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                           )
                         )
                       }
-                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] capitalize"
+                      className="w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs capitalize"
                     >
                       {(['homid', 'glabro', 'crinos', 'hispo', 'lupus'] as GarouForm[]).map((f) => (
                         <option key={f} value={f}>
@@ -854,6 +863,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
 
                   {slot.category === 'gift_or_rite' && cursorChar && (
                     <select
+                      aria-label="Macro"
                       value={slot.macroId}
                       onChange={(e) =>
                         setSlotsDraft((prev) =>
@@ -862,7 +872,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                           )
                         )
                       }
-                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px]"
+                      className="w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs"
                     >
                       <option value="">Freeform Gift (Wits/Roll)</option>
                       {cursorChar.macros.map((m) => (
@@ -893,7 +903,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                         },
                       ])
                     }
-                    className="flex-1 rounded border border-zinc-700 bg-zinc-800 py-1 text-[10px] font-semibold hover:bg-zinc-700"
+                    className="flex-1 rounded border border-stone-700 bg-zinc-800 py-1 text-xs font-semibold hover:bg-zinc-700"
                   >
                     + Add Action Slot
                   </button>
@@ -901,7 +911,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setSlotsDraft((prev) => prev.slice(0, -1))}
-                      className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[10px] text-zinc-400 hover:text-red-300"
+                      className="rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs text-stone-400 hover:text-red-300"
                     >
                       Remove
                     </button>
@@ -915,7 +925,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
             type="button"
             disabled={splitInvalid}
             onClick={handleConfirmDeclaration}
-            className="mt-2 w-full rounded bg-amber-500 py-1.5 font-bold text-zinc-950 hover:bg-amber-400 disabled:opacity-45"
+            className="mt-2 w-full rounded bg-amber-500 py-1.5 font-bold text-stone-950 hover:bg-amber-400 disabled:opacity-45"
           >
             Announce Declaration
           </button>
@@ -940,7 +950,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                       reason: 'Skipped Turn (ST Override)',
                     })
                   }
-                  className="text-[10px] text-zinc-400 underline hover:text-zinc-200"
+                  className="text-xs text-stone-400 underline hover:text-stone-200"
                 >
                   Skip Turn
                 </button>
@@ -949,9 +959,10 @@ export const ReverseInitiativeTracker: React.FC = () => {
 
             {cursorChar && cursorChar.specialties.length > 0 && (
               <select
+                aria-label="Specialty"
                 value={selectedSpecialtyId}
                 onChange={(e) => setSelectedSpecialtyId(e.target.value)}
-                className="mt-1.5 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px]"
+                className="mt-1.5 w-full rounded border border-stone-700 bg-zinc-950 px-2 py-1 text-xs"
               >
                 <option value="">No Specialty Applied</option>
                 {cursorChar.specialties.map((s) => (
@@ -962,7 +973,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
               </select>
             )}
 
-            <label className="mt-1.5 flex items-center gap-2 text-zinc-300">
+            <label className="mt-1.5 flex items-center gap-2 text-stone-300">
               <input
                 type="checkbox"
                 checked={spendWpOnAttack}
@@ -992,7 +1003,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
       {combat.phase === 'END_OF_ROUND' && (
         <div className="mb-2.5 rounded-lg border border-indigo-500/60 bg-indigo-950/35 p-2.5 text-xs">
           <p className="font-bold text-indigo-200">End of Round {combat.roundNumber}</p>
-          <p className="mt-0.5 text-[11px] text-zinc-400">
+          <p className="mt-0.5 text-xs text-stone-400">
             Advancing triggers Combat Regeneration (Stamina Diff 8) &amp; resets turn locks.
           </p>
           {viewerRole === 'storyteller' && (
@@ -1004,13 +1015,14 @@ export const ReverseInitiativeTracker: React.FC = () => {
               >
                 Next Round
               </button>
-              <button
-                type="button"
-                onClick={() => sendCommand({ type: 'COMBAT_END' })}
-                className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-bold text-zinc-300 hover:border-red-500"
+              <ConfirmButton
+                variant="secondary"
+                prompt="End combat for everyone?"
+                confirmLabel="End combat"
+                onConfirm={() => sendCommand({ type: 'COMBAT_END' })}
               >
                 End Combat
-              </button>
+              </ConfirmButton>
             </div>
           )}
         </div>
@@ -1028,17 +1040,17 @@ export const ReverseInitiativeTracker: React.FC = () => {
               className={`rounded-lg border p-2 text-xs transition ${
                 isCursor
                   ? 'border-amber-400 bg-zinc-900 shadow-[0_0_12px_rgba(251,191,36,0.2)]'
-                  : 'border-zinc-800/90 bg-zinc-900/50'
+                  : 'border-stone-800/90 bg-zinc-900/50'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-zinc-800 font-mono text-[11px] font-extrabold">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-zinc-800 font-mono text-xs font-extrabold">
                     {entry.initiativeScore ?? '—'}
                   </span>
                   <div className="min-w-0">
-                    <div className="truncate font-bold text-zinc-100">{entry.name}</div>
-                    <div className="truncate text-[10px] text-zinc-400">
+                    <div className="truncate font-bold text-stone-100">{entry.name}</div>
+                    <div className="truncate text-xs text-stone-400">
                       {combat.phase === 'PRE_ROUND_RAGE'
                         ? entry.preInitReady
                           ? 'Locked In'
@@ -1053,7 +1065,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                 {/* Banked Extra Rage Action Orbs & Hold Interrupt */}
                 <div className="flex shrink-0 items-center gap-1">
                   {entry.declaredRageActions === 'hidden' ? (
-                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-stone-400">
                       ? Rage
                     </span>
                   ) : (
@@ -1099,13 +1111,14 @@ export const ReverseInitiativeTracker: React.FC = () => {
                               },
                             })
                           }
-                          className="flex items-center gap-0.5 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-zinc-950 hover:bg-amber-400"
+                          className="flex items-center gap-0.5 rounded bg-amber-500 px-1.5 py-0.5 text-xs font-bold text-stone-950 hover:bg-amber-400"
                         >
                           <Zap className="h-3 w-3" />
                           Interrupt!
                         </button>
                         <button
                           type="button"
+                          aria-label="Convert Hold to Full Defense"
                           title="Convert Hold to Full Defense"
                           onClick={() =>
                             sendCommand({
@@ -1138,7 +1151,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
 
       {/* 8. Compact Combat Log */}
       {combat.combatLog.length > 0 && (
-        <div className="mt-2 max-h-24 overflow-y-auto border-t border-zinc-800 pt-2 text-[10px] text-zinc-400">
+        <div className="mt-2 max-h-24 overflow-y-auto border-t border-stone-800 pt-2 text-xs text-stone-400">
           {combat.combatLog.slice(-6).map((line, i) => (
             <div key={i} className="truncate">
               {line}
