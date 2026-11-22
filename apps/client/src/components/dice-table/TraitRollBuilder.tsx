@@ -249,48 +249,50 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
   const formPerceptionDiff = Math.max(2, Math.min(10, 6 + selection.perceptionFormMod));
 
   return (
-    <div ref={containerRef} className="relative flex min-w-0 flex-1 items-center gap-1.5">
+    <div ref={containerRef} className="relative flex min-w-[340px] flex-1 items-center gap-2">
       {/* Attribute / Inner Trait Pill + Popover */}
-      <div className="relative flex min-w-0 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
+      <div className="relative flex min-w-[145px] flex-1 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
         <button
           type="button"
           onClick={() => setOpenPopover((prev) => (prev === 'attr' ? null : 'attr'))}
           aria-expanded={openPopover === 'attr'}
           title="Choose Attribute or Inner Trait from your character sheet"
-          className={`flex h-9 min-w-0 items-center gap-1.5 px-2.5 text-left transition ${
+          className={`flex h-9 min-w-0 flex-1 items-center justify-between gap-2 px-3 text-left transition ${
             openPopover === 'attr' ? 'text-amber-100' : 'text-stone-100'
           }`}
         >
-          <span className="font-display shrink-0 text-[9px] font-bold tracking-wider uppercase text-amber-300/75">
-            Attr
-          </span>
-          {attrOpt ? (
-            <>
-              <span className="max-w-[112px] truncate text-xs font-bold text-amber-50">
-                {attrOpt.label}
-              </span>
-              <span className="flex shrink-0 items-center gap-0.5 rounded-md border border-amber-500/40 bg-amber-950/60 px-1.5 py-0.5 font-mono text-[10px] font-black text-amber-200">
-                {attrOpt.effectiveDots}
-                {attrOpt.formDelta !== 0 && (
-                  <span
-                    className={
-                      attrOpt.formDelta > 0 ? 'text-emerald-300' : 'text-rose-300'
-                    }
-                  >
-                    ({attrOpt.formDelta > 0 ? `+${attrOpt.formDelta}` : attrOpt.formDelta})
-                  </span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="font-display shrink-0 text-[9px] font-bold tracking-wider uppercase text-amber-300/75">
+              Attr
+            </span>
+            {attrOpt ? (
+              <>
+                <span className="truncate text-xs font-bold text-amber-50">
+                  {attrOpt.label}
+                </span>
+                <span className="flex shrink-0 items-center gap-0.5 rounded-md border border-amber-500/40 bg-amber-950/60 px-1.5 py-0.5 font-mono text-[10px] font-black text-amber-200">
+                  {attrOpt.effectiveDots}
+                  {attrOpt.formDelta !== 0 && (
+                    <span
+                      className={
+                        attrOpt.formDelta > 0 ? 'text-emerald-300' : 'text-rose-300'
+                      }
+                    >
+                      ({attrOpt.formDelta > 0 ? `+${attrOpt.formDelta}` : attrOpt.formDelta})
+                    </span>
+                  )}
+                </span>
+                {attrOpt.specialty && (
+                  <Sparkles
+                    className="h-3 w-3 shrink-0 text-amber-400"
+                    aria-label={`Specialty: ${attrOpt.specialty}`}
+                  />
                 )}
-              </span>
-              {attrOpt.specialty && (
-                <Sparkles
-                  className="h-3 w-3 shrink-0 text-amber-400"
-                  aria-label={`Specialty: ${attrOpt.specialty}`}
-                />
-              )}
-            </>
-          ) : (
-            <span className="truncate text-xs font-semibold text-stone-400">+ Attribute</span>
-          )}
+              </>
+            ) : (
+              <span className="truncate text-xs font-semibold text-stone-400">+ Attribute</span>
+            )}
+          </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-stone-400" />
         </button>
 
@@ -396,7 +398,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
       <span className="font-display shrink-0 text-xs font-black text-amber-400/75">+</span>
 
       {/* Skill / Ability Pill + Searchable Popover */}
-      <div className="relative flex min-w-0 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
+      <div className="relative flex min-w-[165px] flex-1 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 transition hover:border-amber-500/55">
         <button
           type="button"
           onClick={() => {
@@ -405,37 +407,39 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
           }}
           aria-expanded={openPopover === 'skill'}
           title="Choose Talent, Skill, or Knowledge from your character sheet"
-          className={`flex h-9 min-w-0 items-center gap-1.5 px-2.5 text-left transition ${
+          className={`flex h-9 min-w-0 flex-1 items-center justify-between gap-2 px-3 text-left transition ${
             openPopover === 'skill' ? 'text-amber-100' : 'text-stone-100'
           }`}
         >
-          <span className="font-display shrink-0 text-[9px] font-bold tracking-wider uppercase text-amber-300/75">
-            Skill
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="font-display shrink-0 text-[9px] font-bold tracking-wider uppercase text-amber-300/75">
+              Skill
+            </span>
+            {abilOpt ? (
+              <>
+                <span className="truncate text-xs font-bold text-amber-50">
+                  {abilOpt.label}
+                </span>
+                <span
+                  className={`shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-black ${
+                    abilOpt.dots > 0
+                      ? 'border-amber-500/40 bg-amber-950/60 text-amber-200'
+                      : 'border-stone-700 bg-zinc-900 text-stone-400'
+                  }`}
+                >
+                  {abilOpt.dots}
+                </span>
+                {abilOpt.specialty && (
+                  <Sparkles
+                    className="h-3 w-3 shrink-0 text-amber-400"
+                    aria-label={`Specialty: ${abilOpt.specialty}`}
+                  />
+                )}
+              </>
+            ) : (
+              <span className="truncate text-xs font-semibold text-stone-400">+ Skill / Ability</span>
+            )}
           </span>
-          {abilOpt ? (
-            <>
-              <span className="max-w-[120px] truncate text-xs font-bold text-amber-50">
-                {abilOpt.label}
-              </span>
-              <span
-                className={`shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-black ${
-                  abilOpt.dots > 0
-                    ? 'border-amber-500/40 bg-amber-950/60 text-amber-200'
-                    : 'border-stone-700 bg-zinc-900 text-stone-400'
-                }`}
-              >
-                {abilOpt.dots}
-              </span>
-              {abilOpt.specialty && (
-                <Sparkles
-                  className="h-3 w-3 shrink-0 text-amber-400"
-                  aria-label={`Specialty: ${abilOpt.specialty}`}
-                />
-              )}
-            </>
-          ) : (
-            <span className="truncate text-xs font-semibold text-stone-400">+ Skill / Ability</span>
-          )}
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-stone-400" />
         </button>
 
@@ -610,7 +614,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
 
       {/* Live Derived Formula & Specialty Readout */}
       {selection.hasSelection && (
-        <div className="hidden items-center gap-1 rounded-xl border border-stone-800/90 bg-zinc-950/80 px-2 py-1 lg:flex">
+        <div className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-stone-800/90 bg-zinc-950/80 px-2.5 py-1.5 lg:flex">
           <span
             className="font-mono text-[10.5px] text-stone-300"
             title={selection.formulaSummary}

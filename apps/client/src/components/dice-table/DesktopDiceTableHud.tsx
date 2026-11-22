@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   BookmarkPlus,
   Check,
@@ -20,11 +20,10 @@ import {
   Users,
   Volume2,
   VolumeX,
-  X,
   Zap,
 } from 'lucide-react';
 import { formatFormName, W20_FORMS } from '../character-sheet/sheetShared';
-import { ParticipantAvatar, RollResultPlaque } from './DieFaceTiles';
+import { RollResultPlaque } from './DieFaceTiles';
 import {
   type DiceTableHudProps,
   POOL_QUICK_JUMPS,
@@ -131,6 +130,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   activeTrackers,
   rollHistoryCount,
   feedOpen,
+  packOpen,
   hasDiceOnTable,
   activeBanner,
   sfxPrefs,
@@ -162,6 +162,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   composerAbil,
   onCycleLayoutMode,
   onToggleFeed,
+  onTogglePack,
   onClearTable,
   onDismissBanner,
   onToggleMuteSfx,
@@ -198,30 +199,11 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   onSaveCurrentUnboundPreset,
 }) => {
   const [savedFlash, setSavedFlash] = useState(false);
-  const [packPopoverOpen, setPackPopoverOpen] = useState(false);
-  const packPopoverRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!packPopoverOpen) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (packPopoverRef.current && !packPopoverRef.current.contains(e.target as Node)) {
-        setPackPopoverOpen(false);
-      }
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPackPopoverOpen(false);
-    };
-    window.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [packPopoverOpen]);
 
   const isSheetTraitsMode = Boolean(activeSheet && rollSourceMode === 'traits');
   const isDisabled = isThrowing || connectionStatus !== 'authenticated';
   const rollBlockedByEmptyTraits = isSheetTraitsMode && (!hasTraitSelection || pool <= 0);
+  const anySpeaking = sortedParticipants.some((p) => speakingDiscordIds.has(p.discordUserId));
   const initButtonLabel =
     activeSheet || initiativeModifier !== 0
       ? `Init ${initiativeModifier >= 0 ? `+${initiativeModifier}` : initiativeModifier}`
@@ -254,14 +236,11 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
     <>
       {/* Slim Floating Top Presence & Tracker Bar */}
       <header className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-center justify-between gap-2">
-        {/* Left: W20 Crest + Voice Participant Strip + Full Pack Popover */}
-        <div
-          ref={packPopoverRef}
-          className="w20-obsidian-panel pointer-events-auto relative flex min-w-[200px] max-w-full flex-1 items-center gap-2 rounded-2xl px-3 py-1.5"
-        >
-          <div className="flex shrink-0 items-center gap-2 border-r border-amber-500/20 pr-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full border border-red-700/70 bg-red-950/80 text-red-300">
-              <Flame className="h-3.5 w-3.5" />
+        {/* Left: Compact W20 Crest + Left Pack Drawer Toggle Pill */}
+        <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+          <div className="w20-obsidian-panel flex items-center gap-2 rounded-full px-3 py-1.5">
+            <div className="flex h-5 w-5 items-center justify-center rounded-full border border-red-700/70 bg-red-950/80 text-red-300">
+              <Flame className="h-3 w-3" />
             </div>
             <span className="font-display text-xs font-black tracking-widest uppercase text-amber-100">
               W20
@@ -281,183 +260,25 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             )}
           </div>
 
-          <div className="w20-thin-scrollbar flex min-w-0 max-h-[68px] flex-1 flex-wrap items-center gap-1.5 overflow-y-auto pr-1">
-            {sortedParticipants.map((p) => {
-              const isSpeaking = speakingDiscordIds.has(p.discordUserId);
-              const label = p.characterName
-                ? `${p.characterName} (${p.displayName})`
-                : p.displayName;
-              const isLocalSeat =
-                p.discordUserId === session.userId && Boolean(p.seatId);
-              const isCurrentActiveSeat =
-                isLocalSeat && p.seatId === activeSeat.seatId;
-
-              return (
-                <div
-                  key={p.participantKey ?? p.discordUserId}
-                  onClick={
-                    isLocalSeat && p.seatId
-                      ? () => onSelectSeat(p.seatId!)
-                      : undefined
-                  }
-                  className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 transition ${
-                    isSpeaking
-                      ? 'border-emerald-400/80 bg-emerald-950/45 shadow-[0_0_10px_rgba(52,211,153,0.28)]'
-                      : isCurrentActiveSeat
-                        ? 'border-amber-500/55 bg-zinc-900/90'
-                        : 'border-stone-700/60 bg-zinc-950/75'
-                  } ${p.isConnected ? '' : 'opacity-45'} ${
-                    isLocalSeat ? 'cursor-pointer hover:border-amber-400/70' : ''
-                  }`}
-                  title={label}
-                >
-                  <div className="relative">
-                    <ParticipantAvatar
-                      name={label}
-                      avatarUrl={p.avatarUrl}
-                      isSpeaking={isSpeaking}
-                      isConnected={p.isConnected}
-                      sizeClass="h-6 w-6"
-                    />
-                    {isSpeaking && (
-                      <Volume2 className="absolute -right-1 -bottom-1 h-2.5 w-2.5 rounded-full bg-emerald-400 p-0.5 text-zinc-950" />
-                    )}
-                  </div>
-                  <span className="max-w-[120px] truncate text-[11px] font-semibold text-stone-200">
-                    {label}
-                  </span>
-                  {p.activeForm && (
-                    <span className="rounded border border-red-800/50 bg-red-950/80 px-1.5 py-0.2 font-display text-[9px] font-bold uppercase tracking-wide text-amber-200">
-                      {formatFormName(p.activeForm)}
-                    </span>
-                  )}
-                  <div className="hidden items-center gap-1 font-mono text-[9px] text-stone-400 md:flex">
-                    <span className="text-red-300">R{p.trackers.rage}</span>
-                    <span className="text-amber-200">G{p.trackers.gnosis}</span>
-                    <span className="text-indigo-200">W{p.trackers.willpower}</span>
-                    {p.trackers.woundPenalty !== 0 && (
-                      <span className="rounded bg-red-950 px-1 font-bold text-red-300">
-                        {p.trackers.woundPenalty}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
           <button
             type="button"
-            onClick={() => setPackPopoverOpen((v) => !v)}
-            aria-expanded={packPopoverOpen}
-            title="View all connected players and table seats"
-            className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold transition ${
-              packPopoverOpen
-                ? 'border-amber-400/75 bg-amber-950/55 text-amber-100'
-                : 'border-stone-700/80 bg-zinc-950/85 text-stone-300 hover:border-amber-500/55 hover:text-amber-100'
+            onClick={onTogglePack}
+            aria-expanded={packOpen}
+            title="Toggle Pack & Table Players drawer"
+            className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition hover:border-amber-400/55 ${
+              packOpen
+                ? '!border-amber-500/50 text-amber-200'
+                : anySpeaking
+                  ? '!border-emerald-400/75 text-emerald-200 shadow-[0_0_10px_rgba(52,211,153,0.28)]'
+                  : 'text-stone-200'
             }`}
           >
-            <Users className="h-3 w-3 text-amber-300" />
+            <Users className="h-3.5 w-3.5 text-amber-300" />
             <span>Pack ({sortedParticipants.length})</span>
+            {anySpeaking && !packOpen && (
+              <span className="h-2 w-2 animate-ping rounded-full bg-emerald-400" />
+            )}
           </button>
-
-          {packPopoverOpen && (
-            <div className="w20-obsidian-panel absolute top-full left-0 z-50 mt-2 w-[min(92vw,420px)] rounded-2xl p-3 shadow-2xl">
-              <div className="flex items-center justify-between pb-2">
-                <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
-                  Table Players &amp; Pack ({sortedParticipants.length})
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPackPopoverOpen(false)}
-                  aria-label="Close Pack list"
-                  className="rounded p-1 text-stone-400 hover:bg-zinc-800 hover:text-stone-100"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <div className="w20-gold-divider mb-2" />
-              <div className="w20-thin-scrollbar max-h-64 space-y-1.5 overflow-y-auto pr-1">
-                {sortedParticipants.map((p) => {
-                  const isSpeaking = speakingDiscordIds.has(p.discordUserId);
-                  const label = p.characterName
-                    ? `${p.characterName} (${p.displayName})`
-                    : p.displayName;
-                  const isLocalSeat =
-                    p.discordUserId === session.userId && Boolean(p.seatId);
-                  const isCurrentActiveSeat =
-                    isLocalSeat && p.seatId === activeSeat.seatId;
-
-                  return (
-                    <div
-                      key={`pop-${p.participantKey ?? p.discordUserId}`}
-                      onClick={
-                        isLocalSeat && p.seatId
-                          ? () => {
-                              onSelectSeat(p.seatId!);
-                              setPackPopoverOpen(false);
-                            }
-                          : undefined
-                      }
-                      className={`flex items-center justify-between gap-2 rounded-xl border px-2.5 py-2 ${
-                        isSpeaking
-                          ? 'border-emerald-400/80 bg-emerald-950/35'
-                          : isCurrentActiveSeat
-                            ? 'border-amber-500/60 bg-red-950/25'
-                            : 'border-stone-800 bg-zinc-950/85'
-                      } ${p.isConnected ? '' : 'opacity-50'} ${
-                        isLocalSeat ? 'cursor-pointer hover:border-amber-400/75' : ''
-                      }`}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <ParticipantAvatar
-                          name={label}
-                          avatarUrl={p.avatarUrl}
-                          isSpeaking={isSpeaking}
-                          isConnected={p.isConnected}
-                          sizeClass="h-7 w-7 shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="truncate text-xs font-bold text-amber-50">
-                              {label}
-                            </span>
-                            {p.activeForm && (
-                              <span className="rounded border border-red-800/50 bg-red-950/80 px-1.5 py-0.2 font-display text-[9px] font-bold uppercase text-amber-200">
-                                {formatFormName(p.activeForm)}
-                              </span>
-                            )}
-                            {isCurrentActiveSeat && (
-                              <span className="rounded bg-amber-500/20 px-1.5 py-0.2 text-[9px] font-bold text-amber-200">
-                                Active Seat
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px]">
-                            <span className="text-red-300">R {p.trackers.rage}</span>
-                            <span className="text-amber-200">G {p.trackers.gnosis}</span>
-                            <span className="text-indigo-200">W {p.trackers.willpower}</span>
-                            {p.trackers.woundPenalty !== 0 && (
-                              <span className="rounded bg-red-950 px-1 font-bold text-red-300">
-                                {p.trackers.woundPenalty} Wnd
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <span
-                        className={`shrink-0 text-[9px] font-bold uppercase ${
-                          p.isConnected ? 'text-emerald-400' : 'text-stone-500'
-                        }`}
-                      >
-                        {p.isConnected ? 'Online' : 'Offline'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Right: Hot-Seat Switcher + Sheet + SFX + Trackers + View Mode + Clear + Feed */}
@@ -622,8 +443,8 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
         <RollResultPlaque banner={activeBanner} onDismiss={onDismissBanner} />
       )}
 
-      {/* Floating Bottom Sheet-Driven Console */}
-      <section className="w20-obsidian-panel pointer-events-auto absolute bottom-3 left-1/2 z-30 w-[min(97%,1020px)] -translate-x-1/2 rounded-2xl px-3.5 py-2.5">
+      {/* Floating Full-Width Bottom Sheet-Driven Console */}
+      <section className="w20-obsidian-panel pointer-events-auto absolute inset-x-3 bottom-3 z-30 rounded-2xl px-4 py-2.5">
         {/* Top Slim Strip: 5-Form Switcher + Pinned Sheet Rolls / Quick Rolls */}
         <div className="mb-2 flex items-center gap-2">
           {activeSheet && (
@@ -951,7 +772,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
         )}
 
         {/* Primary Always-Visible Row */}
-        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* 1-Click Segmented Toggle: Skills vs Numbers */}
           <div
             role="group"
