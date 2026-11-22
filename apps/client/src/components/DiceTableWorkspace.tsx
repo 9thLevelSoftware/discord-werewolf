@@ -9,7 +9,7 @@ import {
 import type { LightGarouTrackers, RollHistoryEntry, TableParticipant } from '@w20-vtt/protocol';
 import { diceSoundEngine, type DiceSoundPreferences } from '../audio/DiceSoundEngine';
 import type { DiscordSessionContext } from '../discordBootstrap';
-import { useViewportLayout } from '../hooks/useViewportLayout';
+import { useViewportLayout, VIEWPORT_BREAKPOINTS } from '../hooks/useViewportLayout';
 import {
   buildClientSeatSyncPayload,
   DEFAULT_UNBOUND_TRACKERS,
@@ -26,7 +26,6 @@ import {
   type QuickRollPreset,
   useUnboundQuickRollStore,
 } from './dice-table/QuickRollBar';
-import { QuickRollBar } from './dice-table/QuickRollBar';
 import {
   type ComposerAttributeKey,
   resolveTraitRollSelection,
@@ -38,6 +37,7 @@ import {
   RollStageCoordinator,
   type RollStageStatus,
   SafeDiceBoxController,
+  isRageDieThemeColor,
 } from './dice-table/rollQueueController';
 import { PackPresenceDrawer } from './dice-table/PackPresenceDrawer';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
@@ -236,7 +236,9 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   // Arena & Drawer state
   const [packOpen, setPackOpen] = useState(false);
   const [feedOpen, setFeedOpen] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
+    typeof window !== 'undefined'
+      ? window.innerWidth >= VIEWPORT_BREAKPOINTS.dockedDrawersMinWidth
+      : true
   );
   const [rollStageStatus, setRollStageStatus] = useState<RollStageStatus>({
     isRolling: false,
@@ -422,7 +424,11 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         assetPath: '/assets/dice-box/',
         theme: 'default',
         offscreen: false,
-        scale: typeof window !== 'undefined' && window.innerWidth < 640 ? 4.8 : 6,
+        scale:
+          typeof window !== 'undefined' &&
+          window.innerWidth < VIEWPORT_BREAKPOINTS.smallDiceMaxWidth
+            ? 4.8
+            : 6,
         enableShadows: true,
         lightIntensity: 1.15,
         gravity: 2,
@@ -440,7 +446,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
               ? 10
               : Math.round(rawVal)
             : undefined;
-          diceSoundEngine.playDieSettle(val, rec.themeColor === '#991b1b');
+          diceSoundEngine.playDieSettle(val, isRageDieThemeColor(rec.themeColor));
         },
       });
 
@@ -1197,7 +1203,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   };
 
   return (
-    <div className="relative flex h-dvh w-full overflow-hidden bg-[#070609] text-stone-100 select-none">
+    <div className="relative flex h-dvh w-full overflow-hidden bg-obsidian-950 text-stone-100 select-none">
       {/* Collapsible Pack & Table Presence Drawer (Docked Left Drawer on PC) */}
       {!isMobile && (
         <PackPresenceDrawer
@@ -1237,7 +1243,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
             <p className="font-display text-xs font-bold tracking-[0.28em] uppercase text-amber-200/80">
               Garou Umbral Felt
             </p>
-            <p className="mt-1.5 text-[11px] text-stone-400">
+            <p className="mt-1.5 text-xs text-stone-400">
               {activeSheet
                 ? `Pick an Attribute + Skill and Difficulty below to roll from ${activeSheet.name}'s sheet`
                 : 'Select a Garou sheet below to roll by Attribute + Skill, or dial a raw d10 pool'}

@@ -1,28 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
-  BookmarkPlus,
-  Check,
   Dices,
   Eraser,
-  EyeOff,
   FileText,
   Flame,
   Hash,
   HeartPulse,
   Minus,
   Monitor,
-  Pin,
   Plus,
-  RotateCcw,
   ScrollText,
-  ShieldAlert,
   SlidersHorizontal,
   Smartphone,
   Sparkles,
   Users,
   Volume2,
   VolumeX,
-  X,
   Zap,
 } from 'lucide-react';
 import { formatFormName, W20_FORMS } from '../character-sheet/sheetShared';
@@ -32,7 +25,18 @@ import {
   POOL_QUICK_JUMPS,
   QuickRollBar,
 } from './QuickRollBar';
-import { MAX_LOCAL_QUEUED_ROLLS } from './rollQueueController';
+import { Modal, NumberStepper } from '../ui';
+import {
+  BonusDiceStepper,
+  ConnectionDot,
+  DicePreviewStrip,
+  getRollCtaText,
+  getRollGate,
+  RageDiceStepper,
+  RollModifierToggles,
+  SavePinButton,
+  useSavedFlash,
+} from './console/consoleShared';
 import { MobileTraitPickerContent } from './TraitRollBuilder';
 import { PersonalTrackersPanel } from './W20DotTracker';
 
@@ -44,40 +48,16 @@ const MobileBottomSheet: React.FC<{
   onClose: () => void;
   children: React.ReactNode;
 }> = ({ title, subtitle, onClose, children }) => (
-  <>
-    <div
-      className="fixed inset-0 z-40 bg-black/65 backdrop-blur-[2px]"
-      onClick={onClose}
-      aria-hidden="true"
-    />
-    <section
-      role="dialog"
-      aria-label={title}
-      className="w20-obsidian-panel pb-safe fixed inset-x-0 bottom-0 z-50 flex max-h-[84dvh] w-full flex-col rounded-t-2xl border-t border-x-0 border-b-0 shadow-2xl"
-    >
-      <div className="flex justify-center pt-2 pb-1">
-        <span className="h-1 w-10 rounded-full bg-stone-600/80" />
-      </div>
-      <div className="flex items-center justify-between gap-2 px-4 pb-2.5">
-        <div className="min-w-0">
-          <h2 className="font-display truncate text-xs font-extrabold tracking-wider uppercase text-amber-100">
-            {title}
-          </h2>
-          {subtitle && <p className="truncate text-[10px] text-stone-400">{subtitle}</p>}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={`Close ${title}`}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-stone-400 hover:bg-zinc-800/80 hover:text-stone-100"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      <div className="w20-gold-divider" />
-      <div className="flex-1 overflow-y-auto p-3.5">{children}</div>
-    </section>
-  </>
+  <Modal
+    open
+    onClose={onClose}
+    title={title}
+    subtitle={subtitle}
+    variant="sheet"
+    bodyClassName="p-3.5"
+  >
+    {children}
+  </Modal>
 );
 
 const MobileCompactDiffStepper: React.FC<{
@@ -107,94 +87,6 @@ const MobileCompactDiffStepper: React.FC<{
       className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 text-stone-300 active:scale-95"
     >
       <Plus className="h-3 w-3" />
-    </button>
-  </div>
-);
-
-const MobileModifierGrid: React.FC<{
-  hasSpecialty: boolean;
-  isSheetTraitsMode: boolean;
-  isAutoSpecialty: boolean;
-  spendWillpower: boolean;
-  applyWoundPenalty: boolean;
-  isSecretRoll: boolean;
-  willpowerRemaining: number;
-  woundPenalty: number;
-  onToggleSpecialty: () => void;
-  onToggleSpendWillpower: () => void;
-  onToggleApplyWoundPenalty: () => void;
-  onToggleSecretRoll: () => void;
-}> = ({
-  hasSpecialty,
-  isSheetTraitsMode,
-  isAutoSpecialty,
-  spendWillpower,
-  applyWoundPenalty,
-  isSecretRoll,
-  willpowerRemaining,
-  woundPenalty,
-  onToggleSpecialty,
-  onToggleSpendWillpower,
-  onToggleApplyWoundPenalty,
-  onToggleSecretRoll,
-}) => (
-  <div className="grid grid-cols-2 gap-2">
-    <button
-      type="button"
-      onClick={onToggleSpecialty}
-      className={`flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition ${
-        hasSpecialty
-          ? 'border-amber-400/80 bg-amber-950/65 text-amber-200'
-          : 'border-stone-800 bg-zinc-950/85 text-stone-400'
-      }`}
-    >
-      <Sparkles className="h-3.5 w-3.5" />
-      <span>Specialty</span>
-      {isSheetTraitsMode && isAutoSpecialty && hasSpecialty && (
-        <span className="rounded bg-amber-400/20 px-1 text-[9px] font-extrabold text-amber-200">
-          Sheet
-        </span>
-      )}
-    </button>
-
-    <button
-      type="button"
-      disabled={willpowerRemaining <= 0 && !spendWillpower}
-      onClick={onToggleSpendWillpower}
-      className={`flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition disabled:opacity-40 ${
-        spendWillpower
-          ? 'border-indigo-400/80 bg-indigo-950/70 text-indigo-200'
-          : 'border-stone-800 bg-zinc-950/85 text-stone-400'
-      }`}
-    >
-      +1 Willpower
-    </button>
-
-    <button
-      type="button"
-      onClick={onToggleApplyWoundPenalty}
-      className={`flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition ${
-        applyWoundPenalty
-          ? 'border-rose-500/65 bg-rose-950/55 text-rose-200'
-          : 'border-stone-800 bg-zinc-950/85 text-stone-400'
-      }`}
-    >
-      <ShieldAlert className="h-3.5 w-3.5" />
-      Wounds
-      {woundPenalty !== 0 ? ` (${woundPenalty})` : ''}
-    </button>
-
-    <button
-      type="button"
-      onClick={onToggleSecretRoll}
-      className={`flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition ${
-        isSecretRoll
-          ? 'border-amber-400/80 bg-amber-950/65 text-amber-200'
-          : 'border-stone-800 bg-zinc-950/85 text-stone-400'
-      }`}
-    >
-      <EyeOff className="h-3.5 w-3.5" />
-      Secret
     </button>
   </div>
 );
@@ -278,24 +170,16 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
 }) => {
   const [activeMobileSheet, setActiveMobileSheet] = useState<MobileSheetKind>(null);
   const [traitSheetTab, setTraitSheetTab] = useState<'attr' | 'skill'>('attr');
-  const [savedFlash, setSavedFlash] = useState(false);
+  const [savedFlash, flashSaved] = useSavedFlash();
 
   const isSheetTraitsMode = Boolean(activeSheet && rollSourceMode === 'traits');
-  const isDisabled =
-    (connectionStatus !== 'authenticated' && connectionStatus !== 'reconnecting') ||
-    rollStageStatus.localPendingCount >= MAX_LOCAL_QUEUED_ROLLS;
-  const rollBlockedByEmptyTraits = isSheetTraitsMode && (!hasTraitSelection || pool <= 0);
-
-  useEffect(() => {
-    if (!activeMobileSheet) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setActiveMobileSheet(null);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeMobileSheet]);
+  const { isDisabled, rollBlockedByEmptyTraits } = getRollGate({
+    connectionStatus,
+    localPendingCount: rollStageStatus.localPendingCount,
+    isSheetTraitsMode,
+    hasTraitSelection,
+    pool,
+  });
 
   const openMobileSheet = (kind: Exclude<MobileSheetKind, null>) => {
     if (feedOpen) {
@@ -323,8 +207,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
     } else {
       onSaveCurrentUnboundPreset();
     }
-    setSavedFlash(true);
-    window.setTimeout(() => setSavedFlash(false), 1400);
+    flashSaved();
   };
 
   const onlineCount = sortedParticipants.filter((p) => p.isConnected).length;
@@ -338,45 +221,37 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
 
   const layoutTitle =
     layoutMode === 'auto'
-      ? 'Layout: Auto (Mobile) — tap to switch to PC'
+      ? 'Layout: Auto. Tap to switch to Mobile'
       : layoutMode === 'mobile'
-        ? 'Layout: Mobile — tap to switch to PC'
-        : 'Layout: PC';
+        ? 'Layout: Mobile. Tap to switch to PC'
+        : 'Layout: PC. Tap to switch to Auto';
 
-  const rollCtaText =
-    isSheetTraitsMode && !hasTraitSelection
-      ? 'Select Trait'
-      : isSheetTraitsMode && pool <= 0
-        ? '0 Dice'
-        : `Roll ${effectivePreviewPool}d10${
-            difficulty !== 6 ? ` • D${difficulty}` : ''
-          }${clampedPreviewRage > 0 ? ` (${clampedPreviewRage}R)` : ''}`;
+  const rollCtaText = getRollCtaText({
+    isSheetTraitsMode,
+    hasTraitSelection,
+    pool,
+    effectivePreviewPool,
+    difficulty,
+    clampedPreviewRage,
+  });
 
   return (
     <>
       {/* Slim Top Bar */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-30 pt-safe">
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-hud pt-safe">
         <div className="flex items-center justify-between gap-1.5 px-2.5 pt-2">
           {/* Left: Compact Presence Pill */}
           <button
             type="button"
             onClick={() => openMobileSheet('presence')}
             aria-label="Open table participants and seats"
-            className={`w20-obsidian-panel pointer-events-auto flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-bold transition ${
+            className={`w20-obsidian-panel pointer-events-auto flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-bold transition ${
               anySpeaking
                 ? '!border-emerald-400/80 text-emerald-200 shadow-[0_0_12px_rgba(52,211,153,0.4)]'
                 : 'text-stone-100'
             }`}
           >
-            <span
-              className={`h-2 w-2 rounded-full ${
-                connectionStatus === 'authenticated'
-                  ? anySpeaking
-                    ? 'animate-ping bg-emerald-400'
-                    : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.85)]'
-                  : 'animate-pulse bg-amber-400'
-              }`}
-            />
+            <ConnectionDot status={connectionStatus} pinging={anySpeaking} />
             <span className="font-mono">{onlineCount}</span>
           </button>
 
@@ -389,7 +264,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                 ? `Open ${activeSheet.name}'s interactive W20 sheet`
                 : 'Select or create a Garou sheet'
             }
-            className="w20-obsidian-panel pointer-events-auto flex h-8 min-w-0 max-w-[46%] flex-1 items-center justify-center gap-1.5 rounded-full px-2.5 text-[11px] font-bold text-amber-100 transition active:scale-[0.98]"
+            className="w20-obsidian-panel pointer-events-auto flex h-8 min-w-0 max-w-[46%] flex-1 items-center justify-center gap-1.5 rounded-full px-2.5 text-xs font-bold text-amber-100 transition active:scale-[0.98]"
           >
             <Flame className="h-3 w-3 shrink-0 text-red-400" />
             <span className="truncate">{centerPillLabel}</span>
@@ -434,7 +309,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             >
               <ScrollText className="h-3.5 w-3.5 text-amber-300" />
               {rollHistoryCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-[9px] font-black text-zinc-950">
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-xs font-black text-zinc-950">
                   {rollHistoryCount > 99 ? '99+' : rollHistoryCount}
                 </span>
               )}
@@ -459,7 +334,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
 
       {/* Server Error Toast */}
       {lastError && (
-        <div className="w20-obsidian-panel absolute top-14 inset-x-3 z-30 mt-[env(safe-area-inset-top,0px)] !border-red-600/80 rounded-xl px-3 py-1.5 text-xs text-red-200">
+        <div className="w20-obsidian-panel absolute top-14 inset-x-3 z-hud mt-[env(safe-area-inset-top,0px)] !border-red-600/80 rounded-xl px-3 py-1.5 text-xs text-red-200">
           {lastError.message}
         </div>
       )}
@@ -485,7 +360,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
       )}
 
       {/* Thumb-Zone Mobile Bottom Dock */}
-      <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-30 pb-safe">
+      <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-hud pb-safe">
         <div className="w20-obsidian-panel pointer-events-auto mx-2 mb-2 space-y-1.5 rounded-2xl px-2.5 py-2">
           {/* Row 1: Form Pill (if bound) + Swipeable QuickRollBar */}
           <div className="flex min-w-0 items-center gap-1.5">
@@ -493,7 +368,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               <button
                 type="button"
                 onClick={() => openMobileSheet('vitals')}
-                className="font-display shrink-0 rounded-full border border-red-700/70 bg-red-950/75 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-amber-200 transition active:scale-95"
+                className="font-display shrink-0 rounded-full border border-red-700/70 bg-red-950/75 px-2.5 py-1 text-xs font-extrabold uppercase tracking-wider text-amber-200 transition active:scale-95"
                 title="Tap to change Garou Form or Vitals"
               >
                 {formatFormName(activeSheet.activeForm)}
@@ -544,7 +419,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                     ? 'Roll by Character Sheet Skills & Attributes'
                     : 'Select a Garou sheet for Skill rolls'
                 }
-                className={`flex h-full items-center gap-0.5 rounded-lg px-2 text-[10px] font-bold transition ${
+                className={`flex h-full items-center gap-0.5 rounded-lg px-2 text-xs font-bold transition ${
                   isSheetTraitsMode
                     ? 'bg-gradient-to-b from-amber-500/30 to-amber-900/45 text-amber-100 ring-1 ring-amber-400/60'
                     : 'text-stone-400'
@@ -558,7 +433,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                 onClick={() => onSetRollSourceMode('manual')}
                 aria-label="Numbers mode"
                 title="Roll raw d10 pool by number"
-                className={`flex h-full items-center gap-0.5 rounded-lg px-2 text-[10px] font-bold transition ${
+                className={`flex h-full items-center gap-0.5 rounded-lg px-2 text-xs font-bold transition ${
                   !isSheetTraitsMode
                     ? 'bg-gradient-to-b from-red-800/80 to-red-950 text-amber-100 ring-1 ring-amber-400/55'
                     : 'text-stone-400'
@@ -578,21 +453,21 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                 >
                   {traitSelection.attrOption ? (
                     <>
-                      <span className="truncate text-[11px] font-bold text-amber-50">
+                      <span className="truncate text-xs font-bold text-amber-50">
                         {traitSelection.attrOption.label}
                       </span>
-                      <span className="shrink-0 rounded bg-amber-950/75 px-1.5 py-0.5 font-mono text-[10px] font-black text-amber-200">
+                      <span className="shrink-0 rounded bg-amber-950/75 px-1.5 py-0.5 font-mono text-xs font-black text-amber-200">
                         {traitSelection.attrOption.effectiveDots}
                       </span>
                     </>
                   ) : (
-                    <span className="truncate text-[11px] font-semibold text-stone-400">
+                    <span className="truncate text-xs font-semibold text-stone-400">
                       + Attr
                     </span>
                   )}
                 </button>
 
-                <span className="font-display shrink-0 text-[11px] font-black text-amber-400/75">
+                <span className="font-display shrink-0 text-xs font-black text-amber-400/75">
                   +
                 </span>
 
@@ -603,11 +478,11 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                 >
                   {traitSelection.abilOption ? (
                     <>
-                      <span className="truncate text-[11px] font-bold text-amber-50">
+                      <span className="truncate text-xs font-bold text-amber-50">
                         {traitSelection.abilOption.label}
                       </span>
                       <span
-                        className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-black ${
+                        className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-xs font-black ${
                           traitSelection.abilOption.dots > 0
                             ? 'bg-amber-950/75 text-amber-200'
                             : 'bg-zinc-900 text-stone-400'
@@ -617,7 +492,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                       </span>
                     </>
                   ) : (
-                    <span className="truncate text-[11px] font-semibold text-stone-400">
+                    <span className="truncate text-xs font-semibold text-stone-400">
                       + Skill
                     </span>
                   )}
@@ -636,6 +511,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                 {editingPool ? (
                   <input
                     type="number"
+                    aria-label="Dice pool (1 to 30)"
                     min={1}
                     max={30}
                     value={poolInputValue}
@@ -651,7 +527,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                         onSetEditingPool(false);
                       }
                     }}
-                    className="font-display w-12 bg-transparent text-center text-xs font-black text-amber-100 focus:outline-none"
+                    className="font-display w-12 bg-transparent text-center text-xs font-black text-amber-100"
                   />
                 ) : (
                   <button
@@ -696,7 +572,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               ) : (
                 <Users className="h-4 w-4 text-amber-300" />
               )}
-              <span className="text-[9.5px] font-bold leading-none">
+              <span className="text-xs font-bold leading-none">
                 {activeSheet ? 'Sheet' : 'Roster'}
               </span>
             </button>
@@ -711,12 +587,12 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                   : 'border-stone-700/80 bg-zinc-950/90'
               }`}
             >
-              <div className="flex items-center gap-1 font-mono text-[9.5px] font-extrabold leading-none">
+              <div className="flex items-center gap-1 font-mono text-xs font-extrabold leading-none">
                 <span className="text-red-300">R{activeTrackers.rage}</span>
-                <span className="text-amber-200">G{activeTrackers.gnosis}</span>
+                <span className="text-cyan-200">G{activeTrackers.gnosis}</span>
                 <span className="text-indigo-200">W{activeTrackers.willpower}</span>
               </div>
-              <span className="flex items-center gap-0.5 text-[9px] font-bold leading-none text-stone-400">
+              <span className="flex items-center gap-0.5 text-xs font-bold leading-none text-stone-400">
                 <HeartPulse className="h-2.5 w-2.5 text-red-400" />
                 {activeTrackers.woundPenalty !== 0 ? (
                   <span className="font-mono text-red-300">
@@ -737,7 +613,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               className="flex min-h-[44px] min-w-[46px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-amber-500/60 bg-amber-950/35 px-1.5 text-amber-100 transition active:scale-95 disabled:opacity-45"
             >
               <Zap className="h-3.5 w-3.5 text-amber-300" />
-              <span className="font-mono text-[9.5px] font-extrabold leading-none">
+              <span className="font-mono text-xs font-extrabold leading-none">
                 {activeSheet || initiativeModifier !== 0
                   ? `${initiativeModifier >= 0 ? `+${initiativeModifier}` : initiativeModifier}`
                   : 'Init'}
@@ -754,7 +630,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               <Dices className={`h-4 w-4 shrink-0 ${isThrowing ? 'animate-spin' : ''}`} />
               <span className="truncate">{rollCtaText}</span>
               {rollStageStatus.localPendingCount > 0 && (
-                <span className="shrink-0 rounded-full bg-amber-300/20 px-1.5 py-0.5 font-mono text-[9.5px] font-extrabold text-amber-200">
+                <span className="shrink-0 rounded-full bg-amber-300/20 px-1.5 py-0.5 font-mono text-xs font-extrabold text-amber-200">
                   +{rollStageStatus.localPendingCount}
                 </span>
               )}
@@ -774,9 +650,9 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               }`}
             >
               <SlidersHorizontal className="h-4 w-4 text-amber-300" />
-              <span className="text-[9.5px] font-bold leading-none">Mods</span>
+              <span className="text-xs font-bold leading-none">Mods</span>
               {activeModifierCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-[9px] font-black text-zinc-950">
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-xs font-black text-zinc-950">
                   {activeModifierCount}
                 </span>
               )}
@@ -796,7 +672,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             {/* Local Hot-Seats */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="font-display text-[11px] font-bold tracking-wider uppercase text-amber-200">
+                <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
                   Your Table Seats ({seats.length})
                 </span>
                 <div className="flex items-center gap-1.5">
@@ -806,7 +682,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                       setActiveMobileSheet(null);
                       onOpenRoster();
                     }}
-                    className="rounded-lg border border-stone-700/80 bg-zinc-900 px-2.5 py-1 text-[11px] font-bold text-stone-200"
+                    className="rounded-lg border border-stone-700/80 bg-zinc-900 px-2.5 py-1 text-xs font-bold text-stone-200"
                   >
                     Roster
                   </button>
@@ -816,7 +692,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                       setActiveMobileSheet(null);
                       onAddSeatAndOpenRoster();
                     }}
-                    className="flex items-center gap-1 rounded-lg border border-amber-500/50 bg-amber-950/40 px-2.5 py-1 text-[11px] font-bold text-amber-200"
+                    className="flex items-center gap-1 rounded-lg border border-amber-500/50 bg-amber-950/40 px-2.5 py-1 text-xs font-bold text-amber-200"
                   >
                     <Plus className="h-3 w-3" />
                     Add Seat
@@ -852,7 +728,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                           <p className="truncate text-xs font-bold text-amber-50">
                             {seatSheet ? seatSheet.name : seat.playerName || 'Unbound Seat'}
                           </p>
-                          <p className="truncate text-[10px] text-stone-400">
+                          <p className="truncate text-xs text-stone-400">
                             {seatSheet
                               ? `${formatFormName(seatSheet.activeForm)} • ${seat.playerName}`
                               : 'Unbound dice pool'}
@@ -867,7 +743,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                             setActiveMobileSheet(null);
                             onOpenSheet();
                           }}
-                          className="shrink-0 rounded-lg border border-red-700/60 bg-red-950/60 px-2.5 py-1.5 text-[10px] font-bold uppercase text-amber-100"
+                          className="shrink-0 rounded-lg border border-red-700/60 bg-red-950/60 px-2.5 py-1.5 text-xs font-bold uppercase text-amber-100"
                         >
                           Sheet
                         </button>
@@ -882,7 +758,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
 
             {/* Connected Voice Table Participants */}
             <div className="space-y-2">
-              <span className="font-display block text-[11px] font-bold tracking-wider uppercase text-stone-300">
+              <span className="font-display block text-xs font-bold tracking-wider uppercase text-stone-300">
                 Voice Channel Pack ({sortedParticipants.length})
               </span>
               <div className="space-y-1.5">
@@ -914,14 +790,14 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                               {display}
                             </span>
                             {p.activeForm && (
-                              <span className="font-display shrink-0 rounded border border-red-800/50 bg-red-950/75 px-1.5 py-0.2 text-[9px] font-bold uppercase text-amber-200">
+                              <span className="font-display shrink-0 rounded border border-red-800/50 bg-red-950/75 px-1.5 py-0.5 text-xs font-bold uppercase text-amber-200">
                                 {formatFormName(p.activeForm)}
                               </span>
                             )}
                           </div>
-                          <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px]">
+                          <div className="mt-0.5 flex items-center gap-2 font-mono text-xs">
                             <span className="text-red-300">R {p.trackers.rage}</span>
-                            <span className="text-amber-200">G {p.trackers.gnosis}</span>
+                            <span className="text-cyan-200">G {p.trackers.gnosis}</span>
                             <span className="text-indigo-200">W {p.trackers.willpower}</span>
                             {p.trackers.woundPenalty !== 0 && (
                               <span className="rounded bg-red-950 px-1 font-bold text-red-300">
@@ -973,7 +849,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
 
             {activeSheet && (
               <div className="space-y-1.5">
-                <span className="font-display block text-[11px] font-bold tracking-wider uppercase text-amber-200">
+                <span className="font-display block text-xs font-bold tracking-wider uppercase text-amber-200">
                   Garou Form
                 </span>
                 <div className="grid grid-cols-5 gap-1.5">
@@ -984,7 +860,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                         key={form}
                         type="button"
                         onClick={() => onSetActiveSheetForm(form)}
-                        className={`font-display min-h-[40px] rounded-xl border px-1 py-1.5 text-[10px] font-extrabold uppercase tracking-wide transition ${
+                        className={`font-display min-h-[40px] rounded-xl border px-1 py-1.5 text-xs font-extrabold uppercase tracking-wide transition ${
                           active
                             ? 'border-amber-400/80 bg-gradient-to-b from-red-800 to-red-950 text-amber-50 shadow-[0_0_10px_rgba(185,28,28,0.5)]'
                             : 'border-stone-700/75 bg-zinc-950 text-stone-400'
@@ -1055,14 +931,14 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                         ? traitSelection.autoLabel
                         : 'No Traits Selected'}
                     </p>
-                    <p className="truncate font-mono text-[10.5px] text-stone-400">
+                    <p className="truncate font-mono text-xs text-stone-400">
                       {traitSelection.formulaSummary} • Diff {difficulty}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => openTraitsSheet('attr')}
-                    className="shrink-0 rounded-lg border border-amber-500/50 bg-amber-950/35 px-2.5 py-1.5 text-[11px] font-bold text-amber-200"
+                    className="shrink-0 rounded-lg border border-amber-500/50 bg-amber-950/35 px-2.5 py-1.5 text-xs font-bold text-amber-200"
                   >
                     Change Traits
                   </button>
@@ -1070,96 +946,18 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
 
                 {/* Bonus/Penalty Dice & Rage Dice Steppers */}
                 <div className="grid grid-cols-2 gap-2.5">
-                  <div className="space-y-1.5 rounded-xl border border-stone-700/70 bg-zinc-950/85 p-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-display text-[10px] font-bold uppercase text-amber-200">
-                        Bonus Dice
-                      </span>
-                      {bonusDice !== 0 && (
-                        <button
-                          type="button"
-                          onClick={() => onSetBonusDice(0)}
-                          aria-label="Reset bonus dice"
-                          className="rounded border border-stone-700 bg-zinc-900 p-1 text-stone-300"
-                        >
-                          <RotateCcw className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex items-center justify-between gap-1">
-                      <button
-                        type="button"
-                        onClick={() => onSetBonusDice((b) => Math.max(-15, b - 1))}
-                        aria-label="Decrease Bonus Dice"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 text-stone-200 active:scale-95"
-                      >
-                        <Minus className="h-4 w-4" />
-                      </button>
-                      <span
-                        className={`font-display text-lg font-black ${
-                          bonusDice > 0
-                            ? 'text-emerald-300'
-                            : bonusDice < 0
-                              ? 'text-rose-300'
-                              : 'text-stone-300'
-                        }`}
-                      >
-                        {bonusDice > 0 ? `+${bonusDice}` : bonusDice}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onSetBonusDice((b) => Math.min(15, b + 1))}
-                        aria-label="Increase Bonus Dice"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 text-stone-200 active:scale-95"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5 rounded-xl border border-red-900/65 bg-red-950/25 p-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-display text-[10px] font-bold uppercase text-red-300">
-                        Rage Dice
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onSetRageDiceCount(
-                            Math.min(Math.max(0, Math.min(30, pool)), activeTrackers.rage)
-                          )
-                        }
-                        className="rounded border border-red-700/65 bg-red-950 px-1.5 py-0.5 text-[9px] font-bold uppercase text-red-200"
-                      >
-                        Sync
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between gap-1">
-                      <button
-                        type="button"
-                        onClick={() => onSetRageDiceCount((r) => Math.max(0, r - 1))}
-                        aria-label="Decrease Rage Dice"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 text-stone-200 active:scale-95"
-                      >
-                        <Minus className="h-4 w-4" />
-                      </button>
-                      <span className="font-display text-lg font-black text-red-300">
-                        {rageDiceCount}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onSetRageDiceCount((r) =>
-                            Math.min(Math.max(0, Math.min(30, pool)), r + 1)
-                          )
-                        }
-                        aria-label="Increase Rage Dice"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 text-stone-200 active:scale-95"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
+                  <BonusDiceStepper
+                    layout="card"
+                    bonusDice={bonusDice}
+                    onSetBonusDice={onSetBonusDice}
+                  />
+                  <RageDiceStepper
+                    layout="card"
+                    rageDiceCount={rageDiceCount}
+                    pool={pool}
+                    trackerRage={activeTrackers.rage}
+                    onSetRageDiceCount={onSetRageDiceCount}
+                  />
                 </div>
               </>
             ) : (
@@ -1182,7 +980,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                       Dice Pool
                     </span>
                     {applyWoundPenalty && activeTrackers.woundPenalty !== 0 && (
-                      <span className="font-mono text-[11px] font-bold text-red-300">
+                      <span className="font-mono text-xs font-bold text-red-300">
                         Effective: {effectivePreviewPool}d10 ({activeTrackers.woundPenalty})
                       </span>
                     )}
@@ -1201,6 +999,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                     {editingPool ? (
                       <input
                         type="number"
+                        aria-label="Dice pool (1 to 30)"
                         min={1}
                         max={30}
                         value={poolInputValue}
@@ -1216,7 +1015,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                             onSetEditingPool(false);
                           }
                         }}
-                        className="font-display w-20 bg-transparent text-center text-2xl font-black text-amber-100 focus:outline-none"
+                        className="font-display w-20 bg-transparent text-center text-2xl font-black text-amber-100"
                       />
                     ) : (
                       <button
@@ -1261,101 +1060,52 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                   </div>
 
                   {/* Dual-tone Obsidian / Rage bar */}
-                  <div className="flex items-center gap-0.5 pt-1">
-                    {Array.from({ length: Math.min(effectivePreviewPool, 18) }, (_, idx) => {
-                      const isRage = idx >= obsidianPreviewCount;
-                      return (
-                        <span
-                          key={idx}
-                          className={`h-1.5 flex-1 rounded-xs ${
-                            isRage
-                              ? 'bg-red-600 shadow-[0_0_5px_rgba(220,38,38,0.75)]'
-                              : 'bg-stone-500/80'
-                          }`}
-                        />
-                      );
-                    })}
-                    {effectivePreviewPool > 18 && (
-                      <span className="ml-1 font-mono text-[10px] text-stone-400">
-                        +{effectivePreviewPool - 18}
-                      </span>
-                    )}
+                  <div className="pt-1">
+                    <DicePreviewStrip
+                      effectivePool={effectivePreviewPool}
+                      normalDiceCount={obsidianPreviewCount}
+                      maxSegments={18}
+                      stretch
+                    />
                   </div>
                 </div>
 
                 {/* Diff & Rage Steppers */}
                 <div className="grid grid-cols-2 gap-2.5">
-                  <div className="space-y-1.5 rounded-xl border border-stone-700/70 bg-zinc-950/85 p-2.5">
-                    <span className="font-display block text-center text-[10px] font-bold uppercase text-stone-400">
-                      Difficulty
-                    </span>
-                    <div className="flex items-center justify-between gap-1">
-                      <button
-                        type="button"
-                        onClick={() => onSetDifficulty((d) => Math.max(2, d - 1))}
-                        aria-label="Decrease Difficulty"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 text-stone-200 active:scale-95"
-                      >
-                        <Minus className="h-4 w-4" />
-                      </button>
-                      <span className="font-display text-lg font-black text-amber-300">
-                        {difficulty}
+                  <div className="space-y-1.5 rounded-xl border border-stone-700/70 bg-obsidian-950 p-2.5">
+                    <div className="flex min-h-6 items-center">
+                      <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
+                        Difficulty
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => onSetDifficulty((d) => Math.min(10, d + 1))}
-                        aria-label="Increase Difficulty"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 text-stone-200 active:scale-95"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
+                    </div>
+                    <div className="flex justify-center">
+                      <NumberStepper
+                        label="Difficulty"
+                        value={difficulty}
+                        min={2}
+                        max={10}
+                        onChange={(next) => onSetDifficulty(next)}
+                        size="touch"
+                        valueClassName="text-amber-300"
+                      />
                     </div>
                   </div>
-
-                  <div className="space-y-1.5 rounded-xl border border-red-900/65 bg-red-950/25 p-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-display text-[10px] font-bold uppercase text-red-300">
-                        Rage Dice
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onSetRageDiceCount(Math.min(pool, activeTrackers.rage))}
-                        className="rounded border border-red-700/65 bg-red-950 px-1.5 py-0.5 text-[9px] font-bold uppercase text-red-200"
-                      >
-                        Sync
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between gap-1">
-                      <button
-                        type="button"
-                        onClick={() => onSetRageDiceCount((r) => Math.max(0, r - 1))}
-                        aria-label="Decrease Rage Dice"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 text-stone-200 active:scale-95"
-                      >
-                        <Minus className="h-4 w-4" />
-                      </button>
-                      <span className="font-display text-lg font-black text-red-300">
-                        {rageDiceCount}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onSetRageDiceCount((r) => Math.min(pool, r + 1))}
-                        aria-label="Increase Rage Dice"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 text-stone-200 active:scale-95"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
+                  <RageDiceStepper
+                    layout="card"
+                    rageDiceCount={rageDiceCount}
+                    pool={pool}
+                    trackerRage={activeTrackers.rage}
+                    onSetRageDiceCount={onSetRageDiceCount}
+                  />
                 </div>
               </>
             )}
 
             {/* Shared 2x2 Modifier Tiles */}
-            <MobileModifierGrid
+            <RollModifierToggles
+              layout="grid"
               hasSpecialty={hasSpecialty}
-              isSheetTraitsMode={isSheetTraitsMode}
-              isAutoSpecialty={isAutoSpecialty}
+              specialtyFromSheet={isSheetTraitsMode && isAutoSpecialty}
               spendWillpower={spendWillpower}
               applyWoundPenalty={applyWoundPenalty}
               isSecretRoll={isSecretRoll}
@@ -1371,34 +1121,21 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             <div className="space-y-2.5">
               <input
                 type="text"
+                aria-label="Roll label"
                 value={rollLabel}
                 maxLength={120}
                 onChange={(e) => onSetRollLabel(e.target.value)}
                 placeholder={effectiveRollLabel || 'Custom roll label (e.g. Dexterity + Firearms)'}
-                className="min-h-[42px] w-full rounded-xl border border-stone-700/75 bg-zinc-950/90 px-3 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75 focus:outline-none"
+                className="min-h-[42px] w-full rounded-xl border border-stone-700/75 bg-zinc-950/90 px-3 text-xs text-stone-100 placeholder-stone-500 focus:border-amber-400/75"
               />
               <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={handleSaveOrPin}
+                <SavePinButton
+                  pinsToSheet={Boolean(activeSheet)}
+                  saved={savedFlash}
+                  touch
                   disabled={Boolean(isSheetTraitsMode && !hasTraitSelection)}
-                  className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-950/35 px-3 text-xs font-bold text-amber-200 disabled:opacity-40"
-                >
-                  {savedFlash ? (
-                    <Check className="h-4 w-4 text-emerald-300" />
-                  ) : activeSheet ? (
-                    <Pin className="h-4 w-4" />
-                  ) : (
-                    <BookmarkPlus className="h-4 w-4" />
-                  )}
-                  {savedFlash
-                    ? activeSheet
-                      ? 'Pinned!'
-                      : 'Saved!'
-                    : activeSheet
-                      ? 'Pin to Sheet'
-                      : 'Save Preset'}
-                </button>
+                  onClick={handleSaveOrPin}
+                />
                 <button
                   type="button"
                   disabled={isDisabled || rollBlockedByEmptyTraits}
@@ -1419,7 +1156,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                 <button
                   type="button"
                   onClick={() => onSetRollSourceMode('manual')}
-                  className="text-[11px] font-semibold text-stone-400 underline decoration-stone-600 underline-offset-2"
+                  className="text-xs font-semibold text-stone-400 underline decoration-stone-600 underline-offset-2"
                 >
                   Switch to Raw Pool Override
                 </button>

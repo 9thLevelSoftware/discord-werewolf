@@ -18,6 +18,8 @@ export interface NumberStepperProps {
   showLabel?: boolean;
   disabled?: boolean;
   className?: string;
+  /** Extra classes for the number, for example a colour for positive or negative values. */
+  valueClassName?: string;
 }
 
 const BUTTON_SIZE: Record<ControlSize, string> = {
@@ -50,6 +52,7 @@ export const NumberStepper: React.FC<NumberStepperProps> = ({
   showLabel = false,
   disabled = false,
   className,
+  valueClassName,
 }) => {
   const current = clampToRange(value, min, max);
   const atMin = current <= min;
@@ -84,7 +87,8 @@ export const NumberStepper: React.FC<NumberStepperProps> = ({
         <output
           aria-live="off"
           className={cx(
-            'flex items-center justify-center px-1 font-mono font-bold tabular-nums text-parchment',
+            'flex items-center justify-center px-1 font-mono font-bold tabular-nums',
+            valueClassName ?? 'text-parchment',
             VALUE_SIZE[size]
           )}
         >
