@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { useViewportLayout } from '../../hooks/useViewportLayout';
-import { IconButton, Modal } from '../ui';
+import { ConfirmButton, IconButton, Modal, toast } from '../ui';
 import { usePopoverDismiss } from '../ui/usePopoverDismiss';
 import {
   type SheetRollRequest,
@@ -53,7 +53,7 @@ const SAVE_STATUS_META: Record<
     classes: 'border-stone-700/70 bg-zinc-900/80 text-stone-300',
   },
   saving: {
-    label: 'Saving...',
+    label: 'Saving…',
     classes: 'border-amber-500/60 bg-amber-950/50 text-amber-200',
     spinning: true,
   },
@@ -62,11 +62,11 @@ const SAVE_STATUS_META: Record<
     classes: 'border-emerald-600/60 bg-emerald-950/50 text-emerald-200',
   },
   local_only: {
-    label: 'Local Cache',
+    label: 'Saved on this device',
     classes: 'border-cyan-600/60 bg-cyan-950/50 text-cyan-200',
   },
   error: {
-    label: 'Save Error',
+    label: 'Could not save',
     classes: 'border-red-600/70 bg-red-950/60 text-red-200',
   },
 };
@@ -145,7 +145,8 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 1800);
     } catch {
-      // Fallback ignored if clipboard blocked inside iframe
+      // The clipboard can be blocked inside the Discord frame.
+      toast.error(`Could not copy automatically. Your sync code is ${formatted}.`, 0);
     }
   };
 
@@ -226,14 +227,16 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
               </button>
             </div>
             {isOwner ? (
-              <button
-                type="button"
+              <ConfirmButton
+                variant="danger"
                 disabled={busySync}
-                onClick={() => void handleRevokeCode()}
-                className="w-full rounded border border-red-800/70 bg-red-950/40 px-2 py-1 text-caption font-bold text-red-200 hover:bg-red-900/50 disabled:opacity-45"
+                prompt="Revoke this code? Other accounts will lose access to this character."
+                confirmLabel="Revoke"
+                className="w-full"
+                onConfirm={() => void handleRevokeCode()}
               >
-                {busySync ? 'Revoking...' : 'Revoke Sync Code'}
-              </button>
+                {busySync ? 'Revoking…' : 'Revoke Sync Code'}
+              </ConfirmButton>
             ) : (
               <p className="text-caption text-cyan-300">
                 Synced from owner — edits save back to this code.
@@ -264,7 +267,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
           className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-stone-700 bg-zinc-900 px-3 py-1.5 text-xs font-bold text-stone-200 hover:border-amber-500/50"
         >
           <Download className="h-3.5 w-3.5 text-amber-300" />
-          Export .w20sheet.json
+          Export backup file
         </button>
 
         {isMobile && (
@@ -301,7 +304,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <h2 className="font-display truncate text-sm font-black uppercase text-amber-100">
-                      {activeSheet ? activeSheet.name || 'New Garou' : 'Unbound Seat'}
+                      {activeSheet ? activeSheet.name || 'New Garou' : 'No character'}
                     </h2>
                     {activeSheet && (
                       <span className="shrink-0 rounded-full border border-red-700/70 bg-red-950/80 px-2 py-0.5 text-caption font-bold uppercase text-red-200">
@@ -363,7 +366,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                           : 'border-stone-800 bg-zinc-900 text-stone-400'
                       }`}
                     >
-                      {seat.playerName}: {bound ? bound.name : 'Unbound'}
+                      {seat.playerName}: {bound ? bound.name : 'no character'}
                     </button>
                   );
                 })}
@@ -404,7 +407,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                   <div>
                     <div className="flex items-center gap-2">
                       <h2 className="font-display text-sm font-black tracking-wider uppercase text-amber-100">
-                        {activeSheet ? activeSheet.name || 'New Garou' : 'Unbound Seat'}
+                        {activeSheet ? activeSheet.name || 'New Garou' : 'No character'}
                       </h2>
                       {activeSheet && (
                         <span className="rounded-full border border-red-700/70 bg-red-950/80 px-2 py-0.5 text-caption font-bold uppercase text-red-200">
@@ -439,7 +442,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                           : 'text-stone-400 hover:text-stone-200'
                       }`}
                     >
-                      Page 1: Core Traits &amp; Vitals
+                      Core Traits
                     </button>
                     <button
                       type="button"
@@ -452,7 +455,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                           : 'text-stone-400 hover:text-stone-200'
                       }`}
                     >
-                      Page 2: Forms, Gifts, Fetishes &amp; Combat
+                      Forms &amp; Combat
                     </button>
                   </div>
                 )}
@@ -471,7 +474,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                       const bound = seat.sheetId ? sheetsById[seat.sheetId] : undefined;
                       return (
                         <option key={seat.seatId} value={seat.seatId}>
-                          {seat.playerName} ({bound ? bound.name : 'Unbound'})
+                          {seat.playerName} ({bound ? bound.name : 'no character'})
                         </option>
                       );
                     })}
@@ -537,10 +540,10 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
           {!activeSheet || !stats ? (
             <div className="flex h-full min-h-[260px] flex-col items-center justify-center rounded-2xl border border-dashed border-stone-700 bg-zinc-950/60 p-8 text-center">
               <p className="font-display text-base font-bold uppercase text-amber-200">
-                Seat “{activeSeat?.playerName ?? 'Player'}” Is Unbound
+                {activeSeat?.playerName ?? 'This seat'} has no character yet
               </p>
               <p className="mt-1.5 max-w-md text-xs text-stone-400">
-                This seat is currently rolling unbound as a Storyteller or Guest. Bind a saved, newly forged, or sync-code Garou sheet from the Roster to unlock full W20 interactive traits &amp; 1-click rolls.
+                This seat can still roll dice. Choose or create a character in the Roster to roll from its traits with one click.
               </p>
               <button
                 type="button"

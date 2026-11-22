@@ -16,7 +16,11 @@ import {
   type SheetRollRequest,
   useCharacterSheetStore,
 } from '../store/useCharacterSheetStore';
-import { type Queued3DRoll, useVttRoomStore } from '../store/useVttRoomStore';
+import {
+  type ConnectionStatus,
+  type Queued3DRoll,
+  useVttRoomStore,
+} from '../store/useVttRoomStore';
 import { CharacterRosterModal } from './character-sheet/CharacterRosterModal';
 import { W20InteractiveSheetModal } from './character-sheet/W20InteractiveSheetModal';
 import { DesktopDiceTableHud } from './dice-table/DesktopDiceTableHud';
@@ -40,6 +44,7 @@ import {
   isRageDieThemeColor,
 } from './dice-table/rollQueueController';
 import { PackPresenceDrawer } from './dice-table/PackPresenceDrawer';
+import { toast, useToasts } from './ui';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
 
 interface DiceTableWorkspaceProps {
@@ -92,11 +97,30 @@ const GarouFeltMedallion: React.FC = () => (
   </div>
 );
 
+const QUEUE_FULL_MESSAGE = `Too many rolls waiting (${MAX_LOCAL_QUEUED_ROLLS}). Let the dice settle, then roll again.`;
+
+const NO_3D_DICE_MESSAGE =
+  '3D dice are not available on this device. Rolls still work and show as numbers.';
+
+function notConnectedMessage(status: ConnectionStatus): string {
+  if (status === 'session_expired') return 'Your session has expired. Rejoin to roll.';
+  if (status === 'connecting') return 'Still connecting to the table. Try again in a moment.';
+  return 'Not connected to the table, so the roll was not sent.';
+}
+
 export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session }) => {
   const { isMobile, mode: layoutMode, cycleMode } = useViewportLayout();
 
   const connectionStatus = useVttRoomStore((s) => s.connectionStatus);
   const lastError = useVttRoomStore((s) => s.lastError);
+
+  // Show each server rejection once as a toast, then clear it.
+  useEffect(() => {
+    if (!lastError) return;
+    coordinatorRef.current?.notifyCommandRejected();
+    useToasts.getState().push({ id: 'room-error', tone: 'error', message: lastError.message });
+    useVttRoomStore.getState().clearLastError();
+  }, [lastError]);
   const participants = useVttRoomStore((s) => s.participants);
   const speakingDiscordIds = useVttRoomStore((s) => s.speakingDiscordIds);
   const rollHistory = useVttRoomStore((s) => s.rollHistory);
@@ -392,6 +416,19 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       onStopThrowSound: () => diceSoundEngine.stopActiveRollCascade(),
       onPlayOutcomeSound: (roll) => diceSoundEngine.playOutcomeAccent(roll),
       onStatusChange: (status) => setRollStageStatus(status),
+      onLocalRollUnconfirmed: (spec, reason) => {
+        if (reason === 'rejected') {
+          // The rejection message itself is shown from the room store's lastError.
+          if (spec.spendWillpower) {
+            useCharacterSheetStore.getState().refundSeatWillpower(spec.seatId);
+            toast.info('That roll was rejected, so your Willpower point was returned.');
+          }
+          return;
+        }
+        toast.info(
+          `The table did not confirm "${spec.label}". It may still appear in the roll log.`
+        );
+      },
     });
 
     coordinatorRef.current = coordinator;
@@ -468,11 +505,13 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         })
         .catch((err: unknown) => {
           console.warn('3D DiceBox unavailable; using authoritative CSPRNG mode.', err);
+          toast.info(NO_3D_DICE_MESSAGE);
           safeDiceBoxRef.current?.setBox(null, false);
           setWebglReady(false);
         });
     } catch (err: unknown) {
       console.warn('3D DiceBox initialization failed; using authoritative CSPRNG mode.', err);
+      toast.info(NO_3D_DICE_MESSAGE);
       safeDiceBoxRef.current?.setBox(null, false);
       setWebglReady(false);
     }
@@ -552,11 +591,15 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         connectionStatus !== 'authenticated' &&
         connectionStatus !== 'reconnecting'
       ) {
+        toast.error(notConnectedMessage(connectionStatus));
         return;
       }
 
       const rawTargetPool = overrides?.pool ?? activeBasePool;
-      if (rawTargetPool <= 0) return;
+      if (rawTargetPool <= 0) {
+        toast.info('Nothing to roll: the dice pool is 0.');
+        return;
+      }
       const targetPool = Math.max(1, Math.min(30, Math.round(rawTargetPool)));
       const targetDiff = Math.max(
         2,
@@ -597,7 +640,11 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
           effectiveRage,
         }) ?? false;
 
-      if (accepted && targetWp) {
+      if (!accepted) {
+        toast.error(QUEUE_FULL_MESSAGE);
+        return;
+      }
+      if (targetWp) {
         setSpendWillpower(false);
         spendActiveSeatWillpower();
       }
@@ -658,6 +705,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         connectionStatus !== 'authenticated' &&
         connectionStatus !== 'reconnecting'
       ) {
+        toast.error(notConnectedMessage(connectionStatus));
         return;
       }
 
@@ -668,7 +716,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         ? `${activeSheet.name} (${activeSeat.playerName})`
         : activeSeat.playerName;
 
-      coordinatorRef.current?.enqueueLocalRoll({
+      const accepted = coordinatorRef.current?.enqueueLocalRoll({
         rollClientId: crypto.randomUUID(),
         pool: 1,
         rageDiceCount: 0,
@@ -685,6 +733,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         effectivePool: 1,
         effectiveRage: 0,
       });
+      if (!accepted) toast.error(QUEUE_FULL_MESSAGE);
     },
     [
       connectionStatus,
@@ -934,6 +983,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     const newSeatId = addSeat();
     if (newSeatId) {
       setActiveSeat(newSeatId);
+    } else {
+      toast.info('The table is full (8 seats). Remove a seat to add another.');
     }
     setRosterModalOpen(true);
   }, [addSeat, setActiveSeat, setRosterModalOpen]);
@@ -1204,7 +1255,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   return (
     <div className="relative flex h-dvh w-full overflow-hidden bg-obsidian-950 text-stone-100 select-none">
-      {/* Collapsible Pack & Table Presence Drawer (Docked Left Drawer on PC) */}
+      {/* Collapsible Pack Presence Drawer (Docked Left Drawer on PC) */}
       {!isMobile && (
         <PackPresenceDrawer
           open={packOpen}
@@ -1239,14 +1290,14 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
         {/* Idle Prompt */}
         {!activeBanner && !hasDiceOnTable && !rollStageStatus.isRolling && (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-4 pb-24 text-center opacity-55">
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-4 pb-24 text-center">
             <p className="font-display text-xs font-bold tracking-[0.28em] uppercase text-amber-200/80">
-              Garou Umbral Felt
+              Ready to roll
             </p>
-            <p className="mt-1.5 text-xs text-stone-400">
+            <p className="mt-1.5 text-sm text-stone-300">
               {activeSheet
-                ? `Pick an Attribute + Skill and Difficulty below to roll from ${activeSheet.name}'s sheet`
-                : 'Select a Garou sheet below to roll by Attribute + Skill, or dial a raw d10 pool'}
+                ? `Pick an Attribute and an Ability below to roll from ${activeSheet.name}'s sheet`
+                : 'Choose a character to roll from its traits, or set a number of dice below'}
             </p>
           </div>
         )}
@@ -1266,7 +1317,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         )}
       </div>
 
-      {/* Collapsible Chronicle of Rolls (Bottom Sheet on Mobile, Docked Right Drawer on PC) */}
+      {/* Collapsible Roll Log (Bottom Sheet on Mobile, Docked Right Drawer on PC) */}
       <RollFeedDrawer
         open={feedOpen}
         mobileSheet={isMobile}

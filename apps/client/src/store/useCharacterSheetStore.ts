@@ -1,3 +1,4 @@
+import { toast } from '../components/ui/Toast';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import {
@@ -223,6 +224,8 @@ function readLocalCache(userId: string): {
   }
 }
 
+let localStorageWarningShown = false;
+
 function writeLocalCache(
   userId: string | null,
   sheetsById: Record<string, W20UserCharacterSheet>,
@@ -240,7 +243,15 @@ function writeLocalCache(
     };
     window.localStorage.setItem(getCacheKey(userId), JSON.stringify(payload));
   } catch {
-    // Ignore storage quota/access errors
+    // Storage can be full or blocked inside the Discord frame. Say so once, because
+    // the "saved on this device" promise does not hold when this fails.
+    if (!localStorageWarningShown) {
+      localStorageWarningShown = true;
+      toast.error(
+        'This device could not store your characters locally. Unsaved changes may be lost if you close the activity.',
+        0
+      );
+    }
   }
 }
 
@@ -336,6 +347,8 @@ export interface CharacterSheetStoreState {
 
   updateActiveSeatTrackers: (patch: Partial<LightGarouTrackers>) => void;
   spendActiveSeatWillpower: () => void;
+  /** Gives back 1 temporary Willpower to a seat, for a roll the table rejected. */
+  refundSeatWillpower: (seatId: string) => void;
   setActiveSheetForm: (form: GarouForm) => void;
   pinShortcutToActiveSheet: (shortcut: SheetShortcut) => void;
   removeShortcutFromActiveSheet: (shortcutId: string) => void;
@@ -343,6 +356,10 @@ export interface CharacterSheetStoreState {
 
 const dirtySheetIds = new Set<string>();
 const putDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const DIRTY_RETRY_MIN_DELAY_MS = 15_000;
+const DIRTY_RETRY_MAX_DELAY_MS = 120_000;
+let dirtyRetryDelayMs = DIRTY_RETRY_MIN_DELAY_MS;
+let dirtyRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let sessionInitGeneration = 0;
 
 function clearAllDebounceTimers(): void {
@@ -365,7 +382,52 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
       );
     };
 
-    const flushPutForSheet = async (sheetId: string, sentUpdatedAt: number) => {
+    /** Tries again later after a save failed for a reason that may pass (offline, 5xx). */
+    const scheduleDirtyRetry = () => {
+      if (dirtyRetryTimer !== null || typeof window === 'undefined') return;
+      dirtyRetryTimer = setTimeout(() => {
+        dirtyRetryTimer = null;
+        retryDirtySheets();
+      }, dirtyRetryDelayMs);
+      // Back off so a long outage is not hammered every few seconds.
+      dirtyRetryDelayMs = Math.min(DIRTY_RETRY_MAX_DELAY_MS, dirtyRetryDelayMs * 2);
+    };
+
+    /** Re-sends every sheet with unsaved changes that is not already waiting to send. */
+    const retryDirtySheets = () => {
+      const state = get();
+      if (!state.sessionJwt) return;
+      for (const sheetId of Array.from(dirtySheetIds)) {
+        if (putDebounceTimers.has(sheetId)) continue;
+        const sheet = state.sheetsById[sheetId];
+        if (!sheet) {
+          dirtySheetIds.delete(sheetId);
+          continue;
+        }
+        void flushPutForSheet(sheetId, sheet.updatedAt);
+      }
+    };
+
+    /** Sends edits still inside the debounce window right now (the page is closing). */
+    const flushPendingSavesNow = () => {
+      for (const [sheetId, timer] of Array.from(putDebounceTimers.entries())) {
+        clearTimeout(timer);
+        const sheet = get().sheetsById[sheetId];
+        if (sheet) void flushPutForSheet(sheetId, sheet.updatedAt, true);
+        else putDebounceTimers.delete(sheetId);
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', flushPendingSavesNow);
+      window.addEventListener('online', retryDirtySheets);
+    }
+
+    const flushPutForSheet = async (
+      sheetId: string,
+      sentUpdatedAt: number,
+      keepalive = false
+    ) => {
       putDebounceTimers.delete(sheetId);
       const state = get();
       const latestSheet = state.sheetsById[sheetId];
@@ -399,6 +461,8 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
             Authorization: `Bearer ${state.sessionJwt}`,
           },
           body: JSON.stringify({ sheet: latestSheet }),
+          // Lets the request finish after the page starts unloading.
+          keepalive,
         });
 
         if (!res.ok) {
@@ -408,6 +472,7 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
             saveStatus: isPermanentFailure ? 'error' : 'local_only',
             errorMessage: msg,
           });
+          if (!isPermanentFailure) scheduleDirtyRetry();
           return;
         }
 
@@ -419,6 +484,7 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
         }
 
         dirtySheetIds.delete(sheetId);
+        dirtyRetryDelayMs = DIRTY_RETRY_MIN_DELAY_MS;
         if (data.sheet) {
           const valid = W20UserCharacterSheetSchema.safeParse(data.sheet);
           if (valid.success) {
@@ -443,9 +509,10 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
       } catch {
         set({
           saveStatus: 'local_only',
-          errorMessage: 'Offline: changes saved locally to this browser.',
+          errorMessage: 'Offline: your changes are saved on this device and will sync when you reconnect.',
         });
         persistSnapshot();
+        scheduleDirtyRetry();
       }
     };
 
@@ -662,17 +729,24 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
             errorMessage: null,
           });
           persistSnapshot();
+          // Changes that never reached the cloud last time are sent now.
+          retryDirtySheets();
         } catch {
           if (myGen !== sessionInitGeneration) return;
           set({
             loadingRoster: false,
             saveStatus: 'local_only',
           });
+          toast.error(
+            'Could not load your characters from the cloud. Showing the copies saved on this device.'
+          );
+          scheduleDirtyRetry();
         }
       },
 
       updateSessionJwt: (jwt) => {
         set({ sessionJwt: jwt });
+        retryDirtySheets();
       },
 
       setRosterModalOpen: (open) => {
@@ -1017,7 +1091,10 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
             set({ saveStatus: 'error', errorMessage: msg });
           }
         } catch {
-          // Local delete already applied cleanly
+          // The local delete already applied; the cloud copy could not be reached.
+          toast.error(
+            'Deleted on this device, but the cloud copy could not be removed. It may reappear next time you join.'
+          );
         }
       },
 
@@ -1398,6 +1475,38 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
         persistSnapshot();
       },
 
+      refundSeatWillpower: (seatId) => {
+        const state = get();
+        const seat = state.seats.find((s) => s.seatId === seatId);
+        if (!seat) return;
+
+        const sheet = seat.sheetId ? state.sheetsById[seat.sheetId] : undefined;
+        if (sheet) {
+          get().updateSheet(sheet.id, (prev) => ({
+            ...prev,
+            willpower: {
+              ...prev.willpower,
+              temporary: Math.min(10, prev.willpower.temporary + 1),
+            },
+          }));
+          return;
+        }
+
+        set((prev) => ({
+          seats: prev.seats.map((s) =>
+            s.seatId === seatId
+              ? {
+                  ...s,
+                  unboundTrackers: {
+                    ...s.unboundTrackers,
+                    willpower: Math.min(10, s.unboundTrackers.willpower + 1),
+                  },
+                }
+              : s
+          ),
+        }));
+      },
+
       spendActiveSeatWillpower: () => {
         const state = get();
         const activeSeat = state.seats.find((s) => s.seatId === state.activeSeatId);
@@ -1446,6 +1555,17 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
         const state = get();
         const activeSeat = state.seats.find((s) => s.seatId === state.activeSeatId);
         if (!activeSeat?.sheetId) return;
+
+        // Pinning the same roll twice would only add a duplicate shortcut.
+        const current = state.sheetsById[activeSeat.sheetId];
+        const sameRoll = (item: SheetShortcut) =>
+          item.id !== shortcut.id &&
+          JSON.stringify({ ...item, id: '' }) === JSON.stringify({ ...shortcut, id: '' });
+        if (current?.shortcuts.some(sameRoll)) {
+          toast.info(`"${shortcut.name}" is already pinned.`);
+          return;
+        }
+
         get().updateSheet(activeSeat.sheetId, (prev) => {
           const exists = prev.shortcuts.some((item) => item.id === shortcut.id);
           const nextShortcuts = exists

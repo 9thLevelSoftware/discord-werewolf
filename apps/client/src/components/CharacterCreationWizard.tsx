@@ -1983,14 +1983,14 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                     <>
                       <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                       <span className="text-emerald-300">
-                        Sheet passes canonical W20 Rank 1 Cliath validation!
+                        Everything checks out. Ready to create.
                       </span>
                     </>
                   ) : (
                     <>
                       <AlertCircle className="h-4 w-4 text-red-400" />
                       <span className="text-red-300">
-                        Resolve {summary.errors.length} validation issue(s) before creating:
+                        Fix {summary.errors.length} issue(s) before creating:
                       </span>
                     </>
                   )}
@@ -2014,7 +2014,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
                 {submitError && (
                   <div className="mt-2 rounded border border-red-700 bg-red-950/70 p-2 text-xs text-red-200">
-                    Server validation error: {submitError}
+                    Could not create the character: {submitError}
                   </div>
                 )}
               </div>

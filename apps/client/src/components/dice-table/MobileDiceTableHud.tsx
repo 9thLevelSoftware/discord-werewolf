@@ -30,6 +30,7 @@ import {
   BonusDiceStepper,
   ConnectionDot,
   DicePreviewStrip,
+  getRollBlockReason,
   getRollCtaText,
   getRollGate,
   RageDiceStepper,
@@ -216,8 +217,8 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
   const centerPillLabel = activeSheet
     ? `${activeSheet.name} • ${formatFormName(activeSheet.activeForm)}`
     : seats.length >= 2
-      ? `${activeSeat.playerName || 'Unbound'} • Seats`
-      : 'Unbound • Select Garou';
+      ? `${activeSeat.playerName || 'Seat'} • Seats`
+      : 'Choose a character';
 
   const layoutTitle =
     layoutMode === 'auto'
@@ -227,6 +228,10 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
         : 'Layout: PC. Tap to switch to Auto';
 
   const rollCtaText = getRollCtaText({
+    blockReason: getRollBlockReason({
+      connectionStatus,
+      localPendingCount: rollStageStatus.localPendingCount,
+    }),
     isSheetTraitsMode,
     hasTraitSelection,
     pool,
@@ -301,8 +306,8 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             <button
               type="button"
               onClick={handleFeedClick}
-              aria-label={`Chronicle of Rolls (${rollHistoryCount})`}
-              title="Chronicle of Rolls"
+              aria-label={`Roll Log (${rollHistoryCount})`}
+              title="Roll Log"
               className={`w20-obsidian-panel relative flex h-8 w-8 items-center justify-center rounded-full transition active:scale-95 ${
                 feedOpen ? '!border-amber-400/75 text-amber-200' : 'text-stone-200'
               }`}
@@ -331,13 +336,6 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
           </div>
         </div>
       </header>
-
-      {/* Server Error Toast */}
-      {lastError && (
-        <div className="w20-obsidian-panel absolute top-14 inset-x-3 z-hud mt-[env(safe-area-inset-top,0px)] !border-red-600/80 rounded-xl px-3 py-1.5 text-xs text-red-200">
-          {lastError.message}
-        </div>
-      )}
 
       {/* Active 3D Throw & Queue Indicator */}
       {!activeBanner && rollStageStatus.isRolling && (
@@ -426,13 +424,13 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                 }`}
               >
                 <Sparkles className="h-3 w-3 text-amber-300" />
-                <span>Skills</span>
+                <span>Traits</span>
               </button>
               <button
                 type="button"
                 onClick={() => onSetRollSourceMode('manual')}
-                aria-label="Numbers mode"
-                title="Roll raw d10 pool by number"
+                aria-label="Manual pool"
+                title="Enter the number of dice yourself"
                 className={`flex h-full items-center gap-0.5 rounded-lg px-2 text-xs font-bold transition ${
                   !isSheetTraitsMode
                     ? 'bg-gradient-to-b from-red-800/80 to-red-950 text-amber-100 ring-1 ring-amber-400/55'
@@ -664,8 +662,8 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
       {/* Mobile Bottom Sheet 1: Presence & Hot-Seat Switcher */}
       {activeMobileSheet === 'presence' && (
         <MobileBottomSheet
-          title="Table Presence & Seats"
-          subtitle={`${onlineCount} connected • Hot-seat switcher`}
+          title="Pack & Seats"
+          subtitle={`${onlineCount} connected • tap a seat to switch`}
           onClose={() => setActiveMobileSheet(null)}
         >
           <div className="space-y-4">
@@ -673,7 +671,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200">
-                  Your Table Seats ({seats.length})
+                  Your Seats ({seats.length})
                 </span>
                 <div className="flex items-center gap-1.5">
                   <button
@@ -726,12 +724,12 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                         </span>
                         <div className="min-w-0">
                           <p className="truncate text-xs font-bold text-amber-50">
-                            {seatSheet ? seatSheet.name : seat.playerName || 'Unbound Seat'}
+                            {seatSheet ? seatSheet.name : seat.playerName || 'Unassigned seat'}
                           </p>
                           <p className="truncate text-xs text-stone-400">
                             {seatSheet
                               ? `${formatFormName(seatSheet.activeForm)} • ${seat.playerName}`
-                              : 'Unbound dice pool'}
+                              : 'No character yet'}
                           </p>
                         </div>
                       </button>
@@ -759,7 +757,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             {/* Connected Voice Table Participants */}
             <div className="space-y-2">
               <span className="font-display block text-xs font-bold tracking-wider uppercase text-stone-300">
-                Voice Channel Pack ({sortedParticipants.length})
+                In this voice channel ({sortedParticipants.length})
               </span>
               <div className="space-y-1.5">
                 {sortedParticipants.map((p) => {
@@ -912,7 +910,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
       {/* Mobile Bottom Sheet 4: Modifiers (Traits Mode or Raw Pool Mode) */}
       {activeMobileSheet === 'tune' && (
         <MobileBottomSheet
-          title={isSheetTraitsMode ? 'Roll Modifiers' : 'Tune Dice Pool'}
+          title={isSheetTraitsMode ? 'Roll Modifiers' : 'Dice Pool'}
           subtitle={
             isSheetTraitsMode
               ? 'Bonus dice, Rage dice, Specialty, Willpower & Secret modifiers'
@@ -969,7 +967,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                     className="flex min-h-[42px] w-full items-center justify-center gap-1.5 rounded-xl border border-amber-500/55 bg-amber-950/40 text-xs font-bold text-amber-200"
                   >
                     <Sparkles className="h-3.5 w-3.5" />
-                    Return to Sheet Attribute + Skill Mode
+                    Use sheet traits
                   </button>
                 )}
 
@@ -1158,7 +1156,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
                   onClick={() => onSetRollSourceMode('manual')}
                   className="text-xs font-semibold text-stone-400 underline decoration-stone-600 underline-offset-2"
                 >
-                  Switch to Raw Pool Override
+                  Enter pool manually
                 </button>
               </div>
             )}

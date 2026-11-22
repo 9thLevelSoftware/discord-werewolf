@@ -23,6 +23,7 @@ import {
   BonusDiceStepper,
   ConnectionDot,
   DicePreviewStrip,
+  getRollBlockReason,
   getRollCtaText,
   getRollGate,
   RageDiceStepper,
@@ -254,6 +255,10 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   };
 
   const primaryRollCtaText = getRollCtaText({
+    blockReason: getRollBlockReason({
+      connectionStatus,
+      localPendingCount: rollStageStatus.localPendingCount,
+    }),
     isSheetTraitsMode,
     hasTraitSelection,
     pool,
@@ -280,8 +285,11 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             </span>
             <ConnectionDot status={connectionStatus} />
             {!webglReady && (
-              <span className="rounded bg-zinc-800/90 px-1.5 py-0.5 text-xs text-stone-400">
-                2D RNG
+              <span
+                title="3D dice are loading or not available on this device. Rolls still work."
+                className="rounded bg-zinc-800/90 px-1.5 py-0.5 text-xs text-stone-300"
+              >
+                No 3D dice
               </span>
             )}
           </div>
@@ -290,7 +298,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             type="button"
             onClick={onTogglePack}
             aria-expanded={packOpen}
-            title="Toggle Pack & Table Players drawer"
+            title="Show or hide the Pack: everyone in this voice channel"
             className={`w20-obsidian-panel flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition hover:border-amber-400/55 ${
               packOpen
                 ? '!border-amber-500/50 text-amber-200'
@@ -317,7 +325,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                   {seats.map((seat, idx) => {
                     const seatSheet = seat.sheetId ? sheetsById[seat.sheetId] : undefined;
                     const isActive = seat.seatId === activeSeat.seatId;
-                    const seatLabel = seatSheet ? seatSheet.name : seat.playerName || 'Unbound';
+                    const seatLabel = seatSheet ? seatSheet.name : seat.playerName || 'Seat';
                     return (
                       <button
                         key={seat.seatId}
@@ -357,19 +365,19 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                   title={
                     activeSheet
                       ? `Open ${activeSheet.name}'s interactive W20 sheet`
-                      : 'Select or create a Garou sheet'
+                      : 'Choose or create a character'
                   }
                 >
                   <Flame className="h-3 w-3 text-red-400" />
                   <span className="max-w-[110px] truncate">
-                    {activeSheet ? activeSheet.name : 'Select Garou'}
+                    {activeSheet ? activeSheet.name : 'Choose character'}
                   </span>
                 </button>
                 <button
                   type="button"
                   onClick={onAddSeatAndOpenRoster}
                   className="flex items-center gap-1 rounded-full border border-amber-500/45 bg-amber-950/35 px-2 py-0.5 text-xs font-bold text-amber-200 transition hover:border-amber-400 hover:bg-amber-950/60"
-                  title="Add another hot-seat Garou to this table"
+                  title="Add another player on this screen"
                 >
                   <Plus className="h-3 w-3" />
                   Seat
@@ -454,21 +462,10 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             }`}
           >
             <ScrollText className="h-3.5 w-3.5 text-amber-300" />
-            <span>Feed ({rollHistoryCount})</span>
+            <span>Roll Log ({rollHistoryCount})</span>
           </button>
         </div>
       </header>
-
-      {/* Server Error Toast */}
-      {lastError && (
-        <div
-          role="alert"
-          style={{ top: belowHeaderTop }}
-          className="w20-obsidian-panel absolute left-4 z-hud !border-red-600/80 rounded-xl px-3 py-1.5 text-xs text-red-200"
-        >
-          {lastError.message}
-        </div>
-      )}
 
       {/* Active 3D Throw & Queue Indicator */}
       {!activeBanner && rollStageStatus.isRolling && (
@@ -631,7 +628,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                   onClick={() => onSetRollSourceMode(isSheetTraitsMode ? 'manual' : 'traits')}
                   className="text-xs font-semibold text-stone-400 underline decoration-stone-600 underline-offset-2 hover:text-amber-200"
                 >
-                  {isSheetTraitsMode ? 'Raw Pool Override' : 'Use Sheet Traits'}
+                  {isSheetTraitsMode ? 'Enter pool manually' : 'Use sheet traits'}
                 </button>
               )}
             </div>
@@ -670,7 +667,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
           {/* 1-Click Segmented Toggle: Skills vs Numbers */}
           <div
             role="group"
-            aria-label="Dice Roll Mode: Skills or Numbers"
+            aria-label="Roll mode: from sheet traits, or a manual pool"
             className="flex h-9 shrink-0 items-center rounded-xl border border-stone-700/80 bg-zinc-950/90 p-0.5"
           >
             <button
@@ -685,8 +682,8 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               }}
               title={
                 activeSheet
-                  ? 'Roll using Character Sheet Attribute + Skill traits'
-                  : 'Select a Garou sheet to roll by Attribute + Skill'
+                  ? 'Roll from your character sheet: Attribute + Ability'
+                  : 'Choose a character to roll from its traits'
               }
               className={`flex h-full items-center gap-1 rounded-lg px-2.5 text-xs font-bold transition ${
                 isSheetTraitsMode
@@ -695,12 +692,12 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               }`}
             >
               <Sparkles className="h-3 w-3 text-amber-300" />
-              <span>Skills</span>
+              <span>Traits</span>
             </button>
             <button
               type="button"
               onClick={() => onSetRollSourceMode('manual')}
-              title="Roll raw d10 pool by direct number count"
+              title="Enter the number of dice yourself"
               className={`flex h-full items-center gap-1 rounded-lg px-2.5 text-xs font-bold transition ${
                 !isSheetTraitsMode
                   ? 'bg-gradient-to-b from-red-800/75 to-red-950/90 text-amber-100 ring-1 ring-amber-400/55'
@@ -708,7 +705,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               }`}
             >
               <Hash className="h-3 w-3 text-amber-300" />
-              <span>Numbers</span>
+              <span>Manual</span>
             </button>
           </div>
 
@@ -732,7 +729,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                   className="flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/60 bg-gradient-to-b from-red-950/80 to-zinc-950 px-2.5 text-xs font-bold text-amber-100 shadow-[0_0_12px_rgba(185,28,28,0.28)] transition hover:border-amber-400"
                 >
                   <Flame className="h-3.5 w-3.5 text-red-400" />
-                  <span className="hidden xl:inline">Select Garou</span>
+                  <span className="hidden xl:inline">Choose character</span>
                 </button>
               )}
               <CompactRawPoolStepper

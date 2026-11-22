@@ -29,6 +29,27 @@ interface TokenExchangeResponse {
 
 let urlMappingsPatched = false;
 
+const BOOT_STEP_TIMEOUT_MS = 15_000;
+
+/** Rejects if a handshake step never settles, so the loading screen cannot hang forever. */
+function withTimeout<T>(step: string, work: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Discord did not respond in time (${step}).`));
+    }, BOOT_STEP_TIMEOUT_MS);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 function isDiscordProxyHost(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname.toLowerCase();
@@ -79,21 +100,27 @@ export async function bootstrapDiscordActivity(
   }
 
   const sdk = new DiscordSDK(clientId);
-  await sdk.ready();
+  await withTimeout('starting the activity', sdk.ready());
 
-  const { code } = await sdk.commands.authorize({
-    client_id: clientId,
-    response_type: 'code',
-    state: '',
-    prompt: 'none',
-    scope: ['identify', 'guilds', 'rpc.voice.read'],
-  });
+  const { code } = await withTimeout(
+    'authorizing',
+    sdk.commands.authorize({
+      client_id: clientId,
+      response_type: 'code',
+      state: '',
+      prompt: 'none',
+      scope: ['identify', 'guilds', 'rpc.voice.read'],
+    })
+  );
 
-  const tokenRes = await fetch('/api/discord-token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-  });
+  const tokenRes = await withTimeout(
+    'signing in',
+    fetch('/api/discord-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    })
+  );
 
   if (!tokenRes.ok) {
     const errBody = await tokenRes.text().catch(() => '');
@@ -107,9 +134,12 @@ export async function bootstrapDiscordActivity(
     throw new Error('Worker returned an incomplete Discord/Supabase session payload.');
   }
 
-  const auth = await sdk.commands.authenticate({
-    access_token: tokenData.discordAccessToken,
-  });
+  const auth = await withTimeout(
+    'confirming your account',
+    sdk.commands.authenticate({
+      access_token: tokenData.discordAccessToken,
+    })
+  );
 
   if (!auth?.user) {
     throw new Error('Discord Activity authentication failed.');

@@ -52,11 +52,11 @@ export const PackPresenceDrawer: React.FC<PackPresenceDrawerProps> = ({
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-amber-300" />
           <h2 className="font-display text-xs font-bold tracking-wider uppercase text-amber-100">
-            Pack &amp; Table ({onlineCount}/{sortedParticipants.length})
+            Pack ({onlineCount}/{sortedParticipants.length})
           </h2>
         </div>
         <IconButton
-          label="Collapse Pack & Table"
+          label="Collapse Pack"
           icon={<ChevronLeft className="h-4 w-4" />}
           size="sm"
           onClick={onClose}
@@ -70,7 +70,7 @@ export const PackPresenceDrawer: React.FC<PackPresenceDrawerProps> = ({
         <section className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="font-display text-xs font-bold tracking-wider uppercase text-stone-300">
-              Voice Channel Pack ({sortedParticipants.length})
+              In this voice channel ({sortedParticipants.length})
             </span>
           </div>
 
@@ -188,7 +188,7 @@ export const PackPresenceDrawer: React.FC<PackPresenceDrawerProps> = ({
         <section className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <span className="font-display text-xs font-bold tracking-wider uppercase text-amber-200/90">
-              Your Table Seats ({seats.length})
+              Your Seats ({seats.length})
             </span>
             <div className="flex items-center gap-1">
               <Button size="sm" onClick={onOpenRoster}>
@@ -225,12 +225,12 @@ export const PackPresenceDrawer: React.FC<PackPresenceDrawerProps> = ({
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-xs font-bold text-amber-50">
-                        {seatSheet ? seatSheet.name : seat.playerName || 'Unbound Seat'}
+                        {seatSheet ? seatSheet.name : seat.playerName || 'Unassigned seat'}
                       </p>
                       <p className="truncate text-xs text-stone-400">
                         {seatSheet
                           ? `${formatFormName(seatSheet.activeForm)} • ${seat.playerName}`
-                          : 'Unbound dice pool'}
+                          : 'No character yet'}
                       </p>
                     </div>
                   </button>

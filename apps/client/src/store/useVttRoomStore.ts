@@ -32,7 +32,9 @@ export type ConnectionStatus =
   | 'disconnected'
   | 'connecting'
   | 'authenticated'
-  | 'reconnecting';
+  | 'reconnecting'
+  /** The server refused our session. Reconnecting stops until a new session is supplied. */
+  | 'session_expired';
 
 export interface Queued3DRoll {
   id: string;
@@ -111,6 +113,8 @@ interface VttRoomStoreState {
   // Store Actions
   connectRoom: (params: ConnectRoomParams) => void;
   updateSessionJwt: (jwt: string) => void;
+  /** Dismisses the last server rejection once it has been shown to the player. */
+  clearLastError: () => void;
   disconnectRoom: () => void;
   sendCommand: (command: ClientCommand) => string;
 
@@ -166,6 +170,8 @@ let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectAttempt = 0;
+/** Set when the server answers UNAUTHORIZED; blocks the automatic reconnect loop. */
+let sessionRejected = false;
 let connectionGeneration = 0;
 let latestConnectParams: ConnectRoomParams | null = null;
 const seenRollHistoryIds = new Set<string>();
@@ -280,6 +286,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
     connectRoom: (params) => {
       connectionGeneration += 1;
       const myGen = connectionGeneration;
+      sessionRejected = false;
 
       const isSameRoom =
         latestConnectParams !== null &&
@@ -410,6 +417,17 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
           }
 
           case 'COMMAND_REJECTED': {
+            if (event.code === 'UNAUTHORIZED') {
+              // An expired or invalid session cannot be fixed by reconnecting with the
+              // same token, so stop here and let the app obtain a new session.
+              sessionRejected = true;
+              set({
+                connectionStatus: 'session_expired',
+                lastSeq: event.currentSeq,
+                serverClockOffsetMs: offsetMs,
+              });
+              break;
+            }
             set({
               lastSeq: event.currentSeq,
               serverClockOffsetMs: offsetMs,
@@ -664,6 +682,10 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
           heartbeatTimer = null;
         }
         socket = null;
+        if (sessionRejected) {
+          set({ connectionStatus: 'session_expired' });
+          return;
+        }
         set({ connectionStatus: 'reconnecting' });
 
         const backoffMs = Math.min(10_000, 500 * Math.pow(2, reconnectAttempt));
@@ -686,7 +708,14 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
         latestConnectParams = { ...latestConnectParams, sessionJwt: jwt };
       }
       set({ sessionJwt: jwt });
+      // A fresh session lifts an expiry stop.
+      if (get().connectionStatus === 'session_expired' && latestConnectParams) {
+        reconnectAttempt = 0;
+        get().connectRoom({ ...latestConnectParams, sessionJwt: jwt });
+      }
     },
+
+    clearLastError: () => set({ lastError: null }),
 
     disconnectRoom: () => {
       connectionGeneration += 1;

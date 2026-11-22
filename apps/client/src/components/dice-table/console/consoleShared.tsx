@@ -37,7 +37,32 @@ export function getRollGate(input: {
   };
 }
 
+/**
+ * Why rolling is blocked right now, in a few words, or null when it is not.
+ * Shown on the Roll button so a disabled button always explains itself.
+ */
+export function getRollBlockReason(input: {
+  connectionStatus: ConnectionStatus;
+  localPendingCount: number;
+}): string | null {
+  switch (input.connectionStatus) {
+    case 'session_expired':
+      return 'Session expired';
+    case 'connecting':
+      return 'Connecting…';
+    case 'disconnected':
+      return 'Offline';
+    default:
+  }
+  if (input.localPendingCount >= MAX_LOCAL_QUEUED_ROLLS) {
+    return `Queue full (${MAX_LOCAL_QUEUED_ROLLS})`;
+  }
+  return null;
+}
+
 export function getRollCtaText(input: {
+  /** From getRollBlockReason. When set, it replaces the normal button text. */
+  blockReason?: string | null;
   isSheetTraitsMode: boolean;
   hasTraitSelection: boolean;
   pool: number;
@@ -45,10 +70,11 @@ export function getRollCtaText(input: {
   difficulty: number;
   clampedPreviewRage: number;
 }): string {
-  if (input.isSheetTraitsMode && !input.hasTraitSelection) return 'Select Trait';
+  if (input.blockReason) return input.blockReason;
+  if (input.isSheetTraitsMode && !input.hasTraitSelection) return 'Pick a trait';
   if (input.isSheetTraitsMode && input.pool <= 0) return '0 Dice';
-  const diff = input.difficulty !== 6 ? ` • D${input.difficulty}` : '';
-  const rage = input.clampedPreviewRage > 0 ? ` (${input.clampedPreviewRage}R)` : '';
+  const diff = input.difficulty !== 6 ? ` • Diff ${input.difficulty}` : '';
+  const rage = input.clampedPreviewRage > 0 ? ` • ${input.clampedPreviewRage} Rage` : '';
   return `Roll ${input.effectivePreviewPool}d10${diff}${rage}`;
 }
 
@@ -82,31 +108,50 @@ const CONNECTION_LABELS: Record<string, string> = {
   connecting: 'Connecting',
   reconnecting: 'Reconnecting',
   disconnected: 'Offline',
+  session_expired: 'Session expired',
 };
 
 export function connectionLabel(status: ConnectionStatus): string {
   return CONNECTION_LABELS[status] ?? 'Offline';
 }
 
+/**
+ * Connection indicator. While connected it is a quiet green dot; in any other state
+ * it also spells the state out, so colour is never the only signal.
+ */
 export const ConnectionDot: React.FC<{ status: ConnectionStatus; pinging?: boolean }> = ({
   status,
   pinging = false,
 }) => {
-  const label = `Connection: ${connectionLabel(status)}`;
+  const text = connectionLabel(status);
+  const connected = status === 'authenticated';
+  const failed = status === 'session_expired' || status === 'disconnected';
   return (
     <span
-      role="img"
-      aria-label={label}
-      title={label}
-      className={cx(
-        'h-2 w-2 shrink-0 rounded-full',
-        status === 'authenticated'
-          ? pinging
-            ? 'animate-ping bg-success'
-            : 'bg-success shadow-glow-emerald'
-          : 'animate-pulse bg-warning'
+      role="status"
+      aria-label={`Connection: ${text}`}
+      title={`Connection: ${text}`}
+      className="inline-flex shrink-0 items-center gap-1.5"
+    >
+      <span
+        aria-hidden="true"
+        className={cx(
+          'h-2 w-2 shrink-0 rounded-full',
+          connected
+            ? pinging
+              ? 'animate-ping bg-success'
+              : 'bg-success shadow-glow-emerald'
+            : failed
+              ? 'bg-danger'
+              : 'animate-pulse bg-warning'
+        )}
+      />
+      {!connected && (
+        <span className={cx('text-xs font-semibold', failed ? 'text-danger' : 'text-warning')}>
+          {text}
+        </span>
       )}
-    />
+    </span>
   );
 };
 
@@ -237,11 +282,17 @@ export const RollModifierToggles: React.FC<RollModifierTogglesProps> = ({
         tone="amber"
         touch={touch}
         onClick={onToggleSecretRoll}
-        title="Secret roll"
+        title="Secret roll: only you see the result"
       >
         <EyeOff className={iconClass} />
         Secret
       </ToggleChip>
+
+      {isSecretRoll && (
+        <p className={cx('text-xs text-amber-200', touch ? 'col-span-2' : 'basis-full')}>
+          Secret is on: only you will see this roll and its result.
+        </p>
+      )}
     </div>
   );
 };

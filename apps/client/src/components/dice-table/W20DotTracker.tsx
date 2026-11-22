@@ -230,7 +230,7 @@ export const PersonalTrackersControl: React.FC<PersonalTrackersControlProps> = (
             {trackers.woundPenalty}
           </span>
         ) : (
-          <span className="hidden font-mono text-xs text-stone-400 xl:inline">0 Wnd</span>
+          <span className="hidden font-mono text-xs text-stone-400 xl:inline">No wounds</span>
         )}
         <ChevronDown
           className={`h-3.5 w-3.5 text-amber-300/75 transition-transform ${open ? 'rotate-180' : ''}`}
