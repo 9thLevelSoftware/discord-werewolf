@@ -177,6 +177,11 @@ interface CharacterCreationWizardProps {
   defaultPlayerName?: string;
 }
 
+/** "1 freebie per dot" / "2 freebies per dot". */
+function freebieCostLabel(cost: number): string {
+  return `${cost} ${cost === 1 ? 'freebie' : 'freebies'} per dot`;
+}
+
 const INITIAL_DRAFT_JSON = JSON.stringify(INITIAL_DRAFT);
 
 export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = ({
@@ -1301,7 +1306,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                     </div>
                   </div>
 
-                  <div className="mt-2.5 grid max-h-[380px] grid-cols-1 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
+                  <div className="mt-2.5 grid max-h-[26rem] grid-cols-1 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
                     {displayedBackgrounds.map((bg) => {
                       const prio = draft.priorityBackgroundDots[bg.key] ?? 0;
                       const free = draft.freebieBackgroundDots[bg.key] ?? 0;
@@ -1322,7 +1327,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         <div
                           key={bg.key}
                           title={bg.summary}
-                          className={`flex items-center justify-between gap-1.5 rounded border px-2 py-1.5 ${
+                          className={`flex flex-col gap-1.5 rounded border px-2 py-1.5 ${
                             isForbidden
                               ? 'border-red-900/50 bg-red-950/20'
                               : isRequiredMin3 || isDiscouraged
@@ -1333,13 +1338,16 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           }`}
                         >
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1">
-                              <span className="truncate font-semibold text-stone-200">
+                            <div className="flex items-start gap-1.5">
+                              <span className="min-w-0 break-words text-sm font-semibold leading-snug text-stone-100">
                                 {bg.label}
                               </span>
                               {bg.tier === 'expanded' && (
-                                <span className="shrink-0 rounded bg-zinc-800 px-1 py-0.2 text-xs font-bold uppercase text-stone-400">
-                                  Exp
+                                <span
+                                  title="From the expanded background list"
+                                  className="mt-0.5 shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-xs font-semibold leading-none text-stone-300"
+                                >
+                                  Expanded
                                 </span>
                               )}
                               {bg.tier === 'custom' && (
@@ -1347,7 +1355,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   type="button"
                                   onClick={() => handleRemoveCustomBackground(bg.key)}
                                   aria-label={`Remove custom background ${bg.label}`}
-                                  className="shrink-0 text-stone-400 hover:text-red-300"
+                                  className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-stone-400 hover:text-red-300"
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </button>
@@ -1364,8 +1372,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                             )}
                           </div>
 
-                          <div className="flex shrink-0 items-center gap-2 text-xs">
-                            <div className="flex items-center gap-0.5" title="Base Priority Dots">
+                          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+                            <div className="flex items-center gap-1" title="Base priority dots">
+                              <span className="text-stone-400">Base</span>
                               <button
                                 type="button"
                                 onClick={() => adjustBackground(bg.key, 'priority', -1)}
@@ -1374,7 +1383,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               >
                                 -
                               </button>
-                              <span className="w-3 text-center font-mono">{prio}</span>
+                              <span className="w-4 text-center font-mono font-bold text-stone-100">{prio}</span>
                               <button
                                 type="button"
                                 disabled={isForbidden || total >= 5}
@@ -1386,7 +1395,8 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               </button>
                             </div>
 
-                            <div className="flex items-center gap-0.5 text-amber-300" title="Freebie Dots">
+                            <div className="flex items-center gap-1 text-amber-300" title="Freebie dots">
+                              <span>Free</span>
                               <button
                                 type="button"
                                 onClick={() => adjustBackground(bg.key, 'freebie', -1)}
@@ -1395,7 +1405,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               >
                                 -
                               </button>
-                              <span className="w-3 text-center font-mono">{free}</span>
+                              <span className="w-4 text-center font-mono font-bold">{free}</span>
                               <button
                                 type="button"
                                 disabled={isForbidden || total >= 5}
@@ -1421,8 +1431,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                     </p>
                     <div className={isMobile ? 'mt-2 grid grid-cols-1 gap-2' : 'mt-2 grid grid-cols-3 gap-2'}>
                       <div className="rounded border border-stone-800 bg-zinc-950 p-2">
-                        <div className="text-xs font-bold uppercase text-red-400">
-                          Rage ({W20_FREEBIE_COSTS.rage}pt/dot)
+                        <div className="text-xs font-bold uppercase text-red-400">Rage</div>
+                        <div className="text-xs text-stone-400">
+                          {freebieCostLabel(W20_FREEBIE_COSTS.rage)}
                         </div>
                         <div className="mt-1 flex items-center justify-between">
                           <span className="font-mono text-sm font-black">
@@ -1463,8 +1474,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                       </div>
 
                       <div className="rounded border border-stone-800 bg-zinc-950 p-2">
-                        <div className="text-xs font-bold uppercase text-cyan-400">
-                          Gnosis ({W20_FREEBIE_COSTS.gnosis}pt/dot)
+                        <div className="text-xs font-bold uppercase text-cyan-400">Gnosis</div>
+                        <div className="text-xs text-stone-400">
+                          {freebieCostLabel(W20_FREEBIE_COSTS.gnosis)}
                         </div>
                         <div className="mt-1 flex items-center justify-between">
                           <span className="font-mono text-sm font-black">
@@ -1505,8 +1517,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                       </div>
 
                       <div className="rounded border border-stone-800 bg-zinc-950 p-2">
-                        <div className="text-xs font-bold uppercase text-indigo-400">
-                          Willpower ({W20_FREEBIE_COSTS.willpower}pt/dot)
+                        <div className="text-xs font-bold uppercase text-indigo-400">Willpower</div>
+                        <div className="text-xs text-stone-400">
+                          {freebieCostLabel(W20_FREEBIE_COSTS.willpower)}
                         </div>
                         <div className="mt-1 flex items-center justify-between">
                           <span className="font-mono text-sm font-black">
@@ -1584,7 +1597,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           Cost: {ledger.spentBreakdown.merits}pt
                         </span>
                       </div>
-                      <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                      <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto pr-1">
                         {meritPresets.map((mf) => {
                           const active = draft.meritsAndFlaws.some((m) => m.id === mf.id);
                           return (
@@ -1617,7 +1630,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           Bonus: +{ledger.creditedFlawBonus}/{W20_FREEBIE_COSTS.maxFlawBonus}pt
                         </span>
                       </div>
-                      <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                      <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto pr-1">
                         {flawPresets.map((mf) => {
                           const active = draft.meritsAndFlaws.some((m) => m.id === mf.id);
                           return (
