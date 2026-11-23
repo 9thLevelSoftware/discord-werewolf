@@ -11,11 +11,15 @@ import {
   CanonicalAbilityKey,
   CustomAbilityEntry,
   DamageType,
+  filterGiftCatalog,
+  formatCatalogSource,
+  giftSheetSummary,
   lookupSheetAbilityDots,
   SheetGiftEntry,
   SheetShortcut,
   UserSheetComputedStats,
   W20_BACKGROUND_CATALOG,
+  W20_TOTEM_CATALOG,
   W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import {
@@ -162,6 +166,8 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
 
   // Gift picker & custom gift form
   const [giftSearch, setGiftSearch] = useState('');
+  const [giftLevelFilter, setGiftLevelFilter] = useState<number | 'all'>('all');
+  const [giftScope, setGiftScope] = useState<'mine' | 'all'>('mine');
   const [showGiftPicker, setShowGiftPicker] = useState(false);
   const [showCustomGiftForm, setShowCustomGiftForm] = useState(false);
   const [customGiftName, setCustomGiftName] = useState('');
@@ -188,15 +194,15 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
   };
 
   const filteredCatalogGifts = useMemo(() => {
-    const q = giftSearch.trim().toLowerCase();
-    if (!q) return CANONICAL_GIFT_CATALOG;
-    return CANONICAL_GIFT_CATALOG.filter(
-      (g) =>
-        g.name.toLowerCase().includes(q) ||
-        g.summary.toLowerCase().includes(q) ||
-        g.sources.some((src) => src.toLowerCase().includes(q))
-    );
-  }, [giftSearch]);
+    const matches = filterGiftCatalog({
+      query: giftSearch,
+      ...(giftLevelFilter !== 'all' ? { level: giftLevelFilter } : {}),
+    });
+    if (giftScope === 'all') return matches;
+    const mine = new Set<string>([sheet.breed, sheet.auspice, sheet.tribe]);
+    return matches.filter((g) => g.sources.some((src) => mine.has(src)));
+  }, [giftSearch, giftLevelFilter, giftScope, sheet.breed, sheet.auspice, sheet.tribe]);
+  const GIFT_PICKER_PAGE = 60;
 
   const showIdentity = !mobileSection || mobileSection === 'identity';
   const showAttributes = !mobileSection || mobileSection === 'attributes';
@@ -280,7 +286,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
       rageCost: entry.rageCost,
       gnosisCost: entry.gnosisCost,
       willpowerCost: entry.willpowerCost,
-      summary: entry.summary,
+      summary: giftSheetSummary(entry),
     };
     onUpdateSheet((prev) => ({
       ...prev,
@@ -613,10 +619,20 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
               </label>
               <label className="block">
                 <span className="text-caption font-bold uppercase text-stone-400">Pack Totem</span>
+                <datalist id="w20-pack-totems">
+                  {W20_TOTEM_CATALOG.map((totem) => (
+                    <option
+                      key={totem.id}
+                      value={totem.name}
+                      label={`${formatTraitName(totem.category)} totem, cost ${totem.backgroundCost}`}
+                    />
+                  ))}
+                </datalist>
                 <input
                   type="text"
                   maxLength={120}
                   value={sheet.packTotem}
+                  list="w20-pack-totems"
                   onChange={(e) => onUpdateSheet((p) => ({ ...p, packTotem: e.target.value }))}
                   className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100"
                 />
@@ -1316,12 +1332,70 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                       type="text"
                       value={giftSearch}
                       onChange={(e) => setGiftSearch(e.target.value)}
-                      placeholder="Search W20 Level 1 Gifts by name, tribe, auspice..."
+                      aria-label="Search W20 Gifts"
+                      placeholder="Search W20 Gifts by name, effect, tribe, auspice..."
                       className="min-w-0 flex-1 bg-transparent text-xs text-stone-100 placeholder-stone-500"
                     />
                   </div>
-                  <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
-                    {filteredCatalogGifts.map((entry) => {
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <select
+                      value={String(giftLevelFilter)}
+                      onChange={(e) =>
+                        setGiftLevelFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                      }
+                      aria-label="Gift level"
+                      className="min-h-[32px] rounded-lg border border-stone-700 bg-zinc-950 px-2 py-1 text-xs text-stone-100"
+                    >
+                      <option value="all">All levels</option>
+                      {[1, 2, 3, 4, 5, 6].map((lv) => (
+                        <option key={lv} value={lv}>
+                          Level {lv}
+                        </option>
+                      ))}
+                    </select>
+                    <div
+                      className="flex overflow-hidden rounded-lg border border-stone-700"
+                      role="group"
+                      aria-label="Gift lists"
+                    >
+                      {(
+                        [
+                          { key: 'mine', label: 'My breed, auspice, tribe' },
+                          { key: 'all', label: 'All Gifts' },
+                        ] as const
+                      ).map((opt) => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          aria-pressed={giftScope === opt.key}
+                          onClick={() => setGiftScope(opt.key)}
+                          className={`min-h-[32px] px-2.5 py-1 text-xs font-bold transition ${
+                            giftScope === opt.key
+                              ? 'bg-emerald-900/60 text-emerald-100'
+                              : 'bg-zinc-950 text-stone-400 hover:text-stone-200'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-stone-400">
+                      {filteredCatalogGifts.length} of {CANONICAL_GIFT_CATALOG.length} Gifts
+                    </span>
+                  </div>
+                  <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                    {filteredCatalogGifts.length === 0 && (
+                      <p className="p-2 text-xs text-stone-400">
+                        No Gifts match. Try another level, or switch to All Gifts.
+                      </p>
+                    )}
+                    {filteredCatalogGifts.length > GIFT_PICKER_PAGE && (
+                      <p className="px-1 text-xs text-stone-400">
+                        Showing the first {GIFT_PICKER_PAGE}. Search or pick a level to narrow the
+                        list.
+                      </p>
+                    )}
+                    {filteredCatalogGifts.slice(0, GIFT_PICKER_PAGE).map((entry) => {
                       const alreadyAdded = sheet.gifts.some((g) => g.id === entry.id);
                       return (
                         <div
@@ -1333,11 +1407,19 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               <span className="text-xs font-bold text-stone-100">
                                 {entry.name}
                               </span>
-                              <span className="text-caption text-stone-400">
+                              <span className="rounded border border-emerald-800/60 px-1 text-xs font-bold text-emerald-300">
+                                Lv {entry.level}
+                              </span>
+                              <span className="text-xs text-stone-400">
                                 ({entry.sources.map((s) => formatTraitName(s)).join(', ')})
                               </span>
                             </div>
-                            <p className="mt-0.5 text-caption text-stone-400">{entry.summary}</p>
+                            <p className="mt-0.5 text-xs text-stone-400">
+                              {giftSheetSummary(entry)}{' '}
+                              <span className="text-stone-500">
+                                {formatCatalogSource(entry.source)}
+                              </span>
+                            </p>
                           </div>
                           <button
                             type="button"

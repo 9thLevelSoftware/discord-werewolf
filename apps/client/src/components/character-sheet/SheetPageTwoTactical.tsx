@@ -7,6 +7,9 @@ import {
   CanonicalAbilityKey,
   cleanOtherTraitDisplayName,
   DamageType,
+  filterMeritFlawCatalog,
+  formatCatalogSource,
+  formatMeritFlawCost,
   GarouForm,
   getBreedNaturalForm,
   OtherTraitKind,
@@ -17,8 +20,10 @@ import {
   SheetShortcut,
   SheetWeaponEntry,
   UserSheetComputedStats,
+  W20_FETISH_CATALOG,
   W20_FORM_MATRIX,
-  W20_MERITS_FLAWS_CATALOG,
+  W20_RITE_CATALOG,
+  W20_TALEN_CATALOG,
   W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import {
@@ -184,6 +189,8 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
   const [newTraitKind, setNewTraitKind] = useState<OtherTraitKind>('merit');
   const [newTraitDots, setNewTraitDots] = useState(1);
   const [showPresetMeritsFlaws, setShowPresetMeritsFlaws] = useState(false);
+  const [traitCatalogSearch, setTraitCatalogSearch] = useState('');
+  const [traitCatalogScope, setTraitCatalogScope] = useState<'book' | 'all'>('book');
 
   // Weapon custom ability input tracking
   const [customAbilityWeaponId, setCustomAbilityWeaponId] = useState<string | null>(null);
@@ -1496,13 +1503,40 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   onSubmit={handleAddFetish}
                   className="mb-3 space-y-2 rounded-lg border border-stone-700 bg-zinc-900/70 p-2.5 text-xs"
                 >
+                  <datalist id="w20-fetishes">
+                    {W20_FETISH_CATALOG.map((fetish) => (
+                      <option
+                        key={fetish.id}
+                        value={fetish.name}
+                        label={`Fetish level ${fetish.level}, Gnosis ${fetish.gnosis}`}
+                      />
+                    ))}
+                    {W20_TALEN_CATALOG.map((talen) => (
+                      <option key={talen.id} value={talen.name} label={`Talen, Gnosis ${talen.gnosis}`} />
+                    ))}
+                  </datalist>
                   <input
                     type="text"
                     required
                     maxLength={120}
                     value={fetishName}
-                    onChange={(e) => setFetishName(e.target.value)}
-                    placeholder="Fetish name"
+                    list="w20-fetishes"
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setFetishName(value);
+                      const needle = value.trim().toLowerCase();
+                      const fetish = W20_FETISH_CATALOG.find((f) => f.name.toLowerCase() === needle);
+                      const talen = fetish
+                        ? undefined
+                        : W20_TALEN_CATALOG.find((t) => t.name.toLowerCase() === needle);
+                      const match = fetish ?? talen;
+                      if (match) {
+                        setFetishLevel(fetish ? fetish.level : 0);
+                        setFetishGnosis(match.gnosis);
+                        setFetishPower(`${match.summary} (${formatCatalogSource(match.source)})`);
+                      }
+                    }}
+                    placeholder="Fetish or talen name (type to search W20)"
                     className="w-full rounded border border-stone-700 bg-zinc-950 px-2 py-1"
                   />
                   <div className="grid grid-cols-2 gap-2">
@@ -1667,14 +1701,34 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   onSubmit={handleAddRite}
                   className="mb-3 space-y-2 rounded-lg border border-stone-700 bg-zinc-900/70 p-2.5 text-xs"
                 >
+                  <datalist id="w20-rites">
+                    {W20_RITE_CATALOG.map((rite) => (
+                      <option
+                        key={rite.id}
+                        value={rite.name}
+                        label={`${rite.type} rite, ${rite.level === 0 ? 'minor' : `level ${rite.level}`}`}
+                      />
+                    ))}
+                  </datalist>
                   <div className="grid grid-cols-3 gap-2">
                     <input
                       type="text"
                       required
                       maxLength={120}
                       value={riteName}
-                      onChange={(e) => setRiteName(e.target.value)}
-                      placeholder="Rite name"
+                      list="w20-rites"
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setRiteName(value);
+                        const match = W20_RITE_CATALOG.find(
+                          (rite) => rite.name.toLowerCase() === value.trim().toLowerCase()
+                        );
+                        if (match) {
+                          setRiteLevel(match.level);
+                          setRiteSummary(`${match.summary} (${formatCatalogSource(match.source)})`);
+                        }
+                      }}
+                      placeholder="Rite name (type to search W20 rites)"
                       className="col-span-2 rounded border border-stone-700 bg-zinc-950 px-2 py-1"
                     />
                     <input
@@ -1872,9 +1926,14 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               );
             };
 
-            const catalogForKind = W20_MERITS_FLAWS_CATALOG.filter(
-              (m) => newTraitKind === 'other' || m.kind === newTraitKind
-            );
+            const catalogForKind =
+              newTraitKind === 'other'
+                ? []
+                : filterMeritFlawCatalog({
+                    query: traitCatalogSearch,
+                    kind: newTraitKind,
+                    ...(traitCatalogScope === 'book' ? { tiers: ['core'] as const } : {}),
+                  });
 
             return (
               <section className="rounded-xl border border-amber-500/20 bg-zinc-950/75 p-3.5">
@@ -1991,7 +2050,46 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   </div>
 
                   {showPresetMeritsFlaws && newTraitKind !== 'other' && (
-                    <div className="flex max-h-36 flex-wrap gap-1 overflow-y-auto rounded border border-stone-800 bg-zinc-950/90 p-2">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <input
+                        type="text"
+                        value={traitCatalogSearch}
+                        onChange={(e) => setTraitCatalogSearch(e.target.value)}
+                        aria-label={`Search ${newTraitKind === 'merit' ? 'Merits' : 'Flaws'}`}
+                        placeholder={`Search ${newTraitKind === 'merit' ? 'Merits' : 'Flaws'}...`}
+                        className="min-h-[32px] min-w-0 flex-1 rounded-lg border border-stone-700 bg-zinc-950 px-2 py-1 text-xs text-stone-100 placeholder-stone-500"
+                      />
+                      <div
+                        className="flex overflow-hidden rounded-lg border border-stone-700"
+                        role="group"
+                        aria-label="Merit and Flaw sources"
+                      >
+                        {(
+                          [
+                            { key: 'book', label: 'W20 book' },
+                            { key: 'all', label: 'All sources' },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            aria-pressed={traitCatalogScope === opt.key}
+                            onClick={() => setTraitCatalogScope(opt.key)}
+                            className={`min-h-[32px] px-2.5 py-1 text-xs font-bold transition ${
+                              traitCatalogScope === opt.key
+                                ? 'bg-amber-900/60 text-amber-100'
+                                : 'bg-zinc-950 text-stone-400 hover:text-stone-200'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="text-stone-400">{catalogForKind.length} found</span>
+                    </div>
+                  )}
+                  {showPresetMeritsFlaws && newTraitKind !== 'other' && (
+                    <div className="flex max-h-44 flex-wrap gap-1 overflow-y-auto rounded border border-stone-800 bg-zinc-950/90 p-2">
                       {catalogForKind.map((item) => (
                         <button
                           key={item.id}
@@ -2004,15 +2102,22 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                               category: item.category,
                             })
                           }
-                          aria-label={item.summary}
-                          title={item.summary}
-                          className={`rounded border px-2 py-1 text-caption font-semibold transition ${
+                          aria-label={`Add ${item.name}, ${formatMeritFlawCost(item)} points`}
+                          title={[
+                            item.summary,
+                            item.costNote ? `Cost note: ${item.costNote}.` : '',
+                            item.restrictions?.note ? `Restriction: ${item.restrictions.note}.` : '',
+                            formatCatalogSource(item.source),
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          className={`rounded border px-2 py-1 text-xs font-semibold transition ${
                             item.kind === 'merit'
                               ? 'border-emerald-800/60 bg-emerald-950/35 text-emerald-200 hover:border-emerald-400'
                               : 'border-rose-800/60 bg-rose-950/35 text-rose-200 hover:border-rose-400'
                           }`}
                         >
-                          + {item.name} ({item.pointValue}pt)
+                          + {item.name} ({formatMeritFlawCost(item)}pt)
                         </button>
                       ))}
                     </div>

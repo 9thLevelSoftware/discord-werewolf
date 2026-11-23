@@ -11,9 +11,14 @@ import {
   Breed,
   CANONICAL_GIFT_CATALOG,
   CanonicalAbilityKey,
+  filterMeritFlawCatalog,
+  formatCatalogSource,
+  formatMeritFlawCost,
   GarouForm,
   GarouTribe,
   LUPUS_RESTRICTED_BASE_ABILITIES,
+  meritFlawCostChoices,
+  MeritFlawCategory,
   MeritOrFlawChoice,
   SelectedGiftChoice,
   STARTING_GNOSIS_BY_BREED,
@@ -26,6 +31,7 @@ import {
   W20_MERITS_FLAWS_CATALOG,
   W20CharacterCreationDraft,
   W20CharacterState,
+  W20MeritFlawCatalogEntry,
 } from '@w20-vtt/core';
 import {
   AlertCircle,
@@ -209,6 +215,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
   // Step 4 Merits & Flaws filters & custom adder
   const [mfSearch, setMfSearch] = useState('');
+  const [mfScope, setMfScope] = useState<'book' | 'all'>('book');
+  const [mfCategory, setMfCategory] = useState<'all' | MeritFlawCategory>('all');
+  const [freebieGiftSearch, setFreebieGiftSearch] = useState('');
   const [customMfName, setCustomMfName] = useState('');
   const [customMfKind, setCustomMfKind] = useState<'merit' | 'flaw'>('merit');
   const [customMfPoints, setCustomMfPoints] = useState(1);
@@ -255,16 +264,22 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
 
         if (!active) return;
         if (error) {
-          setGiftFetchNote('Using offline canonical W20 Level 1 Gifts (Supabase compendium unavailable).');
+          setGiftFetchNote('Showing the built-in W20 Level 1 Gifts (campaign compendium unavailable).');
           return;
         }
         if (data && data.length > 0) {
-          setGifts(data as CompendiumGiftRow[]);
+          // The core catalog is the source of truth; the compendium only adds campaign homebrew.
+          const coreNames = new Set(CANONICAL_LEVEL_1_GIFTS.map((g) => g.name.toLowerCase()));
+          const coreIds = new Set(CANONICAL_LEVEL_1_GIFTS.map((g) => g.id));
+          const extras = (data as CompendiumGiftRow[]).filter(
+            (row) => !coreIds.has(row.id) && !coreNames.has(row.name.toLowerCase())
+          );
+          setGifts([...CANONICAL_LEVEL_1_GIFTS, ...extras]);
           setGiftFetchNote(null);
         }
       } catch {
         if (active) {
-          setGiftFetchNote('Using offline canonical W20 Level 1 Gifts.');
+          setGiftFetchNote('Showing the built-in W20 Level 1 Gifts.');
         }
       }
     };
@@ -466,10 +481,47 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
         ...prev,
         meritsAndFlaws: exists
           ? prev.meritsAndFlaws.filter((m) => m.id !== item.id)
-          : [...prev.meritsAndFlaws, { ...item }],
+          : [
+              ...prev.meritsAndFlaws,
+              {
+                id: item.id,
+                name: item.name,
+                kind: item.kind,
+                pointValue: item.pointValue,
+                ...(item.category ? { category: item.category } : {}),
+                ...(item.summary ? { summary: item.summary } : {}),
+              },
+            ],
       };
     });
   };
+
+  /** Steps a selected Merit/Flaw with a variable cost to its next allowed point value. */
+  const cycleMeritFlawCost = (id: string) => {
+    const entry = W20_MERITS_FLAWS_CATALOG.find((m) => m.id === id);
+    if (!entry) return;
+    const choices = meritFlawCostChoices(entry);
+    if (choices.length < 2) return;
+    setDraft((prev) => ({
+      ...prev,
+      meritsAndFlaws: prev.meritsAndFlaws.map((m) => {
+        if (m.id !== id) return m;
+        const next = choices[(choices.indexOf(m.pointValue) + 1) % choices.length] ?? m.pointValue;
+        return { ...m, pointValue: next };
+      }),
+    }));
+  };
+
+  const describeMeritFlaw = (mf: W20MeritFlawCatalogEntry): string =>
+    [
+      mf.summary,
+      mf.costNote ? `Cost note: ${mf.costNote}.` : '',
+      mf.restrictions?.note ? `Restriction: ${mf.restrictions.note}.` : '',
+      mf.restrictions?.breeds ? `Breeds: ${mf.restrictions.breeds.join(', ')}.` : '',
+      formatCatalogSource(mf.source),
+    ]
+      .filter(Boolean)
+      .join(' ');
 
   const addCustomMeritFlaw = () => {
     if (!customMfName.trim()) return;
@@ -1207,20 +1259,17 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
             });
             const displayedBackgrounds = [...customBgRows, ...filteredCatalogBgs];
 
-            const qMf = mfSearch.trim().toLowerCase();
-            const meritPresets = W20_MERITS_FLAWS_CATALOG.filter(
-              (m) =>
-                m.kind === 'merit' &&
-                (!qMf ||
-                  m.name.toLowerCase().includes(qMf) ||
-                  (m.summary ?? '').toLowerCase().includes(qMf))
-            );
-            const flawPresets = W20_MERITS_FLAWS_CATALOG.filter(
-              (m) =>
-                m.kind === 'flaw' &&
-                (!qMf ||
-                  m.name.toLowerCase().includes(qMf) ||
-                  (m.summary ?? '').toLowerCase().includes(qMf))
+            const mfBaseFilter = {
+              query: mfSearch,
+              ...(mfCategory !== 'all' ? { category: mfCategory } : {}),
+              ...(mfScope === 'book' ? { tiers: ['core'] as const } : {}),
+            };
+            const meritPresets = filterMeritFlawCatalog({ ...mfBaseFilter, kind: 'merit' });
+            const flawPresets = filterMeritFlawCatalog({ ...mfBaseFilter, kind: 'flaw' });
+            const variableCostIds = new Set(
+              W20_MERITS_FLAWS_CATALOG.filter((m) => meritFlawCostChoices(m).length > 1).map(
+                (m) => m.id
+              )
             );
             const selectedMerits = draft.meritsAndFlaws.filter((m) => m.kind === 'merit');
             const selectedFlaws = draft.meritsAndFlaws.filter((m) => m.kind === 'flaw');
@@ -1586,6 +1635,56 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                       />
                     </div>
 
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <select
+                        value={mfCategory}
+                        onChange={(e) => setMfCategory(e.target.value as 'all' | MeritFlawCategory)}
+                        aria-label="Merit and Flaw category"
+                        className="min-h-[32px] rounded-lg border border-stone-700 bg-zinc-950 px-2 py-1 text-xs text-stone-100"
+                      >
+                        <option value="all">All categories</option>
+                        <option value="physical">Physical</option>
+                        <option value="mental">Mental</option>
+                        <option value="social">Social</option>
+                        <option value="supernatural">Supernatural</option>
+                      </select>
+                      <div
+                        className="flex overflow-hidden rounded-lg border border-stone-700"
+                        role="group"
+                        aria-label="Merit and Flaw sources"
+                      >
+                        {(
+                          [
+                            { key: 'book', label: 'W20 book' },
+                            { key: 'all', label: 'All sources' },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            aria-pressed={mfScope === opt.key}
+                            onClick={() => setMfScope(opt.key)}
+                            className={`min-h-[32px] px-2.5 py-1 text-xs font-bold transition ${
+                              mfScope === opt.key
+                                ? 'bg-amber-900/60 text-amber-100'
+                                : 'bg-zinc-950 text-stone-400 hover:text-stone-200'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="text-stone-400">
+                        {meritPresets.length} Merits, {flawPresets.length} Flaws
+                      </span>
+                    </div>
+                    {mfScope === 'all' && (
+                      <p className="text-xs text-stone-400">
+                        All sources adds Kinfolk traits and the Wolfbane compilation (name and cost
+                        only; some may be house rules). Check with your Storyteller.
+                      </p>
+                    )}
+
                     {/* Merits Sub-Panel (Emerald Boons) */}
                     <div className="rounded-xl border border-emerald-700/45 bg-emerald-950/15 p-2.5">
                       <div className="mb-1.5 flex items-center justify-between">
@@ -1605,14 +1704,14 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               key={mf.id}
                               type="button"
                               onClick={() => togglePresetMeritFlaw(mf)}
-                              title={mf.summary}
+                              title={describeMeritFlaw(mf)}
                               className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
                                 active
                                   ? 'border-emerald-400 bg-emerald-800/55 text-white shadow-[0_0_8px_rgba(16,185,129,0.25)]'
                                   : 'border-emerald-800/55 bg-emerald-950/30 text-emerald-100/85 hover:border-emerald-500/70'
                               }`}
                             >
-                              {mf.name} (-{mf.pointValue}pt)
+                              {mf.name} (-{formatMeritFlawCost(mf)}pt)
                             </button>
                           );
                         })}
@@ -1638,14 +1737,14 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               key={mf.id}
                               type="button"
                               onClick={() => togglePresetMeritFlaw(mf)}
-                              title={mf.summary}
+                              title={describeMeritFlaw(mf)}
                               className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
                                 active
                                   ? 'border-rose-400 bg-rose-900/55 text-white shadow-[0_0_8px_rgba(244,63,94,0.25)]'
                                   : 'border-rose-900/60 bg-rose-950/30 text-rose-100/85 hover:border-rose-500/70'
                               }`}
                             >
-                              {mf.name} (+{mf.pointValue}pt)
+                              {mf.name} (+{formatMeritFlawCost(mf)}pt)
                             </button>
                           );
                         })}
@@ -1735,7 +1834,20 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 key={m.id}
                                 className="inline-flex items-center gap-1 rounded-md border border-emerald-600/50 bg-emerald-950/45 px-2 py-0.5 text-xs font-semibold text-emerald-100"
                               >
-                                {m.name} (-{m.pointValue}pt)
+                                {m.name}{' '}
+                                {variableCostIds.has(m.id) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => cycleMeritFlawCost(m.id)}
+                                    title="Variable cost: click to change the point value"
+                                    aria-label={`Change point value of ${m.name}, now ${m.pointValue}`}
+                                    className="rounded border border-emerald-400/60 px-1 font-mono underline decoration-dotted"
+                                  >
+                                    -{m.pointValue}pt
+                                  </button>
+                                ) : (
+                                  <>(-{m.pointValue}pt)</>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1762,7 +1874,20 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 key={m.id}
                                 className="inline-flex items-center gap-1 rounded-md border border-rose-600/50 bg-rose-950/45 px-2 py-0.5 text-xs font-semibold text-rose-100"
                               >
-                                {m.name} (+{m.pointValue}pt)
+                                {m.name}{' '}
+                                {variableCostIds.has(m.id) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => cycleMeritFlawCost(m.id)}
+                                    title="Variable cost: click to change the point value"
+                                    aria-label={`Change point value of ${m.name}, now ${m.pointValue}`}
+                                    className="rounded border border-rose-400/60 px-1 font-mono underline decoration-dotted"
+                                  >
+                                    +{m.pointValue}pt
+                                  </button>
+                                ) : (
+                                  <>(+{m.pointValue}pt)</>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1898,7 +2023,15 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                 <p className="font-bold text-stone-200">
                   Optional Extra Level 1 Gifts ({W20_FREEBIE_COSTS.levelOneGift} Freebies each)
                 </p>
-                <div className="mt-2 flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+                <input
+                  type="text"
+                  value={freebieGiftSearch}
+                  onChange={(e) => setFreebieGiftSearch(e.target.value)}
+                  aria-label="Filter extra Level 1 Gifts"
+                  placeholder={`Filter ${gifts.length} Level 1 Gifts by name or tribe...`}
+                  className="mt-2 w-full rounded-lg border border-stone-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-stone-100 placeholder-stone-500"
+                />
+                <div className="mt-2 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
                   {draft.selectedGifts
                     .filter(
                       (s) =>
@@ -1914,7 +2047,16 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                         {customFree.giftId} (Custom) ×
                       </button>
                     ))}
-                  {gifts.map((g) => {
+                  {gifts
+                    .filter((g) => {
+                      const q = freebieGiftSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        g.name.toLowerCase().includes(q) ||
+                        g.sources.some((src) => src.replace(/_/g, ' ').includes(q))
+                      );
+                    })
+                    .map((g) => {
                     const isFreebieSelected = draft.selectedGifts.some(
                       (s) => s.giftId === g.id && s.slotSource === 'freebie'
                     );
