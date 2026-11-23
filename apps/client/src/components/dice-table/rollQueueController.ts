@@ -1,7 +1,18 @@
 import type { W20RollResult } from '@w20-vtt/core';
 import type { Queued3DRoll } from '../../store/useVttRoomStore';
 
-export const PHYSICS_SETTLE_TIMEOUT_MS = 3500;
+/**
+ * How long a throw may take to come to rest before we give up on it, wipe the dice and
+ * let the server roll instead. Dice normally rest in 2-4 seconds, and take longer when
+ * the frame rate is low, so a tight limit here discards throws the player watched land.
+ */
+export const PHYSICS_SETTLE_TIMEOUT_MS = 7000;
+/**
+ * dice-box freezes any die still moving after this long and reports whichever face is
+ * up, even if the die is in mid-air. Passed as `settleTimeout`, and kept above
+ * PHYSICS_SETTLE_TIMEOUT_MS so those forced readings are never sent to the server.
+ */
+export const DICE_FORCE_FREEZE_MS = 12000;
 export const ECHO_WAIT_TIMEOUT_MS = 2500;
 export const HOLD_SINGLE_NEXT_MS = 1600;
 export const HOLD_BURST_NEXT_MS = 1050;
@@ -105,6 +116,22 @@ export function extractSettledDiceValues(
     values.push(normalized);
   }
   return values.length === expectedCount ? values : undefined;
+}
+
+/**
+ * True when the faces left on the felt are exactly the dice the server recorded.
+ * Bonus (explosion) dice are rolled by the server only and are not on the felt.
+ */
+export function physicalDiceMatchRoll(
+  physicalDiceValues: number[] | undefined,
+  roll: W20RollResult
+): boolean {
+  if (!physicalDiceValues) return false;
+  const recorded = roll.dice.filter((die) => !die.isBonusExplosionDie);
+  return (
+    recorded.length === physicalDiceValues.length &&
+    recorded.every((die, idx) => die.value === physicalDiceValues[idx])
+  );
 }
 
 /** Colours handed to the 3D dice renderer. Rage dice are identified by their colour. */
@@ -284,6 +311,8 @@ export class RollStageCoordinator {
   private readonly localQueue: LocalQueuedRollSpec[] = [];
   private readonly expectedLocalClientIds = new Set<string>();
   private readonly earlyMatchedEchoes = new Map<string, Queued3DRoll>();
+  /** Our own rolls whose confirmation did not arrive in time; it may still turn up later. */
+  private readonly lateLocalClientIds = new Set<string>();
   private readonly echoWaiters = new Map<string, (roll: Queued3DRoll | null) => void>();
   private inFlightRejected = false;
 
@@ -423,6 +452,7 @@ export class RollStageCoordinator {
     this.echoWaiters.clear();
     this.earlyMatchedEchoes.clear();
     this.expectedLocalClientIds.clear();
+    this.lateLocalClientIds.clear();
   }
 
   private emitStatus(): void {
@@ -605,7 +635,23 @@ export class RollStageCoordinator {
     this.expectedLocalClientIds.delete(spec.rollClientId);
 
     if (!echoedRoll && !this.disposed) {
+      if (!this.inFlightRejected) {
+        this.lateLocalClientIds.add(spec.rollClientId);
+      }
       this.options.onLocalRollUnconfirmed?.(spec, this.inFlightRejected ? 'rejected' : 'timeout');
+    }
+
+    // Dice left on the felt must be the dice in the ledger. If the server recorded
+    // anything else (it rolled for us, or sized the pool differently), take them away
+    // so only the recorded result is on screen.
+    if (
+      echoedRoll &&
+      !this.disposed &&
+      !this.feltClearedForActiveThrow &&
+      !physicalDiceMatchRoll(physicalDiceValues, echoedRoll.roll)
+    ) {
+      this.diceBox.clearBoxSafely();
+      this.options.onSetHasDiceOnTable(false);
     }
     this.inFlightRejected = false;
 
@@ -634,16 +680,25 @@ export class RollStageCoordinator {
 
     try {
       const rageCount = remote.rageDiceCount ?? 0;
-      const groups = buildDiceBoxGroups(remote.roll.effectivePool, rageCount);
-      this.options.onPlayThrowSound(remote.roll.effectivePool, rageCount);
+      // A late confirmation of our own roll was already thrown once. Throwing it again
+      // would land on different faces, so show the recorded result on its own.
+      const isLateOwnRoll =
+        remote.rollClientId !== undefined && this.lateLocalClientIds.delete(remote.rollClientId);
+      const groups = isLateOwnRoll
+        ? []
+        : buildDiceBoxGroups(remote.roll.effectivePool, rageCount);
+      if (groups.length > 0) {
+        this.options.onPlayThrowSound(remote.roll.effectivePool, rageCount);
+      }
 
-      const { interrupted } = await this.diceBox.throwDice(groups);
+      await this.diceBox.throwDice(groups);
       this.options.onStopThrowSound();
 
       if (!this.disposed && !this.feltClearedForActiveThrow) {
-        this.options.onSetHasDiceOnTable(
-          groups.length > 0 && !interrupted && this.diceBox.isReady()
-        );
+        // The replay is only an animation: its dice land on random faces, not the
+        // recorded ones. Take them away as the recorded result appears.
+        this.diceBox.clearBoxSafely();
+        this.options.onSetHasDiceOnTable(false);
         this.bannerShownAtMs = this.now();
         this.options.onSetBanner(remote);
         this.options.onPlayOutcomeSound(remote.roll);

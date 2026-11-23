@@ -40,6 +40,7 @@ import {
   MAX_LOCAL_QUEUED_ROLLS,
   RollStageCoordinator,
   type RollStageStatus,
+  DICE_FORCE_FREEZE_MS,
   SafeDiceBoxController,
   isRageDieThemeColor,
 } from './dice-table/rollQueueController';
@@ -496,6 +497,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         gravity: 2,
         throwForce: 6,
         spinForce: 5,
+        settleTimeout: DICE_FORCE_FREEZE_MS,
         onDieComplete: (dieResult: unknown) => {
           if (!dieResult || typeof dieResult !== 'object') {
             diceSoundEngine.playDieSettle();

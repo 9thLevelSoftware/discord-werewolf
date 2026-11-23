@@ -16,6 +16,8 @@ declare module '@3d-dice/dice-box' {
     enableShadows?: boolean;
     shadowTransparency?: number;
     delay?: number;
+    /** Milliseconds a die may keep moving before it is frozen in place and read. Default 5000. */
+    settleTimeout?: number;
     offscreen?: boolean;
     suspendSimulation?: boolean;
     autoResize?: boolean;

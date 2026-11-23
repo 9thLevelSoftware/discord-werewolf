@@ -20,6 +20,9 @@ import {
   RollStageCoordinator,
   type RollStageStatus,
   SafeDiceBoxController,
+  DICE_FORCE_FREEZE_MS,
+  PHYSICS_SETTLE_TIMEOUT_MS,
+  physicalDiceMatchRoll,
 } from '../rollQueueController';
 
 function makeRollResult(values: number[], seed = 'seed-1'): W20RollResult {
@@ -714,5 +717,160 @@ describe('useVttRoomStore reconnect buffering & roll deduplication', () => {
 
     useVttRoomStore.getState().disconnectRoom();
     vi.unstubAllGlobals();
+  });
+
+  /** Coordinator wired to an in-memory queue; `echoFor` decides what the server confirms. */
+  function makeHarness(opts: {
+    box: DiceBoxLike;
+    echoFor: (
+      spec: LocalQueuedRollSpec,
+      physicalDiceValues: number[] | undefined
+    ) => { values: number[]; delayMs: number };
+    echoWaitTimeoutMs?: number;
+  }) {
+    const safeBox = new SafeDiceBoxController({ isDocumentHidden: () => false });
+    safeBox.setBox(opts.box, true);
+    const remoteQueue: Queued3DRoll[] = [];
+    const shownBanners: Queued3DRoll[] = [];
+    const hasDiceCalls: boolean[] = [];
+    const unconfirmed: string[] = [];
+    const coordinator: RollStageCoordinator = new RollStageCoordinator({
+      diceBox: safeBox,
+      getRemoteQueue: () => remoteQueue,
+      dequeueRemoteRoll: (id) => {
+        const idx = remoteQueue.findIndex((item) => item.id === id);
+        if (idx >= 0) remoteQueue.splice(idx, 1);
+      },
+      consumeRemoteRollByClientId: (clientId) => {
+        const idx = remoteQueue.findIndex((item) => item.rollClientId === clientId);
+        if (idx < 0) return null;
+        return remoteQueue.splice(idx, 1)[0] ?? null;
+      },
+      onSendRollCommand: (spec, physicalDiceValues) => {
+        const echo = opts.echoFor(spec, physicalDiceValues);
+        setTimeout(() => {
+          remoteQueue.push(
+            makeRemoteRoll(`echo-${spec.rollClientId}`, 'Maya', spec.label, echo.values, spec.rollClientId)
+          );
+          coordinator.notifyInboundQueueChanged();
+        }, echo.delayMs);
+      },
+      onSetBanner: (banner) => {
+        if (banner) shownBanners.push(banner);
+      },
+      onSetHasDiceOnTable: (hasDice) => hasDiceCalls.push(hasDice),
+      onPlayThrowSound: vi.fn(),
+      onStopThrowSound: vi.fn(),
+      onPlayOutcomeSound: vi.fn(),
+      onStatusChange: vi.fn(),
+      onLocalRollUnconfirmed: (spec, reason) => unconfirmed.push(`${spec.rollClientId}:${reason}`),
+      timing: {
+        echoWaitTimeoutMs: opts.echoWaitTimeoutMs ?? 500,
+        holdSingleNextMs: 10,
+        holdBurstNextMs: 10,
+      },
+    });
+    return { coordinator, remoteQueue, shownBanners, hasDiceCalls, unconfirmed };
+  }
+
+  it('gives throws time to rest and never accepts a forced mid-air reading', () => {
+    // Dice routinely need 3-4 seconds to come to rest; a shorter limit wipes throws the
+    // player watched land and records different numbers.
+    expect(PHYSICS_SETTLE_TIMEOUT_MS).toBeGreaterThanOrEqual(6000);
+    // The renderer's forced freeze must come after we have already given up.
+    expect(DICE_FORCE_FREEZE_MS).toBeGreaterThan(PHYSICS_SETTLE_TIMEOUT_MS);
+  });
+
+  it('compares felt dice to the recorded roll, ignoring server-only bonus dice', () => {
+    const roll = makeRollResult([9, 10, 2]);
+    expect(physicalDiceMatchRoll([9, 10, 2], roll)).toBe(true);
+    expect(physicalDiceMatchRoll([10, 9, 2], roll)).toBe(false);
+    expect(physicalDiceMatchRoll([9, 10], roll)).toBe(false);
+    expect(physicalDiceMatchRoll(undefined, roll)).toBe(false);
+
+    const withBonus: W20RollResult = {
+      ...roll,
+      dice: [
+        ...roll.dice,
+        { value: 4, isBonusExplosionDie: true, contributedSuccesses: 0, isOne: false },
+      ],
+    };
+    expect(physicalDiceMatchRoll([9, 10, 2], withBonus)).toBe(true);
+  });
+
+  it('keeps the dice on the felt when the ledger records exactly those faces', async () => {
+    const box: DiceBoxLike = {
+      roll: vi.fn(async () => [{ value: 9 }, { value: 6 }, { value: 2 }]),
+      clear: vi.fn(),
+    };
+    const h = makeHarness({
+      box,
+      echoFor: (_spec, physical) => ({ values: physical ?? [1, 1, 1], delayMs: 5 }),
+    });
+
+    h.coordinator.enqueueLocalRoll(makeLocalSpec('local-match', 'Brawl', 3));
+    await waitForCondition(() => h.shownBanners.length === 1);
+
+    expect(h.shownBanners[0]?.roll.dice.map((d) => d.value)).toEqual([9, 6, 2]);
+    expect(box.clear).not.toHaveBeenCalled();
+    expect(h.hasDiceCalls).toEqual([true]);
+    h.coordinator.dispose();
+  });
+
+  it('takes the dice off the felt when the ledger records different faces', async () => {
+    const box: DiceBoxLike = {
+      roll: vi.fn(async () => [{ value: 9 }, { value: 6 }, { value: 2 }]),
+      clear: vi.fn(),
+    };
+    // The server sized the pool differently and rolled a fourth die of its own.
+    const h = makeHarness({ box, echoFor: () => ({ values: [9, 6, 2, 7], delayMs: 5 }) });
+
+    h.coordinator.enqueueLocalRoll(makeLocalSpec('local-mismatch', 'Brawl', 3));
+    await waitForCondition(() => h.shownBanners.length === 1);
+
+    expect(box.clear).toHaveBeenCalled();
+    expect(h.hasDiceCalls).toEqual([true, false]);
+    h.coordinator.dispose();
+  });
+
+  it('does not throw fresh random dice when our own roll is confirmed late', async () => {
+    const box: DiceBoxLike = {
+      roll: vi.fn(async () => [{ value: 9 }, { value: 6 }, { value: 2 }]),
+      clear: vi.fn(),
+    };
+    const h = makeHarness({
+      box,
+      echoWaitTimeoutMs: 20,
+      echoFor: (_spec, physical) => ({ values: physical ?? [1, 1, 1], delayMs: 80 }),
+    });
+
+    h.coordinator.enqueueLocalRoll(makeLocalSpec('local-late', 'Brawl', 3));
+    await waitForCondition(() => h.shownBanners.length === 1 && h.remoteQueue.length === 0);
+
+    expect(h.unconfirmed).toEqual(['local-late:timeout']);
+    expect(h.shownBanners[0]?.id).toBe('echo-local-late');
+    // Thrown once for the original roll; the late confirmation is shown without a re-throw.
+    expect(box.roll).toHaveBeenCalledTimes(1);
+    expect(h.hasDiceCalls.at(-1)).toBe(false);
+    h.coordinator.dispose();
+  });
+
+  it("removes the replay dice of another player's roll when the recorded result appears", async () => {
+    const box: DiceBoxLike = {
+      // The replay lands on faces unrelated to the recorded [8, 7].
+      roll: vi.fn(async () => [{ value: 1 }, { value: 2 }]),
+      clear: vi.fn(),
+    };
+    const h = makeHarness({ box, echoFor: () => ({ values: [], delayMs: 5 }) });
+
+    h.remoteQueue.push(makeRemoteRoll('seq-remote', 'Kaelen', 'Brawl', [8, 7]));
+    h.coordinator.notifyInboundQueueChanged();
+    await waitForCondition(() => h.shownBanners.length === 1 && h.remoteQueue.length === 0);
+
+    expect(box.roll).toHaveBeenCalledTimes(1);
+    expect(h.shownBanners[0]?.roll.dice.map((d) => d.value)).toEqual([8, 7]);
+    expect(box.clear).toHaveBeenCalled();
+    expect(h.hasDiceCalls).toEqual([false]);
+    h.coordinator.dispose();
   });
 });
