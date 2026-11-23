@@ -53,6 +53,14 @@ Page numbers are the printed page numbers of *Werewolf: The Apocalypse 20th Anni
 - The 29 earlier Merit and Flaw ids are unchanged. Background keys are unchanged.
 - Saved sheets store their own copy of each trait, so they are unaffected by catalog changes.
 
+## Known limits
+
+- Summaries were written to state mechanics in new words. About 55 of the 620 still share a run of
+  five or six words with the book where the wording is a bare game term or number (for example
+  "until the next full moon"). None reproduces a sentence.
+- When a Gift with a variable difficulty is added to a sheet, the sheet rolls it at difficulty 6
+  and the note is appended to the Gift's summary.
+
 ## Corrections to the earlier lists
 
 The earlier hand-entered lists disagreed with the rulebook in places. The catalog follows the book:
@@ -72,11 +80,10 @@ The earlier hand-entered lists disagreed with the rulebook in places. The catalo
 - **Supplement Gifts** (tribebooks, Changing Ways, lost tribes, Black Spiral Dancers, Kinfolk,
   planetary Gifts): outside the W20 core book. They can be added later as another tier.
 - **Wolfbane "Confidence" and "Funny"**: no cost is printed in the list.
-- **Six Gifts from the earlier database seed** (Cybernetic Senses, Awe, Trackless Step, Open
-  Wound, Dream Speak, Obedient Slave): no Gift with that name is in the W20 core Gifts chapter.
-  They stay in the database seed and are not in the catalog.
-- **Render Down** (Red Talons, Level Three): the difficulty of its Rage roll could not be read
-  from the extracted text; `difficultyNote` says to check the book.
+- **Four Gifts from the earlier database seed** (Awe, Trackless Step, Dream Speak, Obedient
+  Slave): no Gift with that name is in the W20 core Gifts chapter. They stay in the database seed
+  and are not in the catalog. Two other seed Gifts were renames and keep their ids: Cybernetic
+  Senses is the book's Cybersenses, and Open Wound is Open Wounds.
 - **Rite, Fetish and Totem database tables**: only the Gift table is synced from the catalog.
   The starter Rites and Totems in `supabase/seed.sql` are unchanged.
 - **Tribe Background restrictions in validation**: `backgrounds.ts` records the book's restricted
@@ -88,3 +95,9 @@ The earlier hand-entered lists disagreed with the rulebook in places. The catalo
 `supabase/migrations/202611220001_w20_gift_catalog_sync.sql` is generated from `gifts.data.ts`. It
 upserts the 368 Gifts into `compendium_gifts`, keeps existing ids and `macro_config`, and leaves
 campaign homebrew rows alone. It has not been applied to any hosted project.
+
+**Apply this migration when deploying this version.** `character_gifts.gift_id` references
+`compendium_gifts`, and about half of the Level 1 Gifts the wizard now offers have ids that exist
+in the database only after the migration. Until it is applied, a cloud-saved character is still
+created, but the link rows for those Gifts are skipped (the Worker filters out ids the database
+does not know). Local and mock-mode sheets are unaffected.

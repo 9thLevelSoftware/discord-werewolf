@@ -7,7 +7,7 @@ import {
   W20_BACKGROUND_CATALOG,
   W20CharacterCreationDraft,
 } from './characterCreation';
-import { W20_GIFT_CATALOG } from './catalog';
+import { giftSheetSummary, W20_GIFT_CATALOG } from './catalog';
 import type { W20GiftCatalogEntry } from './catalog';
 import { computeWoundState, FormModifierSpec, getBreedNaturalForm, W20_FORM_MATRIX } from './forms';
 import {
@@ -1093,7 +1093,7 @@ export function draftToUserCharacterSheet(
         rageCost: match.rageCost,
         gnosisCost: match.gnosisCost,
         willpowerCost: match.willpowerCost,
-        summary: match.summary,
+        summary: giftSheetSummary(match),
       };
     }
     return {

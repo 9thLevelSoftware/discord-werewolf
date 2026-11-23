@@ -657,12 +657,31 @@ export class SupabaseRestClient {
       const uniqueGifts = Array.from(
         new Set(selectedGiftIds.filter((id) => Boolean(id) && uuidRe.test(id))),
       );
-      if (uniqueGifts.length > 0) {
-        await this.insertCharacterGifts(created.id, uniqueGifts);
+      const knownGifts = await this.selectKnownGiftIds(uniqueGifts);
+      if (knownGifts.length > 0) {
+        await this.insertCharacterGifts(created.id, knownGifts);
       }
     }
 
     return mapCharacterRowToState(created);
+  }
+
+  /**
+   * Returns the subset of ids present in compendium_gifts. character_gifts.gift_id has a foreign
+   * key to that table, and the core Gift catalog can be ahead of the database until the catalog
+   * sync migration is applied, so unknown ids are skipped instead of failing the whole save.
+   */
+  async selectKnownGiftIds(giftIds: string[]): Promise<string[]> {
+    if (giftIds.length === 0) return [];
+    try {
+      const rows = await this.request<Array<{ id: string }>>(
+        `/compendium_gifts?select=id&id=in.(${giftIds.map(encodeURIComponent).join(',')})`,
+      );
+      const known = new Set(rows.map((row) => row.id));
+      return giftIds.filter((id) => known.has(id));
+    } catch {
+      return [];
+    }
   }
 
   async insertCharacterGifts(characterId: string, giftIds: string[]): Promise<void> {

@@ -13,6 +13,7 @@ import {
   DamageType,
   filterGiftCatalog,
   formatCatalogSource,
+  giftSheetSummary,
   lookupSheetAbilityDots,
   SheetGiftEntry,
   SheetShortcut,
@@ -285,7 +286,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
       rageCost: entry.rageCost,
       gnosisCost: entry.gnosisCost,
       willpowerCost: entry.willpowerCost,
-      summary: entry.summary,
+      summary: giftSheetSummary(entry),
     };
     onUpdateSheet((prev) => ({
       ...prev,
@@ -1414,7 +1415,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               </span>
                             </div>
                             <p className="mt-0.5 text-xs text-stone-400">
-                              {entry.summary}{' '}
+                              {giftSheetSummary(entry)}{' '}
                               <span className="text-stone-500">
                                 {formatCatalogSource(entry.source)}
                               </span>

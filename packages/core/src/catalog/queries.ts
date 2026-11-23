@@ -49,6 +49,13 @@ export function findGiftInCatalog(idOrName: string): W20GiftCatalogEntry | undef
   );
 }
 
+/** Summary for a sheet's copy of a Gift; keeps the variable-difficulty note, which the sheet has no field for. */
+export function giftSheetSummary(gift: W20GiftCatalogEntry): string {
+  return gift.difficultyNote
+    ? `${gift.summary} Difficulty: ${gift.difficultyNote}.`
+    : gift.summary;
+}
+
 export interface MeritFlawCatalogFilter {
   query?: string;
   kind?: 'merit' | 'flaw';
