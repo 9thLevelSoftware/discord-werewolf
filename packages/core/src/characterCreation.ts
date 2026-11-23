@@ -131,75 +131,8 @@ export const W20_FREEBIE_COSTS = {
   maxFlawBonus: 7, // Hard maximum of 22 total Freebie points
 } as const;
 
-export interface W20BackgroundCatalogEntry {
-  key: string;
-  label: string;
-  tier: 'core' | 'expanded';
-  summary: string;
-}
-
-export const W20_BACKGROUND_CATALOG: readonly W20BackgroundCatalogEntry[] = [
-  // 12 Core W20 Character Sheet Backgrounds
-  { key: 'allies', label: 'Allies', tier: 'core', summary: 'Confederates and mortals who aid the Garou.' },
-  { key: 'ancestors', label: 'Ancestors', tier: 'core', summary: 'Spiritual communion with honored tribal forbears.' },
-  { key: 'contacts', label: 'Contacts', tier: 'core', summary: 'Informants, street sources, and intelligence networks.' },
-  { key: 'fate', label: 'Fate', tier: 'core', summary: 'An ominous or prophetic destiny woven by Gaia (W20 Core).' },
-  { key: 'fetish', label: 'Fetish', tier: 'core', summary: 'Spirit-bound mystical items or Talens carried at start.' },
-  { key: 'kinfolk', label: 'Kinfolk', tier: 'core', summary: 'Human or wolf family tied to the sept and pack.' },
-  { key: 'mentor', label: 'Mentor', tier: 'core', summary: 'An elder Garou tutor offering guidance and refuge.' },
-  { key: 'pure_breed', label: 'Pure Breed', tier: 'core', summary: 'Noble Garou lineage commanding respect from Luna and spirits.' },
-  { key: 'resources', label: 'Resources', tier: 'core', summary: 'Wealth, property, income, and material assets.' },
-  { key: 'rites', label: 'Rites', tier: 'core', summary: 'Mystic and seasonal rites known at starting Rank.' },
-  { key: 'spirit_heritage', label: 'Spirit Heritage', tier: 'core', summary: 'Favorable standing and affinity with a spirit court.' },
-  { key: 'totem', label: 'Totem', tier: 'core', summary: 'Shared dots invested toward the pack’s patron Totem spirit.' },
-  // 12 Expanded W20 & Chronicle Backgrounds
-  { key: 'caern', label: 'Caern', tier: 'expanded', summary: 'Guardianship or access rights to a sacred Gaian Caern.' },
-  { key: 'fame', label: 'Fame', tier: 'expanded', summary: 'Recognition in human media, arts, or subcultures.' },
-  { key: 'influence', label: 'Influence', tier: 'expanded', summary: 'Clout in civic, legal, corporate, or underworld institutions.' },
-  { key: 'status', label: 'Status / Sept Standing', tier: 'expanded', summary: 'Respect and office within the local Sept.' },
-  { key: 'pack_status', label: 'Pack Status', tier: 'expanded', summary: 'Reputation of your pack across the Protectorate.' },
-  { key: 'past_life', label: 'Past Life', tier: 'expanded', summary: 'Inherited memories from prior incarnations (alternative Ancestors).' },
-  { key: 'patron', label: 'Patron', tier: 'expanded', summary: 'A powerful mortal, Kinfolk, or spirit sponsor.' },
-  { key: 'retainers', label: 'Retainers', tier: 'expanded', summary: 'Loyal assistants, bodyguards, or caretakers.' },
-  { key: 'favor', label: 'Favor', tier: 'expanded', summary: 'Unclaimed boons owed by elders, spirits, or changers.' },
-  { key: 'equipment', label: 'Equipment', tier: 'expanded', summary: 'Specialized tactical gear, vehicles, or safe houses.' },
-  { key: 'umbral_maps', label: 'Umbral Lore', tier: 'expanded', summary: 'Knowledge of safe Moon Bridges and Near Umbral paths.' },
-  { key: 'arcane', label: 'Arcane', tier: 'expanded', summary: 'Slippery obscurity that hides traces from mortal records.' },
-];
-
-export const W20_MERITS_FLAWS_CATALOG: readonly MeritOrFlawChoice[] = [
-  // Merits
-  { id: 'merit-acute-senses', name: 'Acute Senses', kind: 'merit', pointValue: 1, category: 'physical', summary: '-2 difficulty to rolls involving one heightened sense.' },
-  { id: 'merit-ambidextrous', name: 'Ambidextrous', kind: 'merit', pointValue: 1, category: 'physical', summary: 'No off-hand penalty on coordinated actions.' },
-  { id: 'merit-wolf-sight', name: 'Wolf Sight', kind: 'merit', pointValue: 1, category: 'physical', summary: 'Low-light lupine vision even in Homid and Glabro.' },
-  { id: 'merit-common-sense', name: 'Common Sense', kind: 'merit', pointValue: 1, category: 'mental', summary: 'Storyteller warns before disastrous decisions.' },
-  { id: 'merit-concentration', name: 'Concentration', kind: 'merit', pointValue: 1, category: 'mental', summary: 'Unaffected by mundane distractions during focus checks.' },
-  { id: 'merit-natural-leader', name: 'Natural Leader', kind: 'merit', pointValue: 1, category: 'social', summary: '+2 dice on Leadership and inspiring allies.' },
-  { id: 'merit-ancestor-ally', name: 'Ancestor Ally', kind: 'merit', pointValue: 1, category: 'supernatural', summary: 'A reliable spiritual forebear whispers timely counsel.' },
-  { id: 'merit-code-of-honor', name: 'Code of Honor', kind: 'merit', pointValue: 2, category: 'mental', summary: '+2 dice when resisting supernatural persuasion against your code.' },
-  { id: 'merit-pack-mentality', name: 'Pack Mentality', kind: 'merit', pointValue: 2, category: 'social', summary: '+1/+2 bonus dice when fighting alongside your pack.' },
-  { id: 'merit-lack-of-scent', name: 'Lack of Scent', kind: 'merit', pointValue: 2, category: 'physical', summary: 'Virtually odorless; +2 difficulty for pursuers tracking by scent.' },
-  { id: 'merit-danger-sense', name: 'Danger Sense', kind: 'merit', pointValue: 2, category: 'supernatural', summary: 'Instinctive Perception + Alertness warning before ambush.' },
-  { id: 'merit-iron-will', name: 'Iron Will', kind: 'merit', pointValue: 3, category: 'mental', summary: 'Spend Willpower or +3 difficulty against mental domination.' },
-  { id: 'merit-natural-channel', name: 'Natural Channel', kind: 'merit', pointValue: 3, category: 'supernatural', summary: '-1 difficulty to Gauntlet crossings and Gnosis channeling.' },
-  { id: 'merit-huge-size', name: 'Huge Size (+1 Bruised Box)', kind: 'merit', pointValue: 4, category: 'physical', summary: 'Grant +1 extra Bruised (-0) Health level in all forms.' },
-  { id: 'merit-silver-tolerance', name: 'Silver Tolerance', kind: 'merit', pointValue: 7, category: 'supernatural', summary: 'Silver deals Lethal instead of Aggravated and may be soaked at +2 Diff.' },
-  // Flaws
-  { id: 'flaw-deep-sleeper', name: 'Deep Sleeper', kind: 'flaw', pointValue: 1, category: 'physical', summary: '+2 difficulty to wake from slumber before threat strikes.' },
-  { id: 'flaw-strict-carnivore', name: 'Strict Carnivore', kind: 'flaw', pointValue: 1, category: 'physical', summary: 'Only raw meat nourishes you; plant food makes you ill.' },
-  { id: 'flaw-animal-musk', name: 'Animal Musk', kind: 'flaw', pointValue: 1, category: 'physical', summary: 'Strong lupine odor alerts animals and dogs in Homid.' },
-  { id: 'flaw-bad-sight', name: 'Bad Sight', kind: 'flaw', pointValue: 1, category: 'physical', summary: '+2 difficulty on visual Perception without corrective lenses.' },
-  { id: 'flaw-soft-hearted', name: 'Soft-Hearted', kind: 'flaw', pointValue: 1, category: 'mental', summary: 'Must check Willpower to witness or inflict cruelty.' },
-  { id: 'flaw-banned-transformation', name: 'Banned Transformation', kind: 'flaw', pointValue: 1, category: 'supernatural', summary: 'One specific Garou form cannot be assumed.' },
-  { id: 'flaw-bad-taste', name: 'Bad Taste', kind: 'flaw', pointValue: 2, category: 'social', summary: '+2 difficulty to Social rolls with tribal elders or sept officers.' },
-  { id: 'flaw-short-fuse', name: 'Short Fuse', kind: 'flaw', pointValue: 2, category: 'mental', summary: '-2 difficulty on Frenzy triggers when provoked.' },
-  { id: 'flaw-territorial', name: 'Territorial', kind: 'flaw', pointValue: 2, category: 'mental', summary: 'Frenzy check when uninvited intruders enter your territory.' },
-  { id: 'flaw-sign-of-wolf', name: 'Sign of the Wolf', kind: 'flaw', pointValue: 2, category: 'supernatural', summary: 'Mortal onlookers feel unsettled; +1 difficulty to mundane Social.' },
-  { id: 'flaw-slippery-mind', name: 'Slippery Mind', kind: 'flaw', pointValue: 3, category: 'mental', summary: 'Difficulty +1 when resisting Delirium-piercing or mind Gifts.' },
-  { id: 'flaw-monstrous', name: 'Monstrous', kind: 'flaw', pointValue: 3, category: 'physical', summary: 'Appearance locked to 0 in unnatural deformity; social hindrance.' },
-  { id: 'flaw-pierced-veil', name: 'Pierced Veil', kind: 'flaw', pointValue: 3, category: 'supernatural', summary: 'Spirits notice your aura; Gauntlet +1 against your Stealth.' },
-  { id: 'flaw-dark-fate', name: 'Dark Fate', kind: 'flaw', pointValue: 5, category: 'supernatural', summary: 'Doom awaits at chronicle climax; tragic omen.' },
-];
+export { W20_BACKGROUND_CATALOG, W20_MERITS_FLAWS_CATALOG } from './catalog';
+export type { W20BackgroundCatalogEntry } from './catalog';
 
 export interface SelectedGiftChoice {
   giftId: string;

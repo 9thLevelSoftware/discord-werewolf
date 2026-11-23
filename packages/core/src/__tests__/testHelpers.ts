@@ -1,3 +1,4 @@
+import type { W20CharacterCreationDraft } from '../characterCreation';
 import { W20CharacterState } from '../types';
 
 export function makeTestCharacter(
@@ -109,5 +110,66 @@ export function seqRng(rolls: number[], fallback = 5): () => number {
       return rolls[idx++];
     }
     return fallback;
+  };
+}
+
+/** A draft that passes validateW20CharacterCreation with exactly 15 Freebie points spent. */
+export function makeValidCreationDraft(
+  overrides: Partial<W20CharacterCreationDraft> = {}
+): W20CharacterCreationDraft {
+  return {
+    name: 'Torin Stormmane',
+    concept: 'Fianna Galliard Skald',
+    breed: 'homid',
+    auspice: 'galliard',
+    tribe: 'fianna',
+    attributePriorities: { physical: 'primary', social: 'secondary', mental: 'tertiary' },
+    abilityPriorities: { talents: 'primary', skills: 'secondary', knowledges: 'tertiary' },
+    priorityAttributeDots: {
+      strength: 3,
+      dexterity: 2,
+      stamina: 2, // 7
+      charisma: 2,
+      manipulation: 1,
+      appearance: 2, // 5
+      perception: 1,
+      intelligence: 1,
+      wits: 1, // 3
+    },
+    priorityAbilityDots: {
+      // Talents: 13
+      alertness: 3,
+      athletics: 2,
+      brawl: 3,
+      expression: 3,
+      primal_urge: 2,
+      // Skills: 9
+      animal_ken: 2,
+      melee: 3,
+      performance: 2,
+      survival: 2,
+      // Knowledges: 5
+      enigmas: 2,
+      occult: 2,
+      rituals: 1,
+    },
+    priorityBackgroundDots: {
+      ancestors: 2,
+      totem: 3, // 5
+    },
+    startingRenown: { glory: 2, honor: 0, wisdom: 1 },
+    selectedGifts: [
+      { giftId: 'gift-breed-1', level: 1, slotSource: 'breed' },
+      { giftId: 'gift-auspice-1', level: 1, slotSource: 'auspice' },
+      { giftId: 'gift-tribe-1', level: 1, slotSource: 'tribe' },
+    ],
+    freebieAttributeDots: { wits: 1 }, // 5
+    freebieAbilityDots: { melee: 1 }, // 2 (brings Melee to 4!)
+    freebieBackgroundDots: { resources: 1 }, // 1
+    freebieRageDots: 1, // 1
+    freebieGnosisDots: 1, // 2
+    freebieWillpowerDots: 4, // 4 (Total spent: 5+2+1+1+2+4 = 15)
+    meritsAndFlaws: [],
+    ...overrides,
   };
 }

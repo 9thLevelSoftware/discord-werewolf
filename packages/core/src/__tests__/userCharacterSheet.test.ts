@@ -90,10 +90,13 @@ function makeValidDraft(
 }
 
 describe('W20 User Character Sheet (Pages 1 & 2)', () => {
-  it('exposes all 44 canonical W20 Level 1 Gifts with accurate roll rules', () => {
-    expect(CANONICAL_GIFT_CATALOG).toHaveLength(44);
+  it('exposes the original 44 W20 Gifts with accurate roll rules', () => {
+    const original = CANONICAL_GIFT_CATALOG.filter((g) =>
+      g.id.startsWith('10000000-0000-4000-8000-0000000001')
+    );
+    expect(original).toHaveLength(44);
     const ids = new Set(CANONICAL_GIFT_CATALOG.map((g) => g.id));
-    expect(ids.size).toBe(44);
+    expect(ids.size).toBe(CANONICAL_GIFT_CATALOG.length);
 
     const byName = new Map(CANONICAL_GIFT_CATALOG.map((g) => [g.name, g]));
     expect(byName.get('Persuasion')).toMatchObject({
@@ -127,42 +130,44 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
       defaultDifficulty: 6,
       gnosisCost: 1,
     });
+    // Values below follow the rulebook text (W20 pp. 152-201); the earlier hand-entered list differed.
     expect(byName.get('Call of the Wyld')).toMatchObject({
       rollAttribute: 'stamina',
-      rollAbility: 'expression',
+      rollAbility: 'empathy',
       defaultDifficulty: 6,
     });
     expect(byName.get('Mindspeak')).toMatchObject({
       rollAttribute: 'manipulation',
       rollAbility: 'expression',
       defaultDifficulty: 6,
-      gnosisCost: 1,
+      gnosisCost: 0,
+      willpowerCost: 1,
     });
     expect(byName.get('Falling Touch')).toMatchObject({
-      rollAttribute: 'dexterity',
-      rollAbility: 'medicine',
+      rollAttribute: 'willpower',
+      rollAbility: null,
       defaultDifficulty: 6,
     });
     expect(byName.get('Visage of Fenris')).toMatchObject({
       rollAttribute: 'charisma',
       rollAbility: 'intimidation',
       defaultDifficulty: 6,
-      rageCost: 1,
+      rageCost: 0,
     });
     expect(byName.get('Diagnostics')).toMatchObject({
-      rollAttribute: 'perception',
-      rollAbility: 'science',
-      defaultDifficulty: 6,
+      rollAttribute: null,
+      rollAbility: null,
+      gnosisCost: 1,
     });
     expect(byName.get('Shroud')).toMatchObject({
       rollAttribute: 'gnosis',
       rollAbility: null,
-      defaultDifficulty: 7,
+      defaultDifficulty: 6,
       gnosisCost: 1,
     });
     expect(byName.get('Camouflage')).toMatchObject({
-      rollAttribute: 'wits',
-      rollAbility: 'stealth',
+      rollAttribute: null,
+      rollAbility: null,
       defaultDifficulty: 6,
     });
     expect(byName.get('Resist Pain')).toMatchObject({
@@ -224,7 +229,8 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
     expect(shroudGift).toMatchObject({
       rollAttribute: 'gnosis',
       rollAbility: null,
-      difficulty: 7,
+      // W20 p. 198: difficulty varies with the light (3 / 6 / 9); the catalog defaults to 6.
+      difficulty: 6,
       gnosisCost: 1,
     });
 
