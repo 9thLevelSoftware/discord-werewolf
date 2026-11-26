@@ -32,6 +32,7 @@ export interface SubActionSlot {
   abilityKey?: CanonicalAbilityKey | string;
   allocatedDice?: number; // Required when splitting smallest pool across multiple actions
   baseDifficulty: number; // e.g. 6 for Claws, 5 for Bite/Dodge
+  weaponId?: string;
   weaponDamageBonus?: number; // e.g. +2 for Claws, +3 for Grand Klaive
   damageType?: Exclude<DamageType, 'none'>;
   isSilverAttack?: boolean;

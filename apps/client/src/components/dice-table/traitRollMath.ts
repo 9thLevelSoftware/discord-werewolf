@@ -5,6 +5,7 @@ import {
   lookupSheetAbilityDots,
   resolveSheetShortcut,
   type SheetShortcut,
+  type RuleContext,
   type W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import { formatTraitName } from '../character-sheet/sheetShared';
@@ -36,6 +37,7 @@ export interface AbilityOptionItem {
 }
 
 export interface ResolvedTraitRollSelection {
+  shortcut?: SheetShortcut;
   hasSelection: boolean;
   attrOption: TraitOptionItem | null;
   abilOption: AbilityOptionItem | null;
@@ -156,13 +158,13 @@ export function getSheetTraitOptions(sheet: W20UserCharacterSheet): TraitOptionI
       let effectiveDots = 0;
       if (key === 'rage') {
         baseDots = Math.max(0, Math.floor(sheet.rage.permanent));
-        effectiveDots = baseDots;
+        effectiveDots = stats.effectiveRagePool;
       } else if (key === 'gnosis') {
         baseDots = Math.max(0, Math.floor(sheet.gnosis.permanent));
         effectiveDots = stats.effectiveGnosisPool;
       } else if (key === 'willpower') {
         baseDots = Math.max(0, Math.floor(sheet.willpower.permanent));
-        effectiveDots = baseDots;
+        effectiveDots = stats.effectiveWillpowerPool;
       } else {
         baseDots = Math.max(0, Math.floor(sheet.baseAttributes[key]));
         effectiveDots = Math.max(0, Math.floor(stats.effectiveAttributes[key]));
@@ -190,10 +192,11 @@ export function getSheetTraitOptions(sheet: W20UserCharacterSheet): TraitOptionI
 
 export function getSheetAbilityOptions(sheet: W20UserCharacterSheet): AbilityOptionItem[] {
   const items: AbilityOptionItem[] = [];
+  const stats = computeUserSheetStats(sheet);
 
   for (const grp of COMPOSER_ABILITY_GROUPS) {
     for (const key of grp.keys) {
-      const dots = lookupSheetAbilityDots(sheet, key);
+      const dots = stats.effectiveAbilities[key] ?? lookupSheetAbilityDots(sheet, key);
       const specialty = readSpecialty(sheet, key);
       const untrainedHint =
         dots === 0
@@ -215,7 +218,7 @@ export function getSheetAbilityOptions(sheet: W20UserCharacterSheet): AbilityOpt
   }
 
   for (const custom of sheet.customAbilities) {
-    const dots = Math.max(0, Math.floor(custom.dots));
+    const dots = stats.effectiveAbilities[custom.id] ?? Math.max(0, Math.floor(custom.dots));
     const specialty = custom.specialty?.trim() || readSpecialty(sheet, custom.id);
     const untrainedHint =
       dots === 0
@@ -239,6 +242,7 @@ export function getSheetAbilityOptions(sheet: W20UserCharacterSheet): AbilityOpt
 }
 
 export function resolveTraitRollSelection(params: {
+  ruleContext?: RuleContext;
   sheet: W20UserCharacterSheet;
   attribute: ComposerAttributeKey | '';
   ability: string;
@@ -316,13 +320,13 @@ export function resolveTraitRollSelection(params: {
     isSecretRoll: false,
   };
 
-  const resolved = resolveSheetShortcut(sheet, synthetic);
-  const basePool = Math.max(0, attrDots + abilDots + bonusDice);
+  const resolved = resolveSheetShortcut(sheet, synthetic, params.ruleContext);
+  const basePool = Math.max(0, Math.min(30, resolved.rawPool));
   const autoSpecialty = resolved.hasSpecialty;
   const effectiveHasSpecialty = specialtyOverride ?? autoSpecialty;
   const autoApplyWounds = resolved.applyWoundPenalty;
   const effectiveApplyWounds = woundOverride ?? autoApplyWounds;
-  const effectivePool = Math.max(0, basePool + (effectiveApplyWounds ? stats.woundPenalty : 0));
+  const effectivePool = Math.max(0, basePool + (effectiveApplyWounds ? resolved.woundPenalty : 0));
 
   const compactParts: string[] = [];
   if (attribute) compactParts.push(String(attrDots));
@@ -330,11 +334,14 @@ export function resolveTraitRollSelection(params: {
   let compactFormula = compactParts.join(' + ');
   if (bonusDice > 0) compactFormula += ` + ${bonusDice}`;
   else if (bonusDice < 0) compactFormula += ` - ${Math.abs(bonusDice)}`;
-  if (effectiveApplyWounds && stats.woundPenalty !== 0) {
-    compactFormula += ` - ${Math.abs(stats.woundPenalty)} Wnd`;
+  const ruleDice = basePool - Math.max(0, attrDots + abilDots + bonusDice);
+  if (ruleDice !== 0) compactFormula += ` ${ruleDice > 0 ? '+' : '−'} ${Math.abs(ruleDice)} rules`;
+  if (effectiveApplyWounds && resolved.woundPenalty !== 0) {
+    compactFormula += ` - ${Math.abs(resolved.woundPenalty)} Wnd`;
   }
 
   return {
+    shortcut: synthetic,
     hasSelection: true,
     attrOption,
     abilOption,
@@ -347,9 +354,9 @@ export function resolveTraitRollSelection(params: {
     effectiveHasSpecialty,
     autoApplyWounds,
     effectiveApplyWounds,
-    woundPenalty: stats.woundPenalty,
+    woundPenalty: resolved.woundPenalty,
     effectivePool,
-    difficulty: clampedDifficulty,
+    difficulty: resolved.difficulty,
     autoLabel,
     formulaSummary: resolved.formulaSummary,
     compactFormula,

@@ -13,6 +13,11 @@ import type {
   W20CharacterState,
   W20MacroDefinition,
   W20RollResult,
+  W20UserCharacterSheet,
+  SheetShortcut,
+  RuleContext,
+  ActiveRuleInstance,
+  AppliedRuleModifier,
 } from '@w20-vtt/core';
 
 export type ParticipantRole = 'storyteller' | 'player' | 'spectator';
@@ -93,6 +98,36 @@ export interface TableParticipant {
   seatId?: string;
   characterName?: string | null;
   activeForm?: GarouForm | null;
+  sheetId?: string | null;
+}
+
+export interface RuleClock {
+  session: number;
+  turn: number;
+  scene: number;
+  story: number;
+  /** Elapsed fictional seconds, independent of wall-clock time. */
+  seconds: number;
+}
+
+export interface RoomRuleEffect {
+  instance: ActiveRuleInstance;
+  sourceId: string;
+  targetId: string;
+  casterDiscordId: string;
+  expiresAtTurn?: number;
+  expiresAtScene?: number;
+  expiresAtStory?: number;
+  expiresAtSeconds?: number;
+  preparedAtTurn?: number;
+}
+
+export interface RoomRuleStateView {
+  sheets: W20UserCharacterSheet[];
+  effects: RoomRuleEffect[];
+  clock: RuleClock;
+  packWillpower?: { current: number; max: number };
+  packPools?: Record<string, { current: number; max: number; name: string }>;
 }
 
 /**
@@ -120,6 +155,10 @@ export interface RollHistoryEntry {
   rageDiceCount: number;
   isSecretRoll: boolean;
   roll: W20RollResult;
+  modifiers?: AppliedRuleModifier[];
+  sheetId?: string;
+  rerollOf?: string;
+  correctionOf?: string;
 }
 
 export type NpcSpawnTemplateId =
@@ -141,6 +180,75 @@ export interface ClientEnvelope<TPayload = ClientCommand> {
 }
 
 export type ClientCommand =
+  | {
+      type: 'APPLY_RULE_EVENT';
+      seatId?: string;
+      characterId?: string;
+      event:
+        | 'totem_acceptance'
+        | 'story_start'
+        | 'story_end'
+        | 'session_start'
+        | 'renown_award'
+        | 'experience_award';
+      sourceEntryId?: string;
+      ruleId?: string;
+      amount?: number;
+      trait?: 'honor' | 'glory' | 'wisdom';
+      context?: RuleContext;
+    }
+  | {
+      type: 'REROLL_RULE_ROLL';
+      seatId: string;
+      sheetId: string;
+      rollId: string;
+      ruleId: string;
+    }
+  | {
+      type: 'PREVIEW_RULE_ROLL';
+      seatId: string;
+      sheetId: string;
+      shortcut: SheetShortcut;
+      context?: RuleContext;
+    }
+  | {
+      type: 'BIND_TABLE_SHEET';
+      seatId: string;
+      sheet: W20UserCharacterSheet | null;
+      syncCode?: string;
+    }
+  | {
+      type: 'ACTIVATE_RULE';
+      actionId?: string;
+      referenceRollId?: string;
+      seatId?: string;
+      characterId?: string;
+      sourceEntryId: string;
+      ruleId: string;
+      targetIds: string[];
+      context?: RuleContext;
+      choiceValue?: number;
+      activationDifficulty?: number;
+      opposingSuccesses?: number;
+      confirmedConditions?: boolean;
+      variableCosts?: { rage?: number; gnosis?: number; willpower?: number };
+      ruleChoices?: Record<string, string | number>;
+      targetChoices?: Record<string, Record<string, string | number>>;
+      /** Choose the documented automatic Gnosis spend for fetish activation. */
+      spendGnosis?: boolean;
+      isSecretRoll?: boolean;
+    }
+  | {
+      type: 'END_RULE_EFFECT';
+      effectId: string;
+      seatId?: string;
+      characterId?: string;
+    }
+  | {
+      type: 'ADVANCE_RULE_CLOCK';
+      unit: 'turn' | 'scene' | 'story' | 'session' | 'seconds';
+      amount: number;
+    }
   | {
       type: 'HELLO_AUTH';
       sessionJwt: string;
@@ -183,6 +291,7 @@ export type ClientCommand =
       specialtyId?: string;
       spendWillpower?: boolean;
       isSecretStRoll?: boolean;
+      ruleContext?: RuleContext;
     }
   | {
       type: 'ROLL_TABLE_POOL';
@@ -191,6 +300,7 @@ export type ClientCommand =
       difficulty: number;
       hasSpecialty: boolean;
       spendWillpower: boolean;
+      willpowerSource?: 'pack';
       applyWoundPenalty: boolean;
       rollMode?: TableRollMode;
       initiativeModifier?: number;
@@ -200,6 +310,10 @@ export type ClientCommand =
       rollClientId?: string;
       seatId?: string;
       rollerDisplayName?: string;
+      shortcut?: SheetShortcut;
+      ruleContext?: RuleContext;
+      sheetId?: string;
+      initiativeAdjustment?: number;
     }
   | {
       type: 'UPDATE_LIGHT_TRACKERS';
@@ -411,6 +525,7 @@ export interface RoomSnapshotView {
   participants?: TableParticipant[];
   rollHistory?: RollHistoryEntry[];
   tableInitiative?: TableInitiativeEntry[];
+  ruleState?: RoomRuleStateView;
 }
 
 export type CommandRejectionCode =
@@ -423,6 +538,32 @@ export type CommandRejectionCode =
   | 'VALIDATION_ERROR';
 
 export type ServerEvent =
+  | {
+      type: 'RULE_ROLL_PREVIEW';
+      sheetId: string;
+      pool: number;
+      effectivePool: number;
+      difficulty: number;
+      hasSpecialty: boolean;
+      applyWoundPenalty: boolean;
+      woundPenalty: number;
+      modifiers: AppliedRuleModifier[];
+      pendingTags?: string[];
+      initiativeModifier?: number;
+    }
+  | {
+      type: 'RULE_STATE_UPDATED';
+      state: RoomRuleStateView;
+    }
+  | {
+      type: 'RULE_ACTIVATION_RESOLVED';
+      activationId: string;
+      sourceId: string;
+      ruleId: string;
+      roll: W20RollResult | null;
+      succeeded: boolean;
+      reason?: string;
+    }
   | {
       type: 'SYNC_SNAPSHOT';
       snapshot: RoomSnapshotView;

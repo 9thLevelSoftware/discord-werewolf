@@ -4,6 +4,8 @@ import {
   ActionCategory,
   AttributeKey,
   computeEffectiveCharacterStats,
+  getDeclarationSlotPool,
+  W20_WEAPON_PRESETS,
   DeclaredActionInput,
   GarouForm,
   ReactionChoice,
@@ -23,40 +25,8 @@ type SlotDraft = {
   allocatedDice: number;
   targetForm: GarouForm;
   macroId: string;
+  weaponId?: string;
 };
-
-function computeSlotPool(
-  char: W20CharacterState,
-  slot: SlotDraft,
-  macrosById: Map<string, W20CharacterState['macros'][number]>
-): number {
-  const stats = computeEffectiveCharacterStats(char);
-  if (slot.category === 'shift_form') {
-    return Math.max(
-      0,
-      stats.effectiveAttributes.stamina + (char.abilities.primal_urge ?? 0) + stats.woundPenalty
-    );
-  }
-  if (slot.category === 'gift_or_rite' && slot.macroId) {
-    const m = macrosById.get(slot.macroId);
-    if (m) {
-      if (m.pool.kind === 'attribute_ability') {
-        const mAttr = stats.effectiveAttributes[m.pool.attribute];
-        const mAbil = m.pool.ability ? (char.abilities[m.pool.ability] ?? 0) : 0;
-        return Math.max(0, mAttr + mAbil + stats.woundPenalty);
-      }
-      if (m.pool.kind === 'permanent_trait') {
-        return m.pool.trait === 'gnosis' ? stats.effectiveGnosisPool : char[m.pool.trait].permanent;
-      }
-      if (m.pool.kind === 'fetish_gnosis_rating') {
-        return m.pool.rating;
-      }
-    }
-  }
-  const attr = stats.effectiveAttributes[slot.attributeKey];
-  const abil = slot.abilityKey ? (char.abilities[slot.abilityKey] ?? 0) : 0;
-  return Math.max(0, attr + abil + stats.woundPenalty);
-}
 
 function buildSubActionSlot(
   slot: SlotDraft,
@@ -95,6 +65,13 @@ function buildSubActionSlot(
 
   if (slot.category === 'melee_attack' || slot.category === 'brawl_attack' || slot.category === 'ranged_attack') {
     const stats = char ? computeEffectiveCharacterStats(char) : null;
+    const weapon = char?.fetishes.find((item) => item.id === slot.weaponId);
+    const equipment = char?.equipment?.find(
+      (item) => item.id === slot.weaponId && item.carried !== false
+    );
+    const preset =
+      equipment &&
+      W20_WEAPON_PRESETS.find((item) => item.id === (equipment.ruleId ?? equipment.id));
     const isBiteOrClaw = slot.category === 'brawl_attack';
     const claw = stats?.naturalAttacks.find((a) => a.name === 'Claws');
     const bite = stats?.naturalAttacks.find((a) => a.name === 'Bite');
@@ -111,7 +88,8 @@ function buildSubActionSlot(
 
     return {
       category: slot.category,
-      label,
+      weaponId:weapon?.id ?? equipment?.id,
+      label:weapon?.name ?? equipment?.name ?? label,
       ...(targetId ? { targetCombatantId: targetId } : {}),
       attributeKey: slot.attributeKey,
       abilityKey:
@@ -121,9 +99,8 @@ function buildSubActionSlot(
           : slot.category === 'melee_attack'
             ? 'melee'
             : 'firearms'),
-      baseDifficulty:
-        slot.category === 'brawl_attack' && !claw && bite ? bite.accuracyDiff : 6,
-      weaponDamageBonus:
+      baseDifficulty:preset?.difficulty ?? (slot.category === 'brawl_attack' && !claw && bite ? bite.accuracyDiff : 6),
+      weaponDamageBonus: preset?.damageDice ?? weapon?.weaponDamageBonus ?? (
         slot.category === 'brawl_attack'
           ? claw
             ? 2
@@ -132,13 +109,14 @@ function buildSubActionSlot(
               : 0
           : slot.category === 'melee_attack'
             ? 2
-            : 4,
-      damageType:
+            : 4),
+      isSilverAttack:weapon?.isSilver ?? equipment?.isSilver,
+      damageType: preset?.damageType ?? weapon?.damageType ?? (
         slot.category === 'brawl_attack'
           ? claw || bite
             ? 'aggravated'
             : 'bashing'
-          : 'lethal',
+          : 'lethal'),
       ...(includeAllocated ? { allocatedDice: slot.allocatedDice } : {}),
     };
   }
@@ -354,13 +332,14 @@ export const ReverseInitiativeTracker: React.FC = () => {
   );
 
   const cursorChar = activeCursorEntry ? characters[activeCursorEntry.characterId] : undefined;
-  const cursorMacrosMap = new Map((cursorChar?.macros ?? []).map((m) => [m.id, m]));
 
   // Smallest-pool validation for split_pool mode
   const activeSlotCount = declMode === 'split_pool' ? slotsDraft.length : 1;
   const visibleSlots = slotsDraft.slice(0, activeSlotCount);
   const slotPools = cursorChar
-    ? visibleSlots.map((s) => computeSlotPool(cursorChar, s, cursorMacrosMap))
+    ? visibleSlots.map((s) =>
+        getDeclarationSlotPool(cursorChar, buildSubActionSlot(s, cursorChar, undefined, false))
+      )
     : [0];
   const smallestPool = slotPools.length > 0 ? Math.min(...slotPools) : 0;
   const sumAllocated = visibleSlots.reduce((acc, s) => acc + s.allocatedDice, 0);
@@ -766,6 +745,7 @@ export const ReverseInitiativeTracker: React.FC = () => {
                               ? {
                                   ...item,
                                   category: nextCat,
+                                  weaponId: undefined,
                                   abilityKey:
                                     nextCat === 'brawl_attack'
                                       ? 'brawl'
@@ -840,6 +820,11 @@ export const ReverseInitiativeTracker: React.FC = () => {
                     </select>
                   )}
 
+                  {(slot.category==='melee_attack' || slot.category==='ranged_attack') && cursorChar && (cursorChar.fetishes.some(item=>item.weaponDamageBonus!==undefined) || Boolean(cursorChar.equipment?.some(item=>item.carried!==false))) && <label>Weapon
+                    <select className="w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 text-xs" value={slot.weaponId ?? ''} onChange={e=>setSlotsDraft(prev=>prev.map((item,i)=>i===idx ? {...item,weaponId:e.target.value || undefined} : item))}>
+                      <option value="">Standard weapon</option>
+                      {[...cursorChar.fetishes.filter(item=>item.weaponDamageBonus!==undefined),...(cursorChar.equipment ?? []).filter(item=>item.carried!==false)].map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select></label>}
                   {slot.category === 'shift_form' && (
                     <select
                       aria-label="Target form"

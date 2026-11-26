@@ -6,12 +6,17 @@ import {
   BrawlingManeuverRow,
   CanonicalAbilityKey,
   cleanOtherTraitDisplayName,
+  computeUserSheetStats,
   DamageType,
   filterMeritFlawCatalog,
   formatCatalogSource,
   formatMeritFlawCost,
   GarouForm,
   getBreedNaturalForm,
+  getSourceModifierRule,
+  resolveSheetShortcut,
+  resolveRuleShift,
+  resolveRuleDamageType,
   OtherTraitKind,
   resolveOtherTraitKind,
   SheetFetishItem,
@@ -22,6 +27,7 @@ import {
   UserSheetComputedStats,
   W20_FETISH_CATALOG,
   W20_FORM_MATRIX,
+  W20_WEAPON_PRESETS,
   W20_RITE_CATALOG,
   W20_TALEN_CATALOG,
   W20UserCharacterSheet,
@@ -40,6 +46,8 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react';
+import { openSheetRule } from './sheetShared';
+import { FetishWeaponRollControls } from './FetishWeaponRollControls';
 import type { SheetRollRequest } from '../../store/useCharacterSheetStore';
 import {
   formatFormName,
@@ -85,17 +93,7 @@ function computeFormPreviewAttributes(
   manipulation: number;
   appearance: number;
 } {
-  const spec = W20_FORM_MATRIX[form];
-  const base = sheet.baseAttributes;
-  return {
-    strength: Math.max(1, base.strength + (spec.deltas.strength ?? 0)),
-    dexterity: Math.max(1, base.dexterity + (spec.deltas.dexterity ?? 0)),
-    stamina: Math.max(1, base.stamina + (spec.deltas.stamina ?? 0)),
-    manipulation: Math.max(0, base.manipulation + (spec.deltas.manipulation ?? 0)),
-    appearance: spec.overrideAppearanceZero
-      ? 0
-      : Math.max(0, base.appearance + (spec.deltas.appearance ?? 0)),
-  };
+  return computeUserSheetStats({ ...sheet, activeForm: form }).effectiveAttributes;
 }
 
 function buildWeaponAttackShortcut(weapon: SheetWeaponEntry): SheetShortcut {
@@ -124,6 +122,7 @@ function buildWeaponDamageShortcut(weapon: SheetWeaponEntry): SheetShortcut {
 
 function buildBrawlingAttackShortcut(row: BrawlingManeuverRow): SheetShortcut {
   return {
+    ruleContext: { rollKind: 'attack', maneuver: row.key },
     id: `brawl-atk-${row.key}`,
     name: `${row.name} Attack`,
     source: {
@@ -155,6 +154,7 @@ function buildBrawlingDamageShortcut(row: BrawlingManeuverRow): SheetShortcut | 
   return {
     id: `brawl-dmg-${row.key}`,
     name: `${row.name} Damage`,
+    ruleContext: { rollKind: 'damage', maneuver: row.key },
     source: {
       kind: 'trait_combo',
       attribute: 'strength',
@@ -269,7 +269,23 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
 
   const handleRollShift = (targetForm: GarouForm) => {
     const spec = W20_FORM_MATRIX[targetForm];
+    const shift = resolveRuleShift(sheet, { method: 'roll_primal_urge', targetForm });
+    if (!shift.allowed) return;
+    if (!shift.requiresRoll) {
+      onSetActiveForm(targetForm);
+      return;
+    }
     const shiftShortcut: SheetShortcut = {
+      ruleContext: {
+        rollKind: 'shift',
+        tags: [
+          'task:shapeshift',
+          'action:shapeshift',
+          'action:shift_form',
+          'target-form:' + targetForm,
+          ...(targetForm === naturalForm ? ['target:breed_form'] : []),
+        ],
+      },
       id: `shift-${targetForm}`,
       name: `Shift to ${formatFormName(targetForm)}`,
       source: {
@@ -291,6 +307,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
     const preview = computeFormPreviewAttributes(sheet, form);
     const isActive = sheet.activeForm === form;
     const isNatural = naturalForm === form;
+    const shift = resolveRuleShift(sheet, { method: 'roll_primal_urge', targetForm: form });
 
     const statRows: Array<{ label: string; key: keyof typeof preview; val: number }> = [
       { label: 'Str', key: 'strength', val: preview.strength },
@@ -317,7 +334,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
               </h4>
               <div className="flex flex-wrap items-center gap-1 text-caption">
                 <span className="font-mono text-stone-400">
-                  Shift Diff {spec.shiftDifficulty}
+                  Shift Diff {shift.difficulty}
                 </span>
                 {isNatural && (
                   <span className="rounded bg-cyan-950/80 px-1.5 py-0.5 text-caption font-bold text-cyan-200">
@@ -386,7 +403,8 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
         <div className="space-y-1.5 border-t border-stone-800/80 pt-2">
           <button
             type="button"
-            disabled={isActive}
+            disabled={isActive || !shift.allowed}
+            title={shift.reason}
             onClick={() => onSetActiveForm(form)}
             className={`w-full rounded-lg px-2 py-1.5 text-xs font-bold transition ${
               isActive
@@ -399,11 +417,13 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
 
           <button
             type="button"
+            disabled={!shift.allowed || isActive}
+            title={shift.reason}
             onClick={() => handleRollShift(form)}
             className="w20-crimson-seal flex w-full items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-amber-50"
           >
             <Dices className="h-3.5 w-3.5" />
-            Roll Shift (Diff {spec.shiftDifficulty})
+            {shift.requiresRoll ? `Roll Shift (Diff ${shift.difficulty})` : 'Shift automatically'}
           </button>
         </div>
       </div>
@@ -412,62 +432,29 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
 
   const addWeaponPreset = (preset: 'blank' | 'klaive' | 'pistol' | 'silver_knife') => {
     const id = `wpn-${crypto.randomUUID().slice(0, 8)}`;
-    const entry: SheetWeaponEntry =
-      preset === 'klaive'
-        ? {
-            id,
-            name: 'Klaive',
-            rollAttribute: 'dexterity',
-            rollAbility: 'melee',
-            difficulty: 6,
-            damageMode: 'strength_plus',
-            damageDice: 2,
-            damageType: 'aggravated',
-            range: 'Melee',
-            rate: '1',
-            clip: '-',
-          }
-        : preset === 'pistol'
-          ? {
-              id,
-              name: 'Heavy Pistol',
-              rollAttribute: 'dexterity',
-              rollAbility: 'firearms',
-              difficulty: 6,
-              damageMode: 'flat',
-              damageDice: 5,
-              damageType: 'lethal',
-              range: '35m',
-              rate: '3',
-              clip: '12',
-            }
-          : preset === 'silver_knife'
-            ? {
-                id,
-                name: 'Silver Dagger',
-                rollAttribute: 'dexterity',
-                rollAbility: 'melee',
-                difficulty: 6,
-                damageMode: 'strength_plus',
-                damageDice: 1,
-                damageType: 'aggravated',
-                range: 'Melee',
-                rate: '1',
-                clip: '-',
-              }
-            : {
-                id,
-                name: 'New Weapon',
-                rollAttribute: 'dexterity',
-                rollAbility: 'melee',
-                difficulty: 6,
-                damageMode: 'strength_plus',
-                damageDice: 1,
-                damageType: 'lethal',
-                range: 'Melee',
-                rate: '1',
-                clip: '-',
-              };
+    const ruleId =
+      preset === 'klaive' ? 'equipment-klaive' : 'equipment-heavy-semiautomatic-pistol';
+    const book =
+      preset === 'klaive' || preset === 'pistol'
+        ? W20_WEAPON_PRESETS.find((item) => item.id === ruleId)
+        : undefined;
+    const silverKnife = preset === 'silver_knife';
+    const entry: SheetWeaponEntry = book
+      ? { ...book, id, ruleId: book.id, carried: true, isSilver: preset === 'klaive' }
+      : {
+          id,
+          name: silverKnife ? 'Silver Dagger' : 'New Weapon',
+          isSilver: silverKnife,
+          rollAttribute: 'dexterity',
+          rollAbility: 'melee',
+          difficulty: 6,
+          damageMode: 'strength_plus',
+          damageDice: 1,
+          damageType: silverKnife ? 'aggravated' : 'lethal',
+          range: 'Melee',
+          rate: '1',
+          clip: '-',
+        };
 
     onUpdateSheet((prev) => ({
       ...prev,
@@ -488,6 +475,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
     if (!name) return;
     const entry: SheetRiteEntry = {
       id: `rite-${crypto.randomUUID().slice(0, 8)}`,
+      ruleId: W20_RITE_CATALOG.find((item) => item.name.toLowerCase() === name.toLowerCase())?.id,
       name,
       level: Math.max(0, Math.min(6, Math.floor(riteLevel))),
       summary: riteSummary.trim().slice(0, 2000),
@@ -507,10 +495,14 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
     if (!name) return;
     const entry: SheetFetishItem = {
       id: `fetish-${crypto.randomUUID().slice(0, 8)}`,
+      ruleId: [...W20_FETISH_CATALOG, ...W20_TALEN_CATALOG].find(
+        (item) => item.name.toLowerCase() === name.toLowerCase()
+      )?.id,
       name,
       level: Math.max(0, Math.min(6, Math.floor(fetishLevel))),
       gnosisRating: Math.max(1, Math.min(10, Math.floor(fetishGnosis))),
       power: fetishPower.trim().slice(0, 2000),
+      isAttuned: fetishLevel > 0 ? false : undefined,
       isSilver: fetishSilver || undefined,
     };
     onUpdateSheet((prev) => ({
@@ -1295,6 +1287,8 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   const dmgShortcut = buildBrawlingDamageShortcut(row);
                   const atkPinned = isPinned(atkShortcut.id);
                   const dmgPinned = dmgShortcut ? isPinned(dmgShortcut.id) : false;
+                  const attack = resolveSheetShortcut(sheet, atkShortcut);
+                  const damage = dmgShortcut && resolveSheetShortcut(sheet, dmgShortcut);
 
                   return (
                     <div
@@ -1315,7 +1309,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           )}
                         </div>
                         <span className="font-mono text-xs text-stone-300">
-                          Diff {row.difficulty} • Dmg {row.damageLabel}
+                          Diff {attack.difficulty} • Dmg {damage ? damage.rawPool + '/' + resolveRuleDamageType(row.damageType,damage.modifiers)[0].toUpperCase() : row.damageLabel}
                         </span>
                       </div>
 
@@ -1327,7 +1321,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                             className="w20-crimson-seal flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-amber-50"
                           >
                             <Dices className="h-3.5 w-3.5" />
-                            Atk ({row.attackPool}d10)
+                            Atk ({attack.rawPool}d10)
                           </button>
                           <button
                             type="button"
@@ -1352,7 +1346,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                               className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-amber-500/45 bg-amber-950/40 px-2 py-1.5 text-xs font-bold text-amber-100"
                             >
                               <Dices className="h-3.5 w-3.5" />
-                              Dmg ({row.damagePool}d10)
+                              Dmg ({damage?.rawPool}d10)
                             </button>
                             <button
                               type="button"
@@ -1395,6 +1389,8 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                     const dmgShortcut = buildBrawlingDamageShortcut(row);
                     const atkPinned = isPinned(atkShortcut.id);
                     const dmgPinned = dmgShortcut ? isPinned(dmgShortcut.id) : false;
+                  const attack = resolveSheetShortcut(sheet, atkShortcut);
+                  const damage = dmgShortcut && resolveSheetShortcut(sheet, dmgShortcut);
 
                     return (
                       <tr
@@ -1409,9 +1405,9 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                             </span>
                           )}
                         </td>
-                        <td className="py-2 pr-2 font-mono text-stone-200">{row.attackPool}d10</td>
-                        <td className="py-2 pr-2 font-mono text-amber-300">{row.difficulty}</td>
-                        <td className="py-2 pr-2 font-mono text-stone-200">{row.damageLabel}</td>
+                        <td className="py-2 pr-2 font-mono text-stone-200">{attack.rawPool}d10</td>
+                        <td className="py-2 pr-2 font-mono text-amber-300">{attack.difficulty}</td>
+                        <td className="py-2 pr-2 font-mono text-stone-200">{damage ? damage.rawPool + '/' + resolveRuleDamageType(row.damageType,damage.modifiers)[0].toUpperCase() : row.damageLabel}</td>
                         <td className="py-2 text-right">
                           <div className="inline-flex items-center gap-1">
                             <button
@@ -1636,10 +1632,14 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           <div className="flex shrink-0 items-center gap-1">
                             <button
                               type="button"
-                              onClick={() => onRoll(shortcutToRollRequest(sheet, fetishShortcut))}
+                              onClick={() =>
+                                getSourceModifierRule({ ...f, kind: 'fetish' })?.activation
+                                  ? openSheetRule(f.id)
+                                  : onRoll(shortcutToRollRequest(sheet, fetishShortcut))
+                              }
                               className="flex items-center gap-1 rounded bg-red-800/85 px-1.5 py-0.5 text-caption font-bold text-amber-50 hover:bg-red-700"
-                              aria-label={`Roll Gnosis Activation (${f.gnosisRating}d10)`}
-                              title={`Roll Gnosis Activation (${f.gnosisRating}d10)`}
+                              aria-label={`Activate ${f.name} (difficulty ${f.gnosisRating})`}
+                              title={`Activate ${f.name} (difficulty ${f.gnosisRating})`}
                             >
                               <Dices className="h-3 w-3" />
                               Activate
@@ -1673,6 +1673,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           </div>
                         </div>
                         {f.power && <p className="mt-1 text-caption text-stone-400">{f.power}</p>}
+                        <FetishWeaponRollControls sheet={sheet} fetish={f} onRoll={onRoll} />
                       </div>
                     );
                   })}
@@ -1799,6 +1800,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
+                      {getSourceModifierRule({...r,kind:"rite"})?.activation && <button className="rounded border border-amber-800 px-2 py-1 text-amber-100" onClick={()=>openSheetRule(r.id)}>Perform rite</button>}
                       {r.summary && <p className="mt-1 text-caption text-stone-400">{r.summary}</p>}
                     </div>
                   ))}
@@ -1821,6 +1823,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
             );
 
             const addOtherTrait = (explicit?: {
+              ruleId?: string;
               name: string;
               kind: OtherTraitKind;
               dots: number;
@@ -1837,6 +1840,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                   {
                     id: `${kind}-${crypto.randomUUID().slice(0, 8)}`,
                     name: clean,
+                    ruleId: explicit?.ruleId,
                     dots,
                     kind,
                     ...(explicit?.category ? { category: explicit.category } : {}),
@@ -2096,6 +2100,7 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           type="button"
                           onClick={() =>
                             addOtherTrait({
+                              ruleId: item.id,
                               name: item.name,
                               kind: item.kind,
                               dots: item.pointValue,

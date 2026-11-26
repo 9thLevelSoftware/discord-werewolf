@@ -1,3 +1,4 @@
+import type { RuleBinding, ActiveRuleInstance } from './ruleTypes';
 export type Breed = 'homid' | 'metis' | 'lupus';
 export type Auspice = 'ragabash' | 'theurge' | 'philodox' | 'galliard' | 'ahroun';
 export type GarouForm = 'homid' | 'glabro' | 'crinos' | 'hispo' | 'lupus';
@@ -164,7 +165,7 @@ export interface ActiveCharacterBuff {
   remainingRounds: number;
 }
 
-export interface CharacterFetishEntry {
+export interface CharacterFetishEntry extends RuleBinding {
   id: string;
   name: string;
   level: number; // 0 = Talen (single-use), 1..6 = Fetish
@@ -179,7 +180,7 @@ export interface CharacterFetishEntry {
 
 export type MeritFlawCategory = 'physical' | 'mental' | 'social' | 'supernatural';
 
-export interface MeritOrFlawChoice {
+export interface MeritOrFlawChoice extends RuleBinding {
   id: string;
   name: string;
   kind: 'merit' | 'flaw';
@@ -228,9 +229,26 @@ export interface W20CharacterState {
 
   health: HealthState;
   activeBuffs: ActiveCharacterBuff[];
+  giftIds?: string[];
   macros: W20MacroDefinition[];
   fetishes: CharacterFetishEntry[];
   portraitsByForm: Partial<Record<GarouForm, string>>;
   turnLocks: TurnCombatLocks;
+  equipment?: Array<
+    RuleBinding & {
+      id: string;
+      name: string;
+      worn?: boolean;
+      carried?: boolean;
+      isSilver?: boolean;
+    }
+  >;
+  packTotem?: string;
+  packTotemRule?: RuleBinding;
+  ruleContextTags?: string[];
+  activeRuleEffects?: ActiveRuleInstance[];
+  ruleHealthBonus?: number;
+  /** Restricted experience awarded for mystical development, tracked separately from xp_ledger. */
+  mysticalExperience?: number;
   stateVersion: number;
 }

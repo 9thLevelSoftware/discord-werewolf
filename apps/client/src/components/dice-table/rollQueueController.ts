@@ -1,4 +1,4 @@
-import type { W20RollResult } from '@w20-vtt/core';
+import type { W20RollResult, SheetShortcut, RuleContext } from '@w20-vtt/core';
 import type { Queued3DRoll } from '../../store/useVttRoomStore';
 
 /**
@@ -37,6 +37,11 @@ export interface DiceBoxLike {
 }
 
 export interface LocalQueuedRollSpec {
+  shortcut?: SheetShortcut;
+  ruleContext?: RuleContext;
+  sheetId?: string;
+  initiativeAdjustment?: number;
+  willpowerSource?: 'pack';
   rollClientId: string;
   pool: number;
   rageDiceCount: number;

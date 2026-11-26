@@ -1,4 +1,9 @@
 import {
+  applyRuleValue,
+  getCharacterModifierSources,
+  isRuleSourceSuppressed,
+} from './modifierRules';
+import {
   ActiveCharacterBuff,
   MacroDifficultySource,
   MacroEffectPayload,
@@ -137,6 +142,15 @@ export function executeW20Macro(
   },
   rngD10: () => number = rollCsprngD10
 ): MacroExecutionResult {
+  const source = getCharacterModifierSources(caster).find((entry) => entry.id === macro.id);
+  const sourceEvaluation = computeEffectiveCharacterStats(caster).ruleEvaluation;
+  if (
+    sourceEvaluation.modifiers.some(
+      (modifier) => modifier.target === 'source:supernatural' && modifier.operation === 'deny'
+    ) ||
+    (source && isRuleSourceSuppressed(source, sourceEvaluation))
+  )
+    throw new Error('An active rule suppresses this supernatural power.');
   // 1. Check Form Prerequisite
   if (macro.requiredForms?.length && !macro.requiredForms.includes(caster.activeForm)) {
     throw new Error(
@@ -205,7 +219,11 @@ export function executeW20Macro(
   };
 
   // 5. Execute Pool Roll (unless instant spend Gift like Razor Claws / Spirit of the Fray)
-  const stats = computeEffectiveCharacterStats(updatedCaster);
+  const macroContext =
+    macro.pool.kind === 'attribute_ability'
+      ? { attribute: macro.pool.attribute, ability: macro.pool.ability, tags: [`gift:${macro.id}`] }
+      : { tags: [`gift:${macro.id}`] };
+  const stats = computeEffectiveCharacterStats(updatedCaster, macroContext);
   let rollResult: W20RollResult | null = null;
 
   if (macro.pool.kind !== 'no_roll_instant') {
@@ -217,7 +235,7 @@ export function executeW20Macro(
       basePool = envContext.overrideBasePool;
     } else if (macro.pool.kind === 'attribute_ability') {
       const attr = stats.effectiveAttributes[macro.pool.attribute];
-      const abil = macro.pool.ability ? (updatedCaster.abilities[macro.pool.ability] ?? 0) : 0;
+      const abil = macro.pool.ability ? (stats.effectiveAbilities[macro.pool.ability] ?? 0) : 0;
       basePool = attr + abil;
     } else if (macro.pool.kind === 'permanent_trait') {
       applyWounds = false; // W20: Pure Rage/Gnosis/Willpower rolls ignore wound penalties
@@ -233,10 +251,11 @@ export function executeW20Macro(
     rollResult = resolveW20DicePool(
       {
         label: `${updatedCaster.name}: ${macro.name}`,
-        basePool,
+        basePool: envContext.overrideBasePool !== undefined ? basePool : applyRuleValue(stats.ruleEvaluation,'pool',basePool),
+        ruleModifiers:stats.ruleEvaluation.modifiers,
         woundPenalty: stats.woundPenalty,
         applyWoundPenalty: applyWounds,
-        baseDifficulty: resolvedDiff,
+        baseDifficulty: applyRuleValue(stats.ruleEvaluation,'difficulty',resolvedDiff),
         spendWillpower: envContext.spendWillpowerOnRoll,
       },
       rngD10

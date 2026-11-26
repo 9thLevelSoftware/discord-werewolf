@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientCommand, ClientEnvelope, ServerEnvelope, ServerEvent } from '@w20-vtt/protocol';
 import { discordIdToUuidV5, mintAuthTokensForIdentity } from '../discordOAuth';
 import { GameRoomDO } from '../GameRoomDO';
+import { createBlankUserCharacterSheet, type W20UserCharacterSheet } from '@w20-vtt/core';
+import { UserSheetRepository } from '../userSheetStore';
 import {
   createMockEnv,
   installMockWebSocketPairGlobal,
@@ -75,7 +77,7 @@ function makeCharacterDbRow(overrides: Record<string, unknown>) {
   };
 }
 
-function mockSupabaseForRoom() {
+function mockSupabaseForRoom(characterOverrides: Record<string, unknown> = {}) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     if (url.includes(`/rest/v1/campaigns?id=eq.${CAMPAIGN_ID}`)) {
@@ -118,7 +120,7 @@ function mockSupabaseForRoom() {
     if (url.includes(`/rest/v1/characters?campaign_id=eq.${CAMPAIGN_ID}`)) {
       return new Response(
         JSON.stringify([
-          makeCharacterDbRow({ id: PC1_ID, owner_discord_id: PLAYER1_DISCORD_ID }),
+          makeCharacterDbRow({ id: PC1_ID, owner_discord_id: PLAYER1_DISCORD_ID, ...characterOverrides }),
           makeCharacterDbRow({
             id: PC2_ID,
             owner_discord_id: PLAYER2_DISCORD_ID,
@@ -214,7 +216,387 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('sourced room modifier transactions', () => {
+  const casterId = '123456789012345678';
+  const recipientId = '234567890123456789';
+
+  function canonicalEnv() {
+    return createMockEnv({ SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '' });
+  }
+
+  async function saveCanonicalSheets(env: ReturnType<typeof canonicalEnv>, ...sheets: W20UserCharacterSheet[]) {
+    const repository = new UserSheetRepository(env);
+    for (const sheet of sheets) await repository.create(sheet);
+  }
+
+  async function connect(room: GameRoomDO, state: MockDurableObjectState, id: string) {
+    const env = canonicalEnv();
+    const jwt = await mintJwtForUser(id, id, [], env.SUPABASE_JWT_SECRET);
+    await room.fetch(
+      new Request('https://vtt.example/ws/room/dice-room-modifier-tests', {
+        headers: { Upgrade: 'websocket' },
+      })
+    );
+    const ws = state.acceptedSockets.at(-1)!;
+    await sendCommand(room, ws, 0, {
+      type: 'HELLO_AUTH',
+      sessionJwt: jwt,
+      campaignId: 'dice-room-modifier-tests',
+      characterId: null,
+      lastSeenSeq: null,
+    });
+    return ws;
+  }
+
+  function blank(id: string, owner: string) {
+    const sheet = createBlankUserCharacterSheet({ id, ownerDiscordId: owner, name: id });
+    sheet.gnosis = { permanent: 5, temporary: 5 };
+    sheet.baseAttributes.strength = 3;
+    return sheet;
+  }
+
+  function lastRuleSheet(ws: MockWebSocket, id: string): W20UserCharacterSheet | undefined {
+    const events = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const states = events.flatMap((envelope) =>
+      envelope.event.type === 'RULE_STATE_UPDATED'
+        ? [envelope.event.state]
+        : envelope.event.type === 'SYNC_SNAPSHOT' && envelope.event.snapshot.ruleState
+          ? [envelope.event.snapshot.ruleState]
+          : []
+    );
+    return states.at(-1)?.sheets.find((sheet) => sheet.id === id);
+  }
+
+  it('charges a targeted activation once, preserves it across restart, and keeps other sheets private', async () => {
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const caster = await connect(room, state, casterId);
+    const recipient = await connect(room, state, recipientId);
+    const casterSheet = blank('caster-sheet', casterId);
+    casterSheet.otherTraits.push({
+      id: 'source',
+      name: 'Documented Strength Charm',
+      kind: 'other',
+      dots: 1,
+      customRule: {
+        id: 'strength-charm',
+        name: 'Strength Charm',
+        source: { book: 'Chronicle rules', page: 1 },
+        activation: { cost: { gnosis: 1 }, duration: 'scene', roll: false },
+        effects: [
+          {
+            target: 'attribute:strength',
+            operation: 'add',
+            value: 2,
+            recipient: 'target',
+            duration: 'scene',
+          },
+        ],
+      },
+    });
+    const recipientSheet = blank('recipient-sheet', recipientId);
+    await saveCanonicalSheets(env, casterSheet, recipientSheet);
+    await sendCommand(room, caster, 0, {
+      type: 'BIND_TABLE_SHEET',
+      seatId: 'primary',
+      sheet: casterSheet,
+    });
+    await sendCommand(room, recipient, 0, {
+      type: 'BIND_TABLE_SHEET',
+      seatId: 'primary',
+      sheet: recipientSheet,
+    });
+    caster.drainJson();
+    recipient.drainJson();
+    const command: ClientCommand = {
+      type: 'ACTIVATE_RULE',
+      seatId: 'primary',
+      sourceEntryId: 'source',
+      ruleId: 'strength-charm',
+      targetIds: ['recipient-sheet'],
+    };
+    await sendCommand(room, caster, 0, command, 'activate-once');
+    await sendCommand(room, caster, 0, command, 'activate-once');
+    expect(lastRuleSheet(caster, 'caster-sheet')?.gnosis.temporary).toBe(4);
+    expect((await new UserSheetRepository(env).getById(casterSheet.id))?.gnosis.temporary).toBe(4);
+    const recipientEvents = recipient.drainJson<ServerEnvelope<ServerEvent>>();
+    const recipientStates = recipientEvents.flatMap((envelope) =>
+      envelope.event.type === 'RULE_STATE_UPDATED' ? [envelope.event.state] : []
+    );
+    expect(
+      recipientStates.every((view) =>
+        view.sheets.every((sheet) => sheet.ownerDiscordId === recipientId)
+      )
+    ).toBe(true);
+    expect(recipientStates.at(-1)?.effects).toHaveLength(1);
+
+    const restartedState = new MockDurableObjectState(state.sql.db);
+    const restarted = new GameRoomDO(restartedState as unknown as DurableObjectState, env);
+    const reconnected = await connect(restarted, restartedState, recipientId);
+    expect(lastRuleSheet(reconnected, 'recipient-sheet')?.activeRuleEffects).toHaveLength(1);
+    await sendCommand(restarted, reconnected, 0, {
+      type: 'PREVIEW_RULE_ROLL',
+      seatId: 'primary',
+      sheetId: 'recipient-sheet',
+      shortcut: {
+        id: 'strength',
+        name: 'Strength',
+        source: { kind: 'trait_combo', attribute: 'strength' },
+        difficulty: 6,
+        rageDiceCount: 0,
+        applyWoundPenalty: true,
+        isSecretRoll: false,
+      },
+    });
+    const preview = reconnected
+      .drainJson<ServerEnvelope<ServerEvent>>()
+      .find((envelope) => envelope.event.type === 'RULE_ROLL_PREVIEW');
+    expect(preview?.event.type === 'RULE_ROLL_PREVIEW' && preview.event.pool).toBe(5);
+    await sendCommand(restarted, reconnected, 0, {
+      type: 'ADVANCE_RULE_CLOCK',
+      unit: 'scene',
+      amount: 1,
+    });
+    expect(lastRuleSheet(reconnected, 'recipient-sheet')?.activeRuleEffects).toHaveLength(0);
+  });
+
+  it('spends the activation cost after a failed roll and grants no bonus', async () => {
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((array) => {
+      (array as Uint8Array).fill(0);
+      return array;
+    });
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const sheet = blank('failed-caster', casterId);
+    sheet.otherTraits.push({
+      id: 'failed-source',
+      name: 'Fallible Charm',
+      kind: 'other',
+      dots: 1,
+      customRule: {
+        id: 'fallible-charm',
+        name: 'Fallible Charm',
+        source: { book: 'Chronicle rules' },
+        activation: {
+          cost: { gnosis: 1 },
+          duration: 'scene',
+          roll: true,
+          rollSpec: { pool: 1, difficulty: 10 },
+        },
+        effects: [{ target: 'attribute:strength', operation: 'add', value: 2, duration: 'scene' }],
+      },
+    });
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    ws.drainJson();
+    await sendCommand(room, ws, 0, {
+      type: 'ACTIVATE_RULE',
+      sourceEntryId: 'failed-source',
+      ruleId: 'fallible-charm',
+      targetIds: [],
+    });
+    const events = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    expect(
+      events.some(
+        (envelope) =>
+          envelope.event.type === 'RULE_ACTIVATION_RESOLVED' && !envelope.event.succeeded
+      )
+    ).toBe(true);
+    const view = events.filter((envelope) => envelope.event.type === 'RULE_STATE_UPDATED').at(-1);
+    expect(
+      view?.event.type === 'RULE_STATE_UPDATED' && view.event.state.sheets[0]?.gnosis.temporary
+    ).toBe(4);
+    expect(view?.event.type === 'RULE_STATE_UPDATED' && view.event.state.effects).toEqual([]);
+    expect((await new UserSheetRepository(env).getById(sheet.id))?.gnosis.temporary).toBe(4);
+  });
+
+  it('corrects a selected original roll with Fate while preserving every original die', async () => {
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((array) => {
+      (array as Uint8Array).fill(9);
+      return array;
+    });
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const sheet = blank('fated-character', casterId);
+    sheet.backgrounds = [{ id: 'fate', name: 'Fate', dots: 1, ruleId: 'fate' }];
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    ws.drainJson();
+    await sendCommand(room, ws, 0, {
+      type: 'ROLL_TABLE_POOL',
+      sheetId: sheet.id,
+      pool: 1,
+      difficulty: 6,
+      rageDiceCount: 0,
+      hasSpecialty: false,
+      spendWillpower: false,
+      applyWoundPenalty: false,
+      label: 'Original task',
+      physicalDiceValues: [1],
+    });
+    const originalEnvelope = ws
+      .drainJson<ServerEnvelope<ServerEvent>>()
+      .find((envelope) => envelope.event.type === 'DICE_ROLLED_3D');
+    if (originalEnvelope?.event.type !== 'DICE_ROLLED_3D' || !originalEnvelope.event.historyEntry)
+      throw new Error('Expected the original result.');
+    const original = originalEnvelope.event.historyEntry;
+    expect(original.roll.isBotch).toBe(true);
+    const activation: ClientCommand = {
+      type: 'ACTIVATE_RULE',
+      seatId: 'primary',
+      sourceEntryId: 'fate',
+      ruleId: 'fate',
+      referenceRollId: original.id,
+      targetIds: [],
+      confirmedConditions: true,
+    };
+    await sendCommand(room, ws, 0, activation, 'fate-once');
+    const correction = ws
+      .drainJson<ServerEnvelope<ServerEvent>>()
+      .find(
+        (envelope) =>
+          envelope.event.type === 'DICE_ROLLED_3D' &&
+          envelope.event.historyEntry?.correctionOf === original.id
+      );
+    if (correction?.event.type !== 'DICE_ROLLED_3D')
+      throw new Error('Expected the corrected result.');
+    expect(correction.event.roll.dice).toEqual(original.roll.dice);
+    expect(correction.event.roll.physicsSeed).toBe(original.roll.physicsSeed);
+    expect(correction.event.roll.automaticSuccesses).toBe(1);
+    expect(correction.event.roll.netSuccesses).toBe(1);
+    expect(correction.event.roll.isBotch).toBe(false);
+    await sendCommand(room, ws, 0, activation, 'fate-once');
+    expect(
+      ws
+        .drainJson<ServerEnvelope<ServerEvent>>()
+        .some((envelope) => envelope.event.type === 'DICE_ROLLED_3D')
+    ).toBe(false);
+  });
+
+  it('protects rank, forced form and consumed equipment on a stale bind while keeping an unrelated addition', async () => {
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const sheet = blank('transformed-character', casterId);
+    sheet.equipment = [
+      {
+        id: 'consumed-token',
+        name: 'Transformation Token',
+        customRule: {
+          id: 'transformation-token',
+          name: 'Transformation Token',
+          source: { book: 'Chronicle rules' },
+          activation: { duration: 'instant', roll: false, consumable: true },
+          effects: [
+            { target: 'rank', operation: 'set', value: 2, duration: 'instant' },
+            { target: 'form:lupus', operation: 'allow', value: 1, duration: 'instant' },
+          ],
+        },
+      },
+    ];
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    ws.drainJson();
+    await sendCommand(room, ws, 0, {
+      type: 'ACTIVATE_RULE',
+      sourceEntryId: 'consumed-token',
+      ruleId: 'transformation-token',
+      targetIds: [],
+    });
+    const accepted = lastRuleSheet(ws, sheet.id)!;
+    expect(accepted.rank).toBe(2);
+    expect(accepted.activeForm).toBe('lupus');
+    expect(accepted.equipment).toHaveLength(0);
+    expect(await new UserSheetRepository(env).getById(sheet.id)).toMatchObject({
+      rank: 2,
+      activeForm: 'lupus',
+      equipment: [],
+    });
+    await sendCommand(room, ws, 0, {
+      type: 'BIND_TABLE_SHEET',
+      seatId: 'primary',
+      sheet: {
+        ...sheet,
+        name: 'Edited while activating',
+        equipment: [...sheet.equipment, { id: 'unrelated-rope', name: 'Rope' }],
+        updatedAt: accepted.updatedAt + 1,
+      },
+    });
+    const rebound = lastRuleSheet(ws, sheet.id)!;
+    expect(rebound.rank).toBe(2);
+    expect(rebound.activeForm).toBe('lupus');
+    expect(rebound.equipment?.map((item) => item.id)).toEqual(['unrelated-rope']);
+    expect(rebound.name).toBe('Edited while activating');
+  });
+
+  it('merges an editor save without replaying or losing a persisted resource transaction', async () => {
+    const env = canonicalEnv();
+    const repository = new UserSheetRepository(env);
+    const stale = blank('cas-sheet', casterId);
+    await repository.create(stale);
+    const apply = (sheet: W20UserCharacterSheet) =>
+      sheet.ruleActivationReceipts?.includes('cost-once')
+        ? sheet
+        : {
+            ...sheet,
+            gnosis: { ...sheet.gnosis, temporary: sheet.gnosis.temporary - 1 },
+            ruleActivationReceipts: ['cost-once'],
+            updatedAt: sheet.updatedAt + 1,
+          };
+    await repository.mutateRuleState(stale.id, apply);
+    await repository.mutateRuleState(stale.id, apply);
+    const saved = await repository.update({
+      ...stale,
+      name: 'Edited name',
+      updatedAt: stale.updatedAt + 2,
+    });
+    expect(saved?.name).toBe('Edited name');
+    expect(saved?.gnosis.temporary).toBe(4);
+    expect(saved?.ruleActivationReceipts).toEqual(['cost-once']);
+  });
+});
+
 describe('GameRoomDO authoritative W20 engine & projection security', () => {
+  it('persists campaign mystical experience separately and directs general awards to the approved ledger path', async () => {
+    const fetchSpy = mockSupabaseForRoom({ rule_state: { packTotem: 'Uktena', mysticalExperience: 4 } });
+    const env = createMockEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const jwt = await mintJwtForUser(PLAYER1_DISCORD_ID, 'PlayerOne', [GUILD_ID], env.SUPABASE_JWT_SECRET);
+    const { ws, events } = await openAndAuthSocket(room, state, jwt, PC1_ID);
+    const initial = events.find((envelope) => envelope.event.type === 'SYNC_SNAPSHOT');
+    expect(initial?.event.type === 'SYNC_SNAPSHOT' && initial.event.snapshot.characters[PC1_ID]?.mysticalExperience).toBe(4);
+
+    const award: ClientCommand = { type: 'APPLY_RULE_EVENT', characterId: PC1_ID, event: 'story_end' };
+    await sendCommand(room, ws, 0, award, 'mystical-story-once');
+    const updates = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const changed = updates.filter((envelope) => envelope.event.type === 'CHARACTER_PATCHED' && envelope.event.characterId === PC1_ID).at(-1);
+    expect(changed?.event.type === 'CHARACTER_PATCHED' && changed.event.character.mysticalExperience).toBe(6);
+    await Promise.allSettled(state.waitUntilPromises);
+    const persisted = fetchSpy.mock.calls.filter(([url, init]) => String(url).includes(`/characters?id=eq.${PC1_ID}`) && init?.method === 'PATCH').map(([, init]) => JSON.parse(String(init?.body)) as { rule_state?: { mysticalExperience?: number } });
+    expect(persisted.some((patch) => patch.rule_state?.mysticalExperience === 6)).toBe(true);
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('/xp_ledger'))).toBe(false);
+
+    const restoredState = new MockDurableObjectState(state.sql.db);
+    const restoredRoom = new GameRoomDO(restoredState as unknown as DurableObjectState, env);
+    const reconnected = await openAndAuthSocket(restoredRoom, restoredState, jwt, PC1_ID);
+    const restoredSnapshot = reconnected.events.find((envelope) => envelope.event.type === 'SYNC_SNAPSHOT');
+    expect(restoredSnapshot?.event.type === 'SYNC_SNAPSHOT' && restoredSnapshot.event.snapshot.characters[PC1_ID]?.mysticalExperience).toBe(6);
+    await sendCommand(restoredRoom, reconnected.ws, 0, award, 'mystical-story-once');
+    expect(reconnected.ws.drainJson<ServerEnvelope<ServerEvent>>().some((envelope) => envelope.event.type === 'CHARACTER_PATCHED')).toBe(false);
+
+    await sendCommand(restoredRoom, reconnected.ws, 0, { type: 'APPLY_RULE_EVENT', characterId: PC1_ID, event: 'experience_award', amount: 3 });
+    const rejected = reconnected.ws.drainJson<ServerEnvelope<ServerEvent>>().find((envelope) => envelope.event.type === 'COMMAND_REJECTED');
+    expect(rejected?.event.type === 'COMMAND_REJECTED' && rejected.event.message).toContain(`/api/campaigns/${CAMPAIGN_ID}/xp-award`);
+    await Promise.allSettled(restoredState.waitUntilPromises);
+  });
+
   it('strictly scrubs isNpc sheets, isHidden tokens, Penumbra tokens, secret ST rolls, and whispers from player views', async () => {
     mockSupabaseForRoom();
     const env = createMockEnv();

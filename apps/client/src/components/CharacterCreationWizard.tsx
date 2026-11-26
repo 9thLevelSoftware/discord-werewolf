@@ -12,6 +12,8 @@ import {
   CANONICAL_GIFT_CATALOG,
   CanonicalAbilityKey,
   filterMeritFlawCatalog,
+  getCreationAbilityLimits,
+  getSourceModifierRule,
   formatCatalogSource,
   formatMeritFlawCost,
   GarouForm,
@@ -140,11 +142,7 @@ const ATTR_TIER_DOTS: Record<'primary' | 'secondary' | 'tertiary', number> = {
   tertiary: 3,
 };
 
-const ABIL_TIER_DOTS: Record<'primary' | 'secondary' | 'tertiary', number> = {
-  primary: 13,
-  secondary: 9,
-  tertiary: 5,
-};
+const ABIL_TIER_DOTS = { primary: 13, secondary: 9, tertiary: 5 } as const;
 
 function formatLabel(raw: string): string {
   return raw
@@ -348,7 +346,22 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
       const curPrio = prev.priorityAbilityDots[key] ?? 0;
       const curFree = prev.freebieAbilityDots[key] ?? 0;
       const nextPrio = curPrio + delta;
-      if (nextPrio < 0 || nextPrio > 3 || nextPrio + curFree > 5) return prev;
+      const category = (Object.keys(ABILITY_GROUPS) as AbilityCategory[]).find((group) =>
+        ABILITY_GROUPS[group].includes(key)
+      )!;
+      const limits = getCreationAbilityLimits(prev);
+      const spent = ABILITY_GROUPS[category].reduce(
+        (sum, ability) => sum + (prev.priorityAbilityDots[ability] ?? 0),
+        0
+      );
+      if (
+        nextPrio < 0 ||
+        (delta > 0 &&
+          (nextPrio > limits.priorityMax[category] ||
+            nextPrio + curFree > limits.totalMax[category] ||
+            spent >= limits.budgets[category]))
+      )
+        return prev;
       if (prev.breed === 'lupus' && delta > 0 && LUPUS_RESTRICTED_BASE_ABILITIES.has(key)) {
         return prev;
       }
@@ -364,7 +377,11 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
       const curPrio = prev.priorityAbilityDots[key] ?? 0;
       const curFree = prev.freebieAbilityDots[key] ?? 0;
       const nextFree = curFree + delta;
-      if (nextFree < 0 || curPrio + nextFree > 5) return prev;
+      const category = (Object.keys(ABILITY_GROUPS) as AbilityCategory[]).find((group) =>
+        ABILITY_GROUPS[group].includes(key)
+      )!;
+      const maximum = getCreationAbilityLimits(prev).totalMax[category];
+      if (nextFree < 0 || (delta > 0 && curPrio + nextFree > maximum)) return prev;
       return {
         ...prev,
         freebieAbilityDots: { ...prev.freebieAbilityDots, [key]: nextFree },
@@ -606,6 +623,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
   const tribeGifts = gifts.filter((g) => g.sources.includes(draft.tribe));
 
   const ledger = summary.freebieLedger;
+  const abilityLimits = getCreationAbilityLimits(draft);
   const stepBtnClass = isMobile
     ? 'flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 text-sm font-bold text-stone-100 hover:bg-zinc-700 disabled:opacity-35'
     : 'rounded bg-zinc-800 px-1.5 py-0.5 font-bold hover:bg-zinc-700 disabled:opacity-40';
@@ -1092,7 +1110,8 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
               <div className={isMobile ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-1 gap-3 md:grid-cols-3'}>
                 {(['talents', 'skills', 'knowledges'] as AbilityCategory[]).map((cat) => {
                   const tier = draft.abilityPriorities[cat];
-                  const budget = ABIL_TIER_DOTS[tier];
+                  const budget = abilityLimits.budgets[cat];
+                  const budgetChange = budget - ABIL_TIER_DOTS[tier];
                   const spent = ABILITY_GROUPS[cat].reduce(
                     (sum, k) => sum + (draft.priorityAbilityDots[k] ?? 0),
                     0
@@ -1121,9 +1140,9 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           }
                           className="rounded border border-stone-700 bg-zinc-950 px-2 py-0.5 text-xs"
                         >
-                          <option value="primary">Primary (13)</option>
-                          <option value="secondary">Secondary (9)</option>
-                          <option value="tertiary">Tertiary (5)</option>
+                          <option value="primary">Primary ({Math.max(0,13 + budgetChange)})</option>
+                          <option value="secondary">Secondary ({Math.max(0,9 + budgetChange)})</option>
+                          <option value="tertiary">Tertiary ({Math.max(0,5 + budgetChange)})</option>
                         </select>
                       </div>
 
@@ -1137,6 +1156,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                           {spent} / {budget}
                         </span>
                       </div>
+                      {abilityLimits.totalMax[cat] < 5 && <p className="mt-1 text-xs text-rose-300">Ability Deficit limits every Ability in this category to {abilityLimits.totalMax[cat]} dots, including Freebies.</p>}
 
                       <div className="mt-2.5 space-y-1.5">
                         {ABILITY_GROUPS[cat].map((abilKey) => {
@@ -1166,7 +1186,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                               </div>
 
                               <div className="flex shrink-0 items-center gap-2 text-xs">
-                                <div className="flex items-center gap-0.5" title="Priority (cap 3)">
+                                <div className="flex items-center gap-0.5" title={`Priority (cap ${abilityLimits.priorityMax[cat]})`}>
                                   <button
                                     type="button"
                                     onClick={() => adjustPriorityAbility(abilKey, -1)}
@@ -1181,7 +1201,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   <button
                                     type="button"
                                     disabled={
-                                      lupusRestricted || prio >= 3 || total >= 5 || spent >= budget
+                                      lupusRestricted || prio >= abilityLimits.priorityMax[cat] || total >= abilityLimits.totalMax[cat] || spent >= budget
                                     }
                                     onClick={() => adjustPriorityAbility(abilKey, 1)}
                                     aria-label={`Increase ${String(abilKey).replace(/_/g, " ")} priority dots`}
@@ -1208,7 +1228,7 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                   </span>
                                   <button
                                     type="button"
-                                    disabled={total >= 5}
+                                    disabled={total >= abilityLimits.totalMax[cat]}
                                     onClick={() => adjustFreebieAbility(abilKey, 1)}
                                     aria-label={`Increase ${String(abilKey).replace(/_/g, " ")} freebie dots`}
                                     className={stepAmberBtnClass}
@@ -1875,6 +1895,22 @@ export const CharacterCreationWizard: React.FC<CharacterCreationWizardProps> = (
                                 className="inline-flex items-center gap-1 rounded-md border border-rose-600/50 bg-rose-950/45 px-2 py-0.5 text-xs font-semibold text-rose-100"
                               >
                                 {m.name}{' '}
+                                {getSourceModifierRule({...m,dots:m.pointValue})?.id === 'flaw-ability-deficit' && (
+                                  <select
+                                    aria-label="Ability Deficit category"
+                                    value={m.ruleChoice ?? ''}
+                                    onChange={(event) => {
+                                      const ruleChoice = event.target.value;
+                                      setDraft(previous => ({...previous,meritsAndFlaws:previous.meritsAndFlaws.map(entry => entry.id === m.id ? {...entry,ruleChoice} : entry)}));
+                                    }}
+                                    className="rounded border border-rose-700 bg-zinc-950 px-1 py-0.5 text-xs"
+                                  >
+                                    <option value="">Choose category</option>
+                                    <option value="talents">Talents</option>
+                                    <option value="skills">Skills</option>
+                                    <option value="knowledges">Knowledges</option>
+                                  </select>
+                                )}
                                 {variableCostIds.has(m.id) ? (
                                   <button
                                     type="button"

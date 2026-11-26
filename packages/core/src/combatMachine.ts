@@ -1,3 +1,5 @@
+import { resolveRuleShift, resolveRuleDamageType, resolveIncomingRuleDamage } from './ruleActions';
+import { applyRuleValue } from './modifierRules';
 import {
   CombatantEntry,
   CombatEncounterState,
@@ -57,6 +59,61 @@ function sortResolutionOrderDesc(entries: CombatantEntry[]): string[] {
     .map((c) => c.combatantId);
 }
 
+export function getDeclarationSlotPool(
+  char: W20CharacterState,
+  slot: DeclaredActionInput['slots'][number]
+): number {
+  if (slot.category === 'shift_form' && slot.targetForm) {
+    const shift = resolveRuleShift(char, {
+      targetForm: slot.targetForm,
+      method: 'roll_primal_urge',
+      baseDifficulty: slot.baseDifficulty,
+    });
+    return shift.allowed ? Math.max(0, shift.pool + shift.woundPenalty) : 0;
+  }
+  const macroPool = slot.macro?.pool;
+  const attribute =
+    macroPool?.kind === 'attribute_ability' && !slot.attributeKey
+      ? macroPool.attribute
+      : (slot.attributeKey ?? 'dexterity');
+  const ability =
+    macroPool?.kind === 'attribute_ability' && !slot.attributeKey
+      ? macroPool.ability
+      : slot.abilityKey;
+  const stats = computeEffectiveCharacterStats(char, {
+    attribute,
+    ability,
+    selectedItemId: slot.weaponId,
+    rollKind: slot.category.includes('attack') ? 'attack' : undefined,
+    tags: [`action:${slot.category}`],
+  });
+  if (macroPool && !slot.attributeKey) {
+    if (macroPool.kind === 'permanent_trait') {
+      return macroPool.trait === 'gnosis'
+        ? stats.effectiveGnosisPool
+        : macroPool.trait === 'rage'
+          ? stats.effectiveRagePool
+          : stats.effectiveWillpowerPool;
+    }
+    if (macroPool.kind === 'fetish_gnosis_rating') return macroPool.rating;
+    if (macroPool.kind === 'no_roll_instant') return 0;
+  }
+  if (slot.category === 'shift_form' && !slot.attributeKey && !slot.abilityKey) {
+    return Math.max(
+      0,
+      stats.effectiveAttributes.stamina +
+        (stats.effectiveAbilities.primal_urge ?? 0) +
+        stats.woundPenalty
+    );
+  }
+  const pool =
+    stats.effectiveAttributes[attribute] + (ability ? (stats.effectiveAbilities[ability] ?? 0) : 0);
+  return Math.max(
+    0,
+    Math.floor(applyRuleValue(stats.ruleEvaluation, 'pool', pool) + stats.woundPenalty)
+  );
+}
+
 function buildValidatedDeclarationSlots(
   combat: CombatEncounterState,
   combatantId: string,
@@ -69,38 +126,7 @@ function buildValidatedDeclarationSlots(
     if (input.slots.length < 2) {
       throw new Error('Split-pool mode requires at least 2 declared sub-actions.');
     }
-    const candidatePools = input.slots.map((slot) => {
-      if (slot.category === 'shift_form' && !slot.attributeKey && !slot.abilityKey) {
-        return Math.max(
-          0,
-          stats.effectiveAttributes.stamina +
-            (char.abilities.primal_urge ?? 0) +
-            stats.woundPenalty
-        );
-      }
-      if (slot.macro && !slot.attributeKey) {
-        if (slot.macro.pool.kind === 'attribute_ability') {
-          const mAttr = stats.effectiveAttributes[slot.macro.pool.attribute];
-          const mAbil = slot.macro.pool.ability
-            ? (char.abilities[slot.macro.pool.ability] ?? 0)
-            : 0;
-          return Math.max(0, mAttr + mAbil + stats.woundPenalty);
-        }
-        if (slot.macro.pool.kind === 'permanent_trait') {
-          return slot.macro.pool.trait === 'gnosis'
-            ? stats.effectiveGnosisPool
-            : char[slot.macro.pool.trait].permanent;
-        }
-        if (slot.macro.pool.kind === 'fetish_gnosis_rating') {
-          return slot.macro.pool.rating;
-        }
-      }
-      const attr = slot.attributeKey
-        ? stats.effectiveAttributes[slot.attributeKey]
-        : stats.effectiveAttributes.dexterity;
-      const abil = slot.abilityKey ? (char.abilities[slot.abilityKey] ?? 0) : 0;
-      return Math.max(0, attr + abil + stats.woundPenalty);
-    });
+    const candidatePools = input.slots.map((slot) => getDeclarationSlotPool(char, slot));
     const smallestPool = Math.min(...candidatePools);
     const sumAllocated = input.slots.reduce((acc, s) => acc + (s.allocatedDice ?? 0), 0);
 
@@ -315,8 +341,18 @@ export function rollRoundInitiative(
     }
 
     const d10 = rngD10();
+    const spiritModifiers = stats.ruleEvaluation.modifiers.filter(
+      (modifier) => modifier.name === 'Spirit of the Fray' && modifier.target === 'initiative'
+    );
+    const learnedSpiritApplied = spiritModifiers.some((modifier) => !modifier.duration);
+    const activatedSpiritApplied =
+      spiritModifiers.some((modifier) => modifier.duration) ||
+      char.activeBuffs.some(
+        (buff) => buff.sourceMacroId === 'spirit_of_the_fray' && buff.remainingRounds > 0
+      );
     const spiritBonus =
-      (entry.hasSpiritOfTheFray ? 10 : 0) + (entry.spentGnosisPreInit ? 10 : 0);
+      (entry.hasSpiritOfTheFray && !learnedSpiritApplied ? 10 : 0) +
+      (entry.spentGnosisPreInit && !activatedSpiritApplied ? 10 : 0);
     const mod = stats.initiativeBonus + spiritBonus;
     const total = d10 + mod;
 
@@ -649,6 +685,12 @@ export function executeActiveCombatSlot(
       if (!targetForm) {
         throw new Error('shift_form slot requires a valid targetForm.');
       }
+      const shiftRules = resolveRuleShift(attackerChar, {
+        targetForm,
+        method: 'roll_primal_urge',
+        baseDifficulty: activeSlot.baseDifficulty || undefined,
+      });
+      if (!shiftRules.allowed) throw new Error(shiftRules.reason);
       if (targetForm === getBreedNaturalForm(attackerChar.breed)) {
         const shiftedChar: W20CharacterState = {
           ...attackerChar,
@@ -679,19 +721,33 @@ export function executeActiveCombatSlot(
           stateVersion: attackerChar.stateVersion + 1,
         };
       }
-      const stats = computeEffectiveCharacterStats(attackerChar);
+      const stats = computeEffectiveCharacterStats(attackerChar, {
+        attribute:
+          activeSlot.attributeKey ??
+          (activeSlot.category === 'shift_form' ? 'stamina' : 'dexterity'),
+        ability:
+          activeSlot.abilityKey ??
+          (activeSlot.category === 'shift_form' ? 'primal_urge' : undefined),
+        tags: [`action:${activeSlot.category}`],
+      });
       const basePool =
         isNormalOrInterruptSlot && activeSlot.allocatedDice
           ? activeSlot.allocatedDice
-          : stats.effectiveAttributes.stamina + (attackerChar.abilities.primal_urge ?? 0);
+          : stats.effectiveAttributes.stamina + (stats.effectiveAbilities.primal_urge ?? 0);
       const shiftDiff = activeSlot.baseDifficulty || W20_FORM_MATRIX[targetForm].shiftDifficulty;
       const shiftRoll = resolveW20DicePool(
         {
           label: `${attacker.name}: Shift to ${targetForm}`,
-          basePool,
+          basePool: shiftRules.requiresRoll
+            ? isNormalOrInterruptSlot && activeSlot.allocatedDice
+              ? basePool
+              : shiftRules.pool
+            : 0,
+          bonusAutomaticSuccesses: shiftRules.automaticSuccesses,
+          ruleModifiers: shiftRules.modifiers,
           woundPenalty:
-            isNormalOrInterruptSlot && activeSlot.allocatedDice ? 0 : stats.woundPenalty,
-          baseDifficulty: shiftDiff,
+            isNormalOrInterruptSlot && activeSlot.allocatedDice ? 0 : shiftRules.woundPenalty,
+          baseDifficulty: shiftRules.difficulty,
           hasApplicableSpecialty: options.hasSpecialty,
           spendWillpower: options.spendWillpowerOnRoll,
         },
@@ -777,21 +833,26 @@ export function executeActiveCombatSlot(
           stateVersion: attackerChar.stateVersion + 1,
         };
       }
-      const stats = computeEffectiveCharacterStats(attackerChar);
+      const stats = computeEffectiveCharacterStats(attackerChar, {
+        attribute: activeSlot.attributeKey ?? 'wits',
+        ability: activeSlot.abilityKey,
+        tags: [`action:${activeSlot.category}`],
+      });
       const basePool =
         isNormalOrInterruptSlot && activeSlot.allocatedDice
           ? activeSlot.allocatedDice
           : (activeSlot.attributeKey
               ? stats.effectiveAttributes[activeSlot.attributeKey]
               : stats.effectiveAttributes.wits) +
-            (activeSlot.abilityKey ? (attackerChar.abilities[activeSlot.abilityKey] ?? 0) : 0);
+            (activeSlot.abilityKey ? (stats.effectiveAbilities[activeSlot.abilityKey] ?? 0) : 0);
       const giftRoll = resolveW20DicePool(
         {
           label: `${attacker.name}: ${activeSlot.label}`,
-          basePool,
+          basePool: isNormalOrInterruptSlot && activeSlot.allocatedDice ? basePool : applyRuleValue(stats.ruleEvaluation,'pool',basePool),
+          ruleModifiers: stats.ruleEvaluation.modifiers,
           woundPenalty:
             isNormalOrInterruptSlot && activeSlot.allocatedDice ? 0 : stats.woundPenalty,
-          baseDifficulty: activeSlot.baseDifficulty,
+          baseDifficulty: applyRuleValue(stats.ruleEvaluation,'difficulty',activeSlot.baseDifficulty),
           hasApplicableSpecialty: options.hasSpecialty,
           spendWillpower: options.spendWillpowerOnRoll,
         },
@@ -826,21 +887,26 @@ export function executeActiveCombatSlot(
           stateVersion: attackerChar.stateVersion + 1,
         };
       }
-      const stats = computeEffectiveCharacterStats(attackerChar);
+      const stats = computeEffectiveCharacterStats(attackerChar, {
+        attribute: activeSlot.attributeKey ?? 'dexterity',
+        ability: activeSlot.abilityKey,
+        tags: [`action:${activeSlot.category}`],
+      });
       const basePool =
         isNormalOrInterruptSlot && activeSlot.allocatedDice
           ? activeSlot.allocatedDice
           : (activeSlot.attributeKey
               ? stats.effectiveAttributes[activeSlot.attributeKey]
               : stats.effectiveAttributes.dexterity) +
-            (activeSlot.abilityKey ? (attackerChar.abilities[activeSlot.abilityKey] ?? 0) : 0);
+            (activeSlot.abilityKey ? (stats.effectiveAbilities[activeSlot.abilityKey] ?? 0) : 0);
       const utilRoll = resolveW20DicePool(
         {
           label: `${attacker.name}: ${activeSlot.label}`,
-          basePool,
+          basePool: isNormalOrInterruptSlot && activeSlot.allocatedDice ? basePool : applyRuleValue(stats.ruleEvaluation,'pool',basePool),
+          ruleModifiers: stats.ruleEvaluation.modifiers,
           woundPenalty:
             isNormalOrInterruptSlot && activeSlot.allocatedDice ? 0 : stats.woundPenalty,
-          baseDifficulty: activeSlot.baseDifficulty,
+          baseDifficulty: applyRuleValue(stats.ruleEvaluation,'difficulty',activeSlot.baseDifficulty),
           hasApplicableSpecialty: options.hasSpecialty,
           spendWillpower: options.spendWillpowerOnRoll,
         },
@@ -881,22 +947,31 @@ export function executeActiveCombatSlot(
     };
   }
 
-  const attackerStats = computeEffectiveCharacterStats(attackerChar);
+  const attackerStats = computeEffectiveCharacterStats(attackerChar, {
+    attribute: activeSlot.attributeKey ?? 'dexterity',
+    ability: activeSlot.abilityKey,
+    selectedItemId: activeSlot.weaponId,
+    rollKind: 'attack',
+    tags: [`action:${activeSlot.category}`],
+  });
   const basePool =
     isNormalOrInterruptSlot && activeSlot.allocatedDice
       ? activeSlot.allocatedDice // Already incorporates wound penalty from split validation
       : (activeSlot.attributeKey
           ? attackerStats.effectiveAttributes[activeSlot.attributeKey]
           : attackerStats.effectiveAttributes.dexterity) +
-        (activeSlot.abilityKey ? (attackerChar.abilities[activeSlot.abilityKey] ?? 0) : 0);
+        (activeSlot.abilityKey
+          ? (attackerStats.effectiveAbilities[activeSlot.abilityKey] ?? 0)
+          : 0);
 
   const attackRoll = resolveW20DicePool(
     {
       label: `${attacker.name}: ${activeSlot.label}`,
-      basePool,
+      basePool: isNormalOrInterruptSlot && activeSlot.allocatedDice ? basePool : applyRuleValue(attackerStats.ruleEvaluation,'pool',basePool),
+      ruleModifiers: attackerStats.ruleEvaluation.modifiers,
       woundPenalty:
         isNormalOrInterruptSlot && activeSlot.allocatedDice ? 0 : attackerStats.woundPenalty,
-      baseDifficulty: activeSlot.baseDifficulty,
+      baseDifficulty: applyRuleValue(attackerStats.ruleEvaluation,'difficulty',activeSlot.baseDifficulty),
       hasApplicableSpecialty: options.hasSpecialty,
       spendWillpower: options.spendWillpowerOnRoll,
     },
@@ -975,8 +1050,20 @@ export function resolveDefenderReactionAndDamage(
   let defender = combat.combatants[defenderCombatantId];
   let defenderChar = characters[defender.characterId];
   const attacker = combat.combatants[pending.attackerCombatantId];
-  const attackerStats = computeEffectiveCharacterStats(characters[attacker.characterId]);
-  const defenderStats = computeEffectiveCharacterStats(defenderChar);
+  const damageTags = [
+    `damage:${pending.slot.damageType ?? 'bashing'}`,
+    ...(pending.slot.isSilverAttack ? ['damage:silver'] : []),
+  ];
+  const attackerStats = computeEffectiveCharacterStats(characters[attacker.characterId], {
+    rollKind: 'damage',
+    selectedItemId: pending.slot.weaponId,
+    ability: pending.slot.category === 'brawl_attack' ? 'brawl' : pending.slot.abilityKey,
+    tags: damageTags,
+  });
+  const defenderStats = computeEffectiveCharacterStats(defenderChar, {
+    rollKind: 'soak',
+    tags: damageTags,
+  });
 
   const emittedRolls: CombatStepOutcome['emittedRolls'] = [];
   let defenseSuccesses = 0;
@@ -1036,11 +1123,17 @@ export function resolveDefenderReactionAndDamage(
           ? 'melee'
           : 'brawl';
 
+    const defenseStats = computeEffectiveCharacterStats(defenderChar, {
+      attribute: 'dexterity',
+      ability: defAbility,
+      rollKind: 'defense',
+      tags: [`action:${reaction.defenseType}`],
+    });
     const cumulativePenalty =
       defender.declarationMode === 'full_defense' ? -defender.defensesUsedThisRound : 0;
     const defPool =
       (queuedAllocatedDice ??
-        defenderStats.effectiveAttributes.dexterity + (defenderChar.abilities[defAbility] ?? 0)) +
+        applyRuleValue(defenseStats.ruleEvaluation,'pool',defenseStats.effectiveAttributes.dexterity + (defenseStats.effectiveAbilities[defAbility] ?? 0))) +
       cumulativePenalty;
 
     const defDiff = pending.slot.category === 'ranged_attack' ? 8 : 6;
@@ -1048,8 +1141,9 @@ export function resolveDefenderReactionAndDamage(
       {
         label: `${defender.name}: ${reaction.defenseType}`,
         basePool: defPool,
+        ruleModifiers: defenseStats.ruleEvaluation.modifiers,
         woundPenalty: queuedAllocatedDice ? 0 : defenderStats.woundPenalty,
-        baseDifficulty: defDiff,
+        baseDifficulty: applyRuleValue(defenseStats.ruleEvaluation, 'difficulty', defDiff),
       },
       rngD10
     );
@@ -1072,7 +1166,14 @@ export function resolveDefenderReactionAndDamage(
     logLines.push(`${defender.name} deflected ${attacker.name}'s attack!`);
   } else {
     // Extra successes beyond the 1st carry over to the damage dice pool (minimum 1 damage die)
-    const extraHitDice = netHitSuccesses - 1;
+    const extraHitDice = Math.max(
+      0,
+      applyRuleValue(
+        attackerStats.ruleEvaluation,
+        'damage:attack_success_bonus',
+        netHitSuccesses - 1
+      )
+    );
     const rawDamagePool =
       pending.slot.category === 'ranged_attack'
         ? (pending.slot.weaponDamageBonus ?? 4) + extraHitDice
@@ -1080,11 +1181,20 @@ export function resolveDefenderReactionAndDamage(
           (pending.slot.weaponDamageBonus ?? 0) +
           extraHitDice;
 
-    const damageType = pending.slot.damageType ?? 'bashing';
+    const damageType = resolveIncomingRuleDamage(
+      defenderChar,
+      0,
+      resolveRuleDamageType(
+        pending.slot.damageType ?? 'bashing',
+        attackerStats.ruleEvaluation.modifiers
+      ),
+      { isSilver: pending.slot.isSilverAttack, tags: damageTags }
+    ).type;
     const dmgRoll = resolveW20DicePool(
       {
         label: `${attacker.name}: Damage (${damageType})`,
-        basePool: Math.max(1, rawDamagePool),
+        basePool: Math.max(1, applyRuleValue(attackerStats.ruleEvaluation, 'pool', rawDamagePool)),
+        ruleModifiers: attackerStats.ruleEvaluation.modifiers,
         applyWoundPenalty: false, // W20: Wound penalties never reduce damage pools
         baseDifficulty: 6,
       },
@@ -1110,7 +1220,12 @@ export function resolveDefenderReactionAndDamage(
       const soakRoll = resolveW20DicePool(
         {
           label: `${defender.name}: Stamina Soak`,
-          basePool: defenderStats.soakCapabilities.soakPool,
+          basePool: applyRuleValue(
+            defenderStats.ruleEvaluation,
+            'pool',
+            defenderStats.soakCapabilities.soakPool
+          ),
+          ruleModifiers: defenderStats.ruleEvaluation.modifiers,
           applyWoundPenalty: false,
           baseDifficulty: 6,
         },
@@ -1120,8 +1235,20 @@ export function resolveDefenderReactionAndDamage(
       soakedLevels = soakRoll.netSuccesses;
     }
 
-    const finalWounds = Math.max(0, dmgRoll.netSuccesses - soakedLevels);
-    defenderChar = applyHealthDamage(defenderChar, finalWounds, damageType);
+    const finalWounds = Math.max(
+      0,
+      Math.floor(
+        applyRuleValue(
+          attackerStats.ruleEvaluation,
+          'damage:after-soak',
+          dmgRoll.netSuccesses - soakedLevels
+        )
+      )
+    );
+    defenderChar = applyHealthDamage(defenderChar, finalWounds, damageType, {
+      isSilver: pending.slot.isSilverAttack,
+      tags: damageTags,
+    });
     updatedCharacters = { ...updatedCharacters, [defenderChar.id]: defenderChar };
     logLines.push(
       `${attacker.name} dealt ${finalWounds} unsoaked ${damageType} wound(s) to ${defender.name}.`

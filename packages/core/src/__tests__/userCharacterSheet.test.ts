@@ -628,7 +628,8 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
       isSecretRoll: false,
     });
     expect(fetishRes.applyWoundPenalty).toBe(false);
-    expect(fetishRes.effectivePool).toBe(6);
+    expect(fetishRes.effectivePool).toBe(3);
+    expect(fetishRes.difficulty).toBe(6);
 
     const hugeStatic = resolveSheetShortcut(sheet, {
       id: 's-static',

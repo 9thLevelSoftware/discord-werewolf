@@ -626,7 +626,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
                 selection.effectivePool <= 0 ? 'text-red-400' : 'text-amber-300'
               }
             >
-              {selection.effectivePool}d10
+              {selection.effectivePool}d10 · Diff {selection.difficulty}
             </strong>
           </span>
           {selection.effectiveHasSpecialty && (
@@ -751,7 +751,7 @@ export const MobileTraitPickerContent: React.FC<MobileTraitPickerContentProps> =
               selection.effectivePool <= 0 ? 'text-red-400' : 'text-amber-300'
             }`}
           >
-            {selection.effectivePool}d10 • Diff {difficulty}
+            {selection.effectivePool}d10 • Diff {selection.difficulty}
           </span>
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-stone-400">

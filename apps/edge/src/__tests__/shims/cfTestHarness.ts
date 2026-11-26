@@ -88,6 +88,17 @@ export class MockDurableObjectState {
     const sqlRef = this.sql;
     this.storage = {
       sql: sqlRef,
+      transactionSync<T>(callback: () => T): T {
+        sqlRef.db.exec('BEGIN');
+        try {
+          const result = callback();
+          sqlRef.db.exec('COMMIT');
+          return result;
+        } catch (error) {
+          sqlRef.db.exec('ROLLBACK');
+          throw error;
+        }
+      },
     } as unknown as DurableObjectStorage;
   }
 
@@ -153,6 +164,7 @@ export function installMockWebSocketPairGlobal(): void {
 }
 
 export class MockR2Bucket {
+  private version = 0;
   private readonly store = new Map<
     string,
     {
@@ -205,14 +217,20 @@ export class MockR2Bucket {
     key: string,
     value: ArrayBuffer | ArrayBufferView | string,
     options?: R2PutOptions,
-  ): Promise<R2Object> {
+  ): Promise<R2Object | null> {
+    const condition = options?.onlyIf;
+    if (condition && !(condition instanceof Headers) && condition.etagMatches && this.store.get(key)?.etag !== condition.etagMatches) return null;
+    if (condition && !(condition instanceof Headers) && condition.etagDoesNotMatch) {
+      const current = this.store.get(key);
+      if (condition.etagDoesNotMatch === '*' ? current !== undefined : current?.etag === condition.etagDoesNotMatch) return null;
+    }
     const bytes =
       typeof value === 'string'
         ? new TextEncoder().encode(value)
         : value instanceof ArrayBuffer
           ? new Uint8Array(value)
           : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    const etag = `etag-${bytes.byteLength}`;
+    const etag = `etag-${++this.version}-${bytes.byteLength}`;
     const entry = {
       body: new Uint8Array(bytes),
       httpMetadata: options?.httpMetadata as R2HTTPMetadata | undefined,

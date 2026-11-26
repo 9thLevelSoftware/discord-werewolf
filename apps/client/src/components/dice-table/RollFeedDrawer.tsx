@@ -1,6 +1,7 @@
 import React from 'react';
 import type { RollHistoryEntry } from '@w20-vtt/protocol';
 import { ChevronRight, EyeOff, RotateCcw, ScrollText } from 'lucide-react';
+import { ModifierBreakdown } from './RuleRollReview';
 import { Button, IconButton, Modal } from '../ui';
 import {
   AuthoritativeDieChips,
@@ -14,6 +15,8 @@ interface RollFeedDrawerProps {
   disabled: boolean;
   mobileSheet?: boolean;
   onClose: () => void;
+  canUseLuck?: (entry: RollHistoryEntry) => boolean;
+  onUseLuck?: (entry: RollHistoryEntry) => void;
   onReroll: (entry: RollHistoryEntry) => void;
 }
 
@@ -23,7 +26,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
   disabled,
   mobileSheet = false,
   onClose,
-  onReroll,
+  onReroll,canUseLuck,onUseLuck,
 }) => {
   if (!open) return null;
 
@@ -81,6 +84,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                     </div>
                   </div>
 
+                  {canUseLuck?.(entry) && <Button size="sm" disabled={disabled} onClick={()=>onUseLuck?.(entry)}>Use Lucky</Button>}
                   <Button
                     size="sm"
                     disabled={disabled}
@@ -120,7 +124,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                   )}
                   {!isInitiative && entry.roll.automaticSuccesses > 0 && (
                     <span className="rounded border border-indigo-500/40 bg-indigo-950/80 px-1.5 py-0.5 text-xs font-bold text-indigo-200">
-                      +{entry.roll.automaticSuccesses} WP
+                      +{entry.roll.automaticSuccesses} automatic
                     </span>
                   )}
                   {!isInitiative && entry.rageDiceCount > 0 && (
@@ -130,6 +134,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                   )}
                 </div>
 
+                {!!entry.modifiers?.length && <details className="mt-2 text-xs"><summary className="cursor-pointer text-amber-200">Roll modifiers</summary><ModifierBreakdown modifiers={entry.modifiers}/></details>}
                 {entry.roll.dice.length > 0 && (
                   <div className="mt-2">
                     <AuthoritativeDieChips

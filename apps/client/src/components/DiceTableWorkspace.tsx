@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DiceBox from '@3d-dice/dice-box';
 import {
   computeUserSheetStats,
+  resolveSheetShortcut,
+  getSourceModifierRule,
+  type RuleContext,
   type ResolvedSheetShortcut,
   type SheetShortcut,
   sheetToLightTrackers,
@@ -47,7 +50,28 @@ import {
 import { PackPresenceDrawer } from './dice-table/PackPresenceDrawer';
 import { toast, useToasts } from './ui';
 import { useUiPref } from '../store/useUiPrefsStore';
+import { openSheetRule, useRuleTargetOptions } from './character-sheet/sheetShared';
+import {
+  RuleRollReview,
+  actionableFacts,
+  getRollReserves,
+  canResolveWithoutDice,
+  type RollPreview,
+} from './dice-table/RuleRollReview';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
+
+type RollOptions = Partial<SheetRollRequest> & {
+  spendWillpower?: boolean;
+  ruleContext?: RuleContext;
+  preview?: RollPreview;
+};
+interface PendingRuleRoll {
+  options: RollOptions;
+  shortcut: SheetShortcut;
+  context: RuleContext;
+  sheetId: string;
+  seatId: string;
+}
 
 interface DiceTableWorkspaceProps {
   session: DiscordSessionContext;
@@ -183,6 +207,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     [activeSeat.sheetId, sheetsById]
   );
 
+  const hasRuleTargets = useRuleTargetOptions().some((p) => p.id !== activeSheet?.id);
   const activeTrackers: LightGarouTrackers = useMemo(
     () => (activeSheet ? sheetToLightTrackers(activeSheet) : activeSeat.unboundTrackers),
     [activeSheet, activeSeat.unboundTrackers]
@@ -208,6 +233,32 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     sendCommand({ type: 'SYNC_CLIENT_SEATS', seats: seatSyncPayload });
   }, [connectionStatus, seatSyncJson, seatSyncPayload, sendCommand]);
 
+  const lastBindings = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (connectionStatus !== 'authenticated') {
+      lastBindings.current.clear();
+      return;
+    }
+    for (const seat of seats) {
+      const sheet = seat.sheetId ? (sheetsById[seat.sheetId] ?? null) : null;
+      const fingerprint = JSON.stringify([sheet, seat.syncCode]);
+      if (lastBindings.current.get(seat.seatId) === fingerprint) continue;
+      lastBindings.current.set(seat.seatId, fingerprint);
+      sendCommand({
+        type: 'BIND_TABLE_SHEET',
+        seatId: seat.seatId,
+        sheet,
+        ...(seat.syncCode ? { syncCode: seat.syncCode } : {}),
+      });
+    }
+    for (const key of lastBindings.current.keys()) {
+      if (!seats.some((seat) => seat.seatId === key)) {
+        sendCommand({ type: 'BIND_TABLE_SHEET', seatId: key, sheet: null });
+        lastBindings.current.delete(key);
+      }
+    }
+  }, [connectionStatus, seats, sheetsById, sendCommand]);
+  const [review, setReview] = useState<PendingRuleRoll | null>(null);
   // Alt+1 .. Alt+9 hot-seat keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -252,6 +303,10 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const [difficulty, setDifficulty] = useState(6);
   const [manualSpecialty, setManualSpecialty] = useState(false);
   const [specialtyOverride, setSpecialtyOverride] = useState<boolean | null>(null);
+  const [reviewTarget, setReviewTarget] = useState(false);
+  const [spendPackWillpower, setSpendPackWillpower] = useState(false);
+  const packPools = useVttRoomStore((s) => s.ruleState?.packPools);
+  const activePack = packPools?.[activeSheet?.packName.trim().toLowerCase() ?? ''];
   const [spendWillpower, setSpendWillpower] = useState(false);
   const [manualApplyWounds, setManualApplyWounds] = useState(true);
   const [woundOverride, setWoundOverride] = useState<boolean | null>(null);
@@ -414,6 +469,11 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         useVttRoomStore.getState().sendCommand({
           type: 'ROLL_TABLE_POOL',
           pool: spec.pool,
+          sheetId: spec.sheetId,
+          willpowerSource: spec.willpowerSource,
+          shortcut: spec.shortcut,
+          ruleContext: spec.ruleContext,
+          initiativeAdjustment: spec.initiativeAdjustment,
           rageDiceCount: spec.rageDiceCount,
           difficulty: spec.difficulty,
           hasSpecialty: spec.hasSpecialty,
@@ -445,7 +505,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       onLocalRollUnconfirmed: (spec, reason) => {
         if (reason === 'rejected') {
           // The rejection message itself is shown from the room store's lastError.
-          if (spec.spendWillpower) {
+          if (spec.spendWillpower && !spec.sheetId) {
             useCharacterSheetStore.getState().refundSeatWillpower(spec.seatId);
             toast.info('That roll was rejected, so your Willpower point was returned.');
           }
@@ -604,16 +664,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   );
 
   const executeRoll = useCallback(
-    (overrides?: {
-      pool?: number;
-      rageDiceCount?: number;
-      difficulty?: number;
-      hasSpecialty?: boolean;
-      spendWillpower?: boolean;
-      applyWoundPenalty?: boolean;
-      label?: string;
-      isSecretRoll?: boolean;
-    }) => {
+    (overrides?: RollOptions) => {
       if (
         connectionStatus !== 'authenticated' &&
         connectionStatus !== 'reconnecting'
@@ -622,23 +673,79 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         return;
       }
 
-      const rawTargetPool = overrides?.pool ?? activeBasePool;
-      if (rawTargetPool <= 0) {
+      const shortcut =
+        overrides?.shortcut ??
+        (!overrides && isSheetTraitsMode ? traitSelection?.shortcut : undefined);
+      const context: RuleContext =
+        overrides?.ruleContext ??
+        (!overrides
+          ? {
+              ...(specialtyOverride !== null && { specialtyOverride }),
+              ...(woundOverride !== null && { woundOverride }),
+            }
+          : {});
+      const local =
+        shortcut && activeSheet ? resolveSheetShortcut(activeSheet, shortcut, context) : undefined;
+      if (shortcut && activeSheet && local && !overrides?.preview) {
+        const facts = actionableFacts(local.pending.flatMap((item) => item.reasons));
+        if (
+          facts.length ||
+          getRollReserves(activeSheet).length ||
+          (hasRuleTargets &&
+            (reviewTarget ||
+              ['attack', 'damage', 'defense'].includes(local.context.rollKind ?? '') ||
+              activeSheet.activeRuleEffects?.some((effect) => effect.boundTargetIds?.length)))
+        ) {
+          setReview({
+            shortcut,
+            context,
+            sheetId: activeSheet.id,
+            seatId: activeSeat.seatId,
+            options: {
+              ...overrides,
+              shortcut,
+              hasSpecialty: overrides?.hasSpecialty ?? activeHasSpecialty,
+              applyWoundPenalty: overrides?.applyWoundPenalty ?? activeApplyWounds,
+            },
+          });
+          return;
+        }
+      }
+      const preview = overrides?.preview;
+      const rawTargetPool = preview?.pool ?? local?.rawPool ?? overrides?.pool ?? activeBasePool;
+      if (
+        rawTargetPool <= 0 &&
+        !canResolveWithoutDice(preview?.modifiers ?? local?.modifiers ?? [])
+      ) {
         toast.info('Nothing to roll: the dice pool is 0.');
         return;
       }
-      const targetPool = Math.max(1, Math.min(30, Math.round(rawTargetPool)));
-      const targetDiff = Math.max(
-        2,
-        Math.min(10, Math.round(overrides?.difficulty ?? difficulty))
+      const targetPool = Math.max(0, Math.min(30, Math.round(rawTargetPool)));
+      const targetDiff =
+        preview?.difficulty ?? local?.difficulty ?? overrides?.difficulty ?? difficulty;
+      const targetSpec =
+        preview?.hasSpecialty ??
+        overrides?.hasSpecialty ??
+        local?.hasSpecialty ??
+        activeHasSpecialty;
+      const usePack = Boolean(
+        spendPackWillpower &&
+          activePack &&
+          activePack.current > 0 &&
+          overrides?.spendWillpower !== false
       );
-      const targetSpec = overrides?.hasSpecialty ?? activeHasSpecialty;
-      const targetWp = overrides?.spendWillpower ?? spendWillpower;
-      const targetApplyWounds = overrides?.applyWoundPenalty ?? activeApplyWounds;
+      const targetWp = usePack || (overrides?.spendWillpower ?? spendWillpower);
+      const targetApplyWounds =
+        preview?.applyWoundPenalty ??
+        local?.applyWoundPenalty ??
+        overrides?.applyWoundPenalty ??
+        activeApplyWounds;
       const targetSecret = overrides?.isSecretRoll ?? isSecretRoll;
       const targetLabel = (overrides?.label ?? effectiveRollLabel).trim();
 
-      const woundMod = targetApplyWounds ? activeTrackers.woundPenalty : 0;
+      const woundMod = targetApplyWounds
+        ? (preview?.woundPenalty ?? local?.woundPenalty ?? activeTrackers.woundPenalty)
+        : 0;
       const effectivePool = Math.max(0, targetPool + woundMod);
       const effectiveRage = Math.min(
         effectivePool,
@@ -653,10 +760,13 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         coordinatorRef.current?.enqueueLocalRoll({
           rollClientId: crypto.randomUUID(),
           pool: targetPool,
+          sheetId:activeSheet?.id,
+          ...(shortcut ? {shortcut,ruleContext:context} : {}),
           rageDiceCount: effectiveRage,
           difficulty: targetDiff,
           hasSpecialty: targetSpec,
           spendWillpower: targetWp,
+          willpowerSource:usePack ? 'pack' : undefined,
           applyWoundPenalty: targetApplyWounds,
           rollMode: 'pool',
           label: targetLabel || 'W20 Dice Pool',
@@ -671,14 +781,17 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         toast.error(QUEUE_FULL_MESSAGE);
         return;
       }
+      setReviewTarget(false);
       if (targetWp) {
+        setSpendPackWillpower(false);
         setSpendWillpower(false);
-        spendActiveSeatWillpower();
+        if (!activeSheet) spendActiveSeatWillpower();
       }
     },
     [
       connectionStatus,
       activeBasePool,
+      isSheetTraitsMode, traitSelection, specialtyOverride, woundOverride,hasRuleTargets,reviewTarget,spendPackWillpower,activePack,
       difficulty,
       activeHasSpecialty,
       spendWillpower,
@@ -701,9 +814,14 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       const stats = computeUserSheetStats(activeSheet);
       const dex = stats.effectiveAttributes.dexterity;
       const wits = stats.effectiveAttributes.wits;
-      const modifier = dex + wits + woundMod + sitMod;
+      const modifier =
+        stats.initiativeBonus -
+        stats.woundPenalty +
+        (activeApplyWounds ? stats.woundPenalty : 0) +
+        sitMod;
       const parts = [
         `1d10 + Dex ${dex} + Wits ${wits}`,
+        stats.ruleInitiativeBonus ? `+${stats.ruleInitiativeBonus} rules` : '',
         woundMod !== 0 ? `${woundMod} Wnd` : '',
         sitMod !== 0 ? `${sitMod > 0 ? `+${sitMod}` : sitMod} Mod` : '',
       ].filter(Boolean);
@@ -725,6 +843,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const executeInitiativeRoll = useCallback(
     (overrides?: {
       initiativeModifier?: number;
+      fromSheet?: boolean;
       label?: string;
       isSecretRoll?: boolean;
     }) => {
@@ -753,6 +872,13 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         applyWoundPenalty: activeApplyWounds,
         rollMode: 'initiative',
         initiativeModifier: targetMod,
+        ...(activeSheet && (!overrides || overrides.fromSheet)
+          ? {
+              sheetId: activeSheet.id,
+              ruleContext: { rollKind: 'initiative' },
+              initiativeAdjustment: overrides?.fromSheet ? 0 : isSheetTraitsMode ? bonusDice : 0,
+            }
+          : {}),
         label: targetLabel,
         isSecretRoll: targetSecret,
         seatId: activeSeat.seatId,
@@ -764,7 +890,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     },
     [
       connectionStatus,
-      initiativeMeta.modifier,
+      initiativeMeta.modifier, bonusDice, isSheetTraitsMode,
       isSecretRoll,
       activeSheet,
       activeSeat.playerName,
@@ -839,6 +965,23 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   const handleTriggerResolvedShortcut = useCallback(
     (resolved: ResolvedSheetShortcut) => {
+      const activate =
+        activeSheet &&
+        [...activeSheet.gifts, ...activeSheet.fetishes].find(
+          (item) =>
+            (resolved.shortcut.id === 'gift-' + item.id ||
+              (resolved.shortcut.source.kind === 'fetish_activate' &&
+                resolved.shortcut.source.fetishId === item.id)) &&
+            getSourceModifierRule({
+              ...item,
+              rollAbility: 'rollAbility' in item ? (item.rollAbility ?? undefined) : undefined,
+              kind: resolved.shortcut.source.kind === 'fetish_activate' ? 'fetish' : 'gift',
+            })?.activation
+        );
+      if (activate) {
+        openSheetRule(activate.id);
+        return;
+      }
       const nextRage = Math.min(resolved.basePool, resolved.rageDiceCount);
       const src = resolved.shortcut.source;
       if (src.kind === 'trait_combo' && activeSheet) {
@@ -850,7 +993,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
           attribute: attr,
           ability: abil,
           bonusDice: flatMod,
-          difficulty: resolved.difficulty,
+          difficulty: resolved.shortcut.difficulty,
           specialtyOverride: null,
           woundOverride: null,
         });
@@ -858,7 +1001,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         setComposerAttr(attr);
         setComposerAbil(abil);
         setBonusDice(flatMod);
-        setDifficulty(resolved.difficulty);
+        setDifficulty(resolved.shortcut.difficulty);
         setRageDiceCount(nextRage);
         setSpecialtyOverride(
           resolved.hasSpecialty !== autoBaseline.autoSpecialty ? resolved.hasSpecialty : null
@@ -875,6 +1018,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       }
 
       void executeRoll({
+        shortcut: resolved.shortcut,
         pool: resolved.basePool,
         rageDiceCount: nextRage,
         difficulty: resolved.difficulty,
@@ -894,6 +1038,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       if (req.rollMode === 'initiative') {
         void executeInitiativeRoll({
           initiativeModifier: req.initiativeModifier,
+          fromSheet: true,
           label: req.label,
           isSecretRoll: req.isSecretRoll ?? false,
         });
@@ -912,6 +1057,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       }
 
       void executeRoll({
+        shortcut: req.shortcut,
         pool: req.pool,
         rageDiceCount: nextRage,
         difficulty: req.difficulty,
@@ -1170,7 +1316,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     activeSeat.seatId,
   ]);
 
-  const effectivePreviewPool = Math.max(
+  const effectivePreviewPool = isSheetTraitsMode && traitSelection ? traitSelection.effectivePool : Math.max(
     0,
     activeBasePool + (activeApplyWounds ? activeTrackers.woundPenalty : 0)
   );
@@ -1264,7 +1410,37 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     onSetRageDiceCount: setRageDiceCount,
     onSetDifficulty: setDifficulty,
     onToggleSpecialty: handleToggleSpecialty,
-    onToggleSpendWillpower: () => setSpendWillpower((v) => !v),
+    onToggleSpendWillpower: () => {
+      setSpendPackWillpower(false);
+      setSpendWillpower((v) => !v);
+    },
+    ruleRollOptions: activeSheet && (
+      <div className="flex flex-wrap gap-2 text-xs text-stone-300">
+        {hasRuleTargets && (
+          <label>
+            <input
+              type="checkbox"
+              checked={reviewTarget}
+              onChange={(e) => setReviewTarget(e.target.checked)}
+            />{' '}
+            Choose target for next sheet roll
+          </label>
+        )}
+        {!!activePack?.current && (
+          <label>
+            <input
+              type="checkbox"
+              checked={spendPackWillpower}
+              onChange={(e) => {
+                setSpendPackWillpower(e.target.checked);
+                if (e.target.checked) setSpendWillpower(false);
+              }}
+            />{' '}
+            Spend pack Willpower ({activePack.current} left)
+          </label>
+        )}
+      </div>
+    ),
     onToggleApplyWoundPenalty: handleToggleApplyWoundPenalty,
     onToggleSecretRoll: () => setIsSecretRoll((v) => !v),
     onSetRollLabel: setRollLabel,
@@ -1359,9 +1535,20 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         }
         onClose={() => setFeedOpen(false)}
         onReroll={handleRerollFromHistory}
+        canUseLuck={entry=>Boolean(activeSheet && entry.sheetId === activeSheet.id && entry.rollerDiscordId === session.userId && !entry.rerollOf && !rollHistory.some(other=>other.rerollOf === entry.id) && entry.roll.rollMode !== 'initiative' && entry.roll.netSuccesses <= 0 && entry.modifiers?.some(m=>m.target==='reroll:story_limit' && m.value>0))}
+        onUseLuck={entry=>{
+          const ruleId=entry.modifiers?.find(m=>m.target==='reroll:story_limit')?.ruleId;
+          if (activeSheet && ruleId) sendCommand({type:'REROLL_RULE_ROLL',seatId:activeSeat.seatId,sheetId:activeSheet.id,rollId:entry.id,ruleId});
+        }}
       />
 
       {/* Single-Instance Roster & Interactive W20 Sheet Modals mounted outside isMobile branch */}
+      {review && activeSheet?.id === review.sheetId && activeSeat.seatId === review.seatId && <RuleRollReview
+        sheet={activeSheet} seatId={review.seatId} shortcut={review.shortcut} initial={review.context}
+        onCancel={()=>setReview(null)} onConfirm={(ruleContext,preview)=>{
+          setReview(null);
+          executeRoll({...review.options,ruleContext,preview});
+        }}/>}
       <CharacterRosterModal session={session} />
       <W20InteractiveSheetModal onRollFromSheet={handleRollFromSheet} />
     </div>

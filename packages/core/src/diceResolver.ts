@@ -1,3 +1,5 @@
+import type { AppliedRuleModifier } from './ruleTypes';
+import { applyRuleValue } from './modifierRules';
 import { SpecialtyMode } from './types';
 
 export type RollOutcomeDegree =
@@ -11,6 +13,7 @@ export type RollOutcomeDegree =
 
 export interface W20RollRequest {
   label: string;
+  ruleModifiers?: AppliedRuleModifier[];
   basePool: number; // e.g. Effective Attribute + Ability + Bonus Dice
   woundPenalty?: number; // Negative integer (e.g., -2); ignored on Soak/Damage rolls
   applyWoundPenalty?: boolean; // Default true; set false for Soak, Damage, Gnosis, Willpower
@@ -88,20 +91,30 @@ export function resolveW20DicePool(
 ): W20RollResult {
   const applyWounds = req.applyWoundPenalty ?? true;
   const woundMod = applyWounds ? Math.min(0, req.woundPenalty ?? 0) : 0;
-  const effectivePool = Math.max(0, req.basePool + woundMod);
+  const effectivePool = Math.max(0, Math.floor(req.basePool + woundMod));
 
   const untrainedMod = req.isUntrainedSkill ? 1 : 0;
   const rawDiff = (req.baseDifficulty ?? 6) + (req.difficultyModifier ?? 0) + untrainedMod;
   const clampedDifficulty = Math.min(10, Math.max(2, rawDiff));
 
   const specialtyMode = req.specialtyMode ?? 'w20_double';
-  const hasSpecialty = Boolean(req.hasApplicableSpecialty);
+  const ruleEvaluation = { modifiers: req.ruleModifiers ?? [] };
+  const hasSpecialty = Boolean(
+    applyRuleValue(ruleEvaluation, 'specialty', Number(req.hasApplicableSpecialty ?? false))
+  );
+  const ruleAutomaticSuccesses = applyRuleValue(
+    ruleEvaluation,
+    'successes:automatic',
+    applyRuleValue(ruleEvaluation, 'roll:automatic_successes', 0)
+  );
   const automaticSuccesses =
-    (req.spendWillpower ? 1 : 0) + Math.max(0, req.bonusAutomaticSuccesses ?? 0);
+    (req.spendWillpower ? 1 : 0) +
+    Math.max(0, req.bonusAutomaticSuccesses ?? 0) +
+    Math.max(0, ruleAutomaticSuccesses);
 
   // If wound penalties reduce the dice pool to 0, only pre-spent automatic successes apply
   if (effectivePool === 0) {
-    return {
+    return applyRuleRollResult({
       effectivePool: 0,
       clampedDifficulty,
       dice: [],
@@ -112,7 +125,7 @@ export function resolveW20DicePool(
       isBotch: false,
       outcome: classifyOutcome(automaticSuccesses, false),
       physicsSeed: createPhysicsSeed(),
-    };
+    },req.ruleModifiers);
   }
 
   const dice: DieFaceResult[] = [];
@@ -160,7 +173,7 @@ export function resolveW20DicePool(
   const netRolledSuccesses = Math.max(0, rawSuccesses - onesRolled);
   const netSuccesses = automaticSuccesses + netRolledSuccesses;
 
-  return {
+  return applyRuleRollResult({
     effectivePool,
     clampedDifficulty,
     dice,
@@ -172,7 +185,7 @@ export function resolveW20DicePool(
     outcome: classifyOutcome(netSuccesses, isBotch),
     physicsSeed: createPhysicsSeed(),
     rollMode: 'pool',
-  };
+  },req.ruleModifiers);
 }
 
 /**
@@ -234,4 +247,44 @@ export function validateResourceSpend(
     };
   }
   return { allowed: true };
+}
+
+export function applyRuleRollResult(
+  result: W20RollResult,
+  modifiers: AppliedRuleModifier[] = []
+): W20RollResult {
+  if (!modifiers.length || result.rollMode === 'initiative') return result;
+  const evaluation = { modifiers };
+  const automaticOnes = Math.max(0, applyRuleValue(evaluation, 'dice:automatic-ones', 0));
+  const negatedOnes = Math.max(0, applyRuleValue(evaluation, 'botch:negate_dice', 0));
+  const onesRolled = Math.max(0, result.onesRolled + automaticOnes - negatedOnes);
+  let netSuccesses = result.automaticSuccesses + Math.max(0, result.rawSuccesses - onesRolled);
+  netSuccesses = applyRuleValue(evaluation, 'successes:opposed', netSuccesses);
+  netSuccesses = applyRuleValue(evaluation, 'damage:success_multiplier', netSuccesses);
+  netSuccesses = Math.max(netSuccesses, applyRuleValue(evaluation, 'soak:minimum-successes', 0));
+  netSuccesses = applyRuleValue(evaluation, 'successes:cap', netSuccesses);
+  const failure = Boolean(
+    applyRuleValue(evaluation, 'roll:automatic_failure', 0) ||
+      applyRuleValue(evaluation, 'outcome:failure', 0)
+  );
+  const success = Boolean(
+    applyRuleValue(evaluation, 'outcome:success', 0) ||
+      applyRuleValue(evaluation, 'attack:automatic_hit', 0)
+  );
+  if (success) netSuccesses = Math.max(1, netSuccesses);
+  if (failure) netSuccesses = 0;
+  netSuccesses = Math.max(0, Math.floor(netSuccesses));
+  const isBotch =
+    !failure &&
+    !success &&
+    result.rawSuccesses === 0 &&
+    onesRolled > 0 &&
+    result.automaticSuccesses === 0;
+  return {
+    ...result,
+    onesRolled,
+    netSuccesses,
+    isBotch,
+    outcome: classifyOutcome(netSuccesses, isBotch),
+  };
 }

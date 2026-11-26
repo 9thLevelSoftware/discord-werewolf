@@ -161,7 +161,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
   onToggleApplyWoundPenalty,
   onToggleSecretRoll,
   onSetRollLabel,
-  onExecuteRoll,
+  onExecuteRoll,ruleRollOptions,
   initiativeModifier,
   initiativeFormula,
   onRollInitiative,
@@ -1127,6 +1127,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               onToggleApplyWoundPenalty={onToggleApplyWoundPenalty}
               onToggleSecretRoll={onToggleSecretRoll}
             />
+              {ruleRollOptions}
 
             {/* Label Input + Pin / Save + Roll Now */}
             <div className="space-y-2.5">
