@@ -1,8 +1,9 @@
 import React from 'react';
-import type { RollHistoryEntry } from '@w20-vtt/protocol';
+import type { PendingActivationChoice, RollHistoryEntry, RollReplacementOption } from '@w20-vtt/protocol';
 import { ChevronRight, EyeOff, RotateCcw, ScrollText } from 'lucide-react';
 import { ModifierBreakdown } from './RuleRollReview';
 import { Button, IconButton, Modal } from '../ui';
+import { RollReplacementActions } from './RollReplacementActions';
 import {
   AuthoritativeDieChips,
   ParticipantAvatar,
@@ -15,8 +16,10 @@ interface RollFeedDrawerProps {
   disabled: boolean;
   mobileSheet?: boolean;
   onClose: () => void;
-  canUseLuck?: (entry: RollHistoryEntry) => boolean;
-  onUseLuck?: (entry: RollHistoryEntry) => void;
+  replacementOptions: RollReplacementOption[];
+  onReplace: (option: RollReplacementOption) => void;
+  pendingActivations: PendingActivationChoice[];
+  onReviewActivation: (id: string) => void;
   onReroll: (entry: RollHistoryEntry) => void;
 }
 
@@ -26,12 +29,17 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
   disabled,
   mobileSheet = false,
   onClose,
-  onReroll,canUseLuck,onUseLuck,
+  onReroll, replacementOptions, onReplace, pendingActivations, onReviewActivation,
 }) => {
   if (!open) return null;
 
   const entries = (
     <>
+        {pendingActivations.map((choice) => (
+          <Button key={choice.rollId} size="sm" onClick={() => onReviewActivation(choice.rollId)}>
+            Review {choice.label}
+          </Button>
+        ))}
         {rollHistory.length === 0 ? (
           <div className="flex flex-col items-center rounded-xl border border-dashed border-stone-700/60 bg-zinc-950/50 px-4 py-8 text-center">
             <ScrollText className="h-6 w-6 text-gold-500" aria-hidden="true" />
@@ -84,7 +92,6 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                     </div>
                   </div>
 
-                  {canUseLuck?.(entry) && <Button size="sm" disabled={disabled} onClick={()=>onUseLuck?.(entry)}>Use Lucky</Button>}
                   <Button
                     size="sm"
                     disabled={disabled}
@@ -93,11 +100,22 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                     onClick={() => onReroll(entry)}
                   >
                     <RotateCcw className="h-3 w-3" />
-                    Re-roll
+                    Roll again
                   </Button>
                 </div>
 
+                <div className="flex flex-wrap gap-1">
+                  {!pendingActivations.some((choice) => choice.rollId === entry.id) &&
+                    <RollReplacementActions options={replacementOptions.filter((option) => option.rollId === entry.id)}
+                      disabled={disabled} onChoose={onReplace} />}
+                </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {entry.rerollOf && <span className="text-xs text-amber-200">Replacement roll</span>}
+                  {rollHistory.some((other) => other.rerollOf === entry.id) &&
+                    <span className="text-xs text-stone-400">Replaced</span>}
+                  {entry.roll.hasApplicableSpecialty && <span className="text-xs text-amber-200">
+                    {entry.roll.specialtyMode === 'revised_explode' ? 'Specialty · exploding 10s' : 'Specialty · double 10s'}
+                  </span>}
                   <span
                     className={`rounded px-1.5 py-0.5 text-xs font-extrabold uppercase tracking-wide ${
                       isInitiative
@@ -135,15 +153,9 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                 </div>
 
                 {!!entry.modifiers?.length && <details className="mt-2 text-xs"><summary className="cursor-pointer text-amber-200">Roll modifiers</summary><ModifierBreakdown modifiers={entry.modifiers}/></details>}
-                {entry.roll.dice.length > 0 && (
-                  <div className="mt-2">
-                    <AuthoritativeDieChips
-                      roll={entry.roll}
-                      rageDiceCount={entry.rageDiceCount}
-                      compact
-                    />
-                  </div>
-                )}
+                <div className="mt-2">
+                  <AuthoritativeDieChips roll={entry.roll} rageDiceCount={entry.rageDiceCount} compact />
+                </div>
               </article>
             );
           })

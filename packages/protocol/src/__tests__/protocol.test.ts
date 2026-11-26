@@ -538,6 +538,7 @@ describe('@w20-vtt/protocol parseClientEnvelope & schemas', () => {
           label: 'Dexterity + Brawl',
           isSecretRoll: false,
           physicalDiceValues: [10, 8, 6, 4, 2, 1],
+          physicalBonusWaves: [[10], [1]],
           rollClientId: 'roll-abc',
         },
       })
@@ -545,6 +546,12 @@ describe('@w20-vtt/protocol parseClientEnvelope & schemas', () => {
     expect(validRoll.success).toBe(true);
     if (validRoll.success && validRoll.data.command.type === 'ROLL_TABLE_POOL') {
       expect(validRoll.data.command.physicalDiceValues).toEqual([10, 8, 6, 4, 2, 1]);
+      expect(validRoll.data.command.physicalBonusWaves).toEqual([[10], [1]]);
+      for (const waves of [[[11]], [Array(31).fill(6)], Array(13).fill([10])]) {
+        expect(parseClientEnvelope(JSON.stringify({
+          ...validRoll.data, command: { ...validRoll.data.command, physicalBonusWaves: waves },
+        })).success).toBe(false);
+      }
     }
 
     const validTracker = parseClientEnvelope(

@@ -25,6 +25,7 @@ import {
   getRollGate,
   RageDiceStepper,
   RollModifierToggles,
+  SpecialtyDeclaration,
   SavePinButton,
   useSavedFlash,
 } from './console/consoleShared';
@@ -150,7 +151,9 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   rageDiceCount,
   difficulty,
   hasSpecialty,
-  isAutoSpecialty,
+  specialtyDeclared,
+  specialtyMode,
+  canChangeSpecialtyMode,
   specialtyReason,
   hasTraitSelection,
   traitSelection,
@@ -190,6 +193,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   onSetRageDiceCount,
   onSetDifficulty,
   onToggleSpecialty,
+  onSetSpecialtyMode,
   onToggleSpendWillpower,
   onToggleApplyWoundPenalty,
   onToggleSecretRoll,
@@ -425,9 +429,12 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             muted={sfxPrefs.muted}
             volume={sfxPrefs.volume}
             layoutMode={layoutMode}
+            specialtyMode={specialtyMode}
+            canChangeSpecialtyMode={canChangeSpecialtyMode}
             onToggleMute={onToggleMuteSfx}
             onVolumeChange={onSfxVolumeChange}
             onCycleLayoutMode={onCycleLayoutMode}
+            onSetSpecialtyMode={onSetSpecialtyMode}
           />
         </div>
       </header>
@@ -556,8 +563,8 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
               {/* Modifiers: Specialty, +1 Willpower, Wounds, Secret */}
               <RollModifierToggles
                 layout="row"
-                hasSpecialty={hasSpecialty}
-                specialtyFromSheet={isSheetTraitsMode && isAutoSpecialty}
+                showSpecialty={!isSheetTraitsMode || Boolean(specialtyReason)}
+                specialtyDeclared={specialtyDeclared}
                 specialtyReason={specialtyReason}
                 spendWillpower={spendWillpower}
                 applyWoundPenalty={applyWoundPenalty}
@@ -767,6 +774,14 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                 <Pin className="h-4 w-4" />
               )}
             </button>
+          )}
+
+          {!manualControlsOpen && specialtyReason && (
+            <SpecialtyDeclaration
+              declared={specialtyDeclared}
+              reason={specialtyReason}
+              onToggle={onToggleSpecialty}
+            />
           )}
 
           {/* Modifiers Drawer Toggle */}

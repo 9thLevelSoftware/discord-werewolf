@@ -3,7 +3,10 @@ import {
   computeUserSheetStats,
   computeActorMovement,
   GIFT_MODIFIER_COVERAGE,
+  findGiftInCatalog,
+  getSheetNamedSpecialty,
   W20_GIFT_CATALOG,
+  W20_RITE_CATALOG,
   ABILITY_GROUPS,
   ATTRIBUTE_GROUPS,
   type ModifierRule,
@@ -21,6 +24,7 @@ import {
 } from '@w20-vtt/core';
 import { useCharacterSheetStore } from '../../store/useCharacterSheetStore';
 import { useVttRoomStore } from '../../store/useVttRoomStore';
+import { RollReplacementActions } from '../dice-table/RollReplacementActions';
 import { useRuleTargetOptions } from './sheetShared';
 import { effectText, factLabel, ruleButton, ruleField, RuleEditor } from './RuleEditor';
 
@@ -298,17 +302,18 @@ function RuleEntry({
   const primaryRule = entry.customRule ?? resolveModifierRule(entry.ruleId ?? '');
   const [pendingRequest, setPendingRequest] = useState('');
   const lastActivation = useVttRoomStore((state) => state.lastRuleActivation);
+  const lastRuleStateReply = useVttRoomStore((state) => state.lastRuleStateReply);
   const lastError = useVttRoomStore((state) => state.lastError);
   const connectionStatus = useVttRoomStore((state) => state.connectionStatus);
   useEffect(() => {
     if (
       pendingRequest &&
-      (lastActivation?.reqId === pendingRequest ||
+      (lastActivation?.reqId === pendingRequest || lastRuleStateReply === pendingRequest ||
         lastError?.reqId === pendingRequest ||
         connectionStatus !== 'authenticated')
     )
       setPendingRequest('');
-  }, [pendingRequest, lastActivation, lastError, connectionStatus]);
+  }, [pendingRequest, lastActivation, lastRuleStateReply, lastError, connectionStatus]);
   const followUpOnly = entry.kind === 'active-effect';
   const [actionId, setActionId] = useState(
     followUpOnly ? (primaryRule?.actions?.[0]?.id ?? '') : ''
@@ -334,9 +339,11 @@ function RuleEntry({
   >({});
   const [confirmed, setConfirmed] = useState(false);
   const [activationTags, setActivationTags] = useState<string[]>([]);
+  const [declaredSpecialty, setDeclaredSpecialty] = useState('');
   const [activationDifficulty, setActivationDifficulty] = useState('');
   const [referenceRollId, setReferenceRollId] = useState('');
   const rollHistory = useVttRoomStore((s) => s.rollHistory);
+  const roomRules = useVttRoomStore((s) => s.ruleState);
   const userId = useCharacterSheetStore((s) => s.initializedUserId);
   const fateRolls = rule?.activation?.correctsPreviousRoll
     ? rollHistory.filter(
@@ -344,8 +351,10 @@ function RuleEntry({
           roll.sheetId === sheet.id &&
           roll.rollerDiscordId === userId &&
           roll.roll.rollMode !== 'initiative' &&
-          !roll.correctionOf &&
-          !rollHistory.some((other) => other.correctionOf === roll.id)
+          (roomRules?.correctableRollIds
+            ? roomRules.correctableRollIds.includes(roll.id)
+            : !roll.correctionOf && !roll.rerollOf &&
+              !rollHistory.some((other) => other.correctionOf === roll.id || other.rerollOf === roll.id))
       )
     : [];
   const [opposition, setOpposition] = useState('');
@@ -371,6 +380,23 @@ function RuleEntry({
     (p) => !rule?.activation?.excludeCaster || p.id !== sheet.id
   );
   const active = rule?.activation;
+  const catalogGift = rule && findGiftInCatalog(rule.id);
+  const isFairFortune = catalogGift?.slug === 'fair-fortune';
+  const sheetGift = sheet.gifts.find((gift) => gift.id === entry.id);
+  const rite = entry.kind === 'rite' ? W20_RITE_CATALOG.find((item) => item.id === rule?.id) : undefined;
+  const spec = active?.rollSpec;
+  const rollingSheet = spec?.actor === 'target'
+    ? roomRules?.sheets.find((item) => item.id === targets[0])
+    : sheet;
+  const namedSpecialty = active?.roll && rollingSheet && spec?.pool === undefined && !spec?.poolTrait
+    ? getSheetNamedSpecialty(rollingSheet,
+        spec?.attribute ?? sheetGift?.rollAttribute ?? catalogGift?.rollAttribute ?? rite?.rollAttribute,
+        spec ? spec.ability : sheetGift?.rollAbility ?? catalogGift?.rollAbility ?? rite?.rollAbility)
+    : undefined;
+  const declarationKey = namedSpecialty && `${rollingSheet?.id}:${rule?.id}:${actionId}:${namedSpecialty}`;
+  const fairOptions = isFairFortune
+    ? roomRules?.rerollOptions?.filter((option) => option.sheetId === sheet.id && option.ruleId === rule?.id) ?? []
+    : [];
   const localChoices = active
     ? { ...entry.ruleChoices, ...activationChoices }
     : (entry.ruleChoices ?? {});
@@ -610,7 +636,20 @@ function RuleEntry({
           Record totem acceptance
         </button>
       )}
-      {active && rule && (
+      {isFairFortune && (
+        <div className="space-y-2">
+          {fairOptions.length === 0 && <p className="text-sm text-stone-400">No eligible failed roll for Fair Fortune.</p>}
+          {fairOptions.map((option) => (
+            <div key={option.rollId} className="flex flex-wrap items-center gap-2">
+              <span>{rollHistory.find((roll) => roll.id === option.rollId)?.label ??
+                roomRules?.pendingActivations?.find((pending) => pending.rollId === option.rollId)?.label ?? 'Failed roll'}</span>
+              <RollReplacementActions options={[option]} disabled={!connected} onChoose={() =>
+                send({ type: 'REROLL_RULE_ROLL', seatId, sheetId: sheet.id, rollId: option.rollId, ruleId: option.ruleId })} />
+            </div>
+          ))}
+        </div>
+      )}
+      {active && rule && !isFairFortune && (
         <div className="space-y-2 rounded border border-stone-700 p-3">
           <p className="text-sm">
             {Object.entries(active.cost ?? {})
@@ -647,6 +686,11 @@ function RuleEntry({
               </select>
             </label>
           )}
+          {declarationKey && <label className="block">
+            <input type="checkbox" checked={declaredSpecialty === declarationKey}
+              onChange={(event) => setDeclaredSpecialty(event.target.checked ? declarationKey : '')} />
+            {' '}Apply specialty · {namedSpecialty}
+          </label>}
           {variableDifficulty && (
             <label className="block">
               {active.rollSpec?.difficultyNote ?? 'Target difficulty'}{' '}
@@ -860,7 +904,8 @@ function RuleEntry({
                 send({
                   type: 'ACTIVATE_RULE',
                   seatId,
-                  context: { tags: activationTags },
+                  context: { tags: activationTags, ...(declarationKey && declaredSpecialty === declarationKey
+                    ? { specialtyOverride: true } : {}) },
                   sourceEntryId: entry.id,
                   ruleId: rule.id,
                   actionId: action?.id,

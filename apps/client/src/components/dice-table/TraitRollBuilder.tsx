@@ -631,7 +631,7 @@ export const DesktopTraitRollBar: React.FC<DesktopTraitRollBarProps> = ({
           </span>
           {selection.effectiveHasSpecialty && (
             <span
-              title={selection.specialtyReason ?? 'Specialty active (10s explode)'}
+              title={selection.specialtyReason ?? 'Specialty active'}
               className="flex items-center gap-0.5 rounded bg-amber-950/80 px-1 py-0.5 text-xs font-bold text-amber-300"
             >
               <Sparkles className="h-2.5 w-2.5" />

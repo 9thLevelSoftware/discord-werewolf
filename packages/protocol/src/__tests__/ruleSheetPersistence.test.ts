@@ -24,6 +24,8 @@ describe('rule data on the wire', () => {
   it('round-trips modifier commands and rejects out-of-range activation inputs', () => {
     const sheet = createBlankUserCharacterSheet({ id: 'sheet', ownerDiscordId: 'owner' });
     const commands: ClientCommand[] = [
+      { type: 'SET_TABLE_SPECIALTY_MODE', specialtyMode: 'revised_explode' },
+      { type: 'KEEP_ACTIVATION_RESULT', seatId: 'main', sheetId: sheet.id, rollId: 'pending-roll' },
       { type: 'BIND_TABLE_SHEET', seatId: 'main', sheet },
       {
         type: 'PREVIEW_RULE_ROLL',
@@ -73,8 +75,8 @@ describe('rule data on the wire', () => {
       expect(parsed.success, command.type).toBe(true);
       if (parsed.success) expect(parsed.data.command).toEqual(JSON.parse(JSON.stringify(command)));
     }
-    expect(parse({ ...commands[2], activationDifficulty: 11 }).success).toBe(false);
-    expect(parse({ ...commands[4], amount: -1 }).success).toBe(false);
+    expect(parse({ ...commands.find((command) => command.type === 'ACTIVATE_RULE'), activationDifficulty: 11 }).success).toBe(false);
+    expect(parse({ ...commands.find((command) => command.type === 'APPLY_RULE_EVENT'), amount: -1 }).success).toBe(false);
   });
 
   it('keeps legacy sheets readable and retains source choices and effect reserves', () => {

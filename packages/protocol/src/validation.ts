@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { createModifierCommandSchemas } from './modifierCommands';
 import { ruleBindingFields, RuleContextSchema, ActiveRuleInstanceSchema } from './ruleValidation';
 import type { W20UserCharacterSheet } from '@w20-vtt/core';
-import type { ClientEnvelope } from './messages';
+import { MAX_PHYSICAL_BONUS_WAVES, MAX_PHYSICAL_DICE_PER_WAVE, type ClientEnvelope } from './messages';
 
 export const AttributeKeySchema = z.enum([
   'strength',
@@ -482,6 +482,10 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
     isSecretStRoll: z.boolean().optional(),
   }),
   z.object({
+    type: z.literal('SET_TABLE_SPECIALTY_MODE'),
+    specialtyMode: SpecialtyModeSchema,
+  }),
+  z.object({
     type: z.literal('ROLL_TABLE_POOL'),
     sheetId: z.string().min(1).max(120).optional(), initiativeAdjustment: z.number().int().min(-30).max(30).optional(),
     shortcut: SheetShortcutSchema.optional(), ruleContext: RuleContextSchema.optional(),
@@ -496,7 +500,9 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
     initiativeModifier: z.number().int().min(-30).max(50).optional(),
     label: z.string().max(120).optional(),
     isSecretRoll: z.boolean().optional(),
-    physicalDiceValues: z.array(z.number().int().min(1).max(10)).max(30).optional(),
+    physicalDiceValues: z.array(z.number().int().min(1).max(10)).max(MAX_PHYSICAL_DICE_PER_WAVE).optional(),
+    physicalBonusWaves: z.array(z.array(z.number().int().min(1).max(10)).min(1).max(MAX_PHYSICAL_DICE_PER_WAVE))
+      .max(MAX_PHYSICAL_BONUS_WAVES).optional(),
     rollClientId: z.string().max(80).optional(),
     seatId: z.string().min(1).max(80).optional(),
     rollerDisplayName: z.string().min(1).max(80).optional(),

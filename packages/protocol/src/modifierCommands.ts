@@ -29,6 +29,12 @@ export function createModifierCommandSchemas(
       context: contextSchema.optional(),
     }),
     z.object({
+      type: z.literal('KEEP_ACTIVATION_RESULT'),
+      seatId,
+      sheetId: characterId,
+      rollId: z.string().min(1).max(160),
+    }),
+    z.object({
       type: z.literal('REROLL_RULE_ROLL'),
       seatId,
       sheetId: characterId,

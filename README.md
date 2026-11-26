@@ -2,6 +2,14 @@
 
 A custom **Werewolf: The Apocalypse 20th Anniversary Edition (W20)** Virtual Tabletop built as a **Discord Embedded Activity** paired with a serverless Discord Slash Command & Webhook bridge.
 
+## Specialties and rerolls at the voice table
+
+Declare an applicable specialty before rolling. Under the default W20 rule, a 10 on that roll earns two successes. If the dice show 10 and 1, one success survives. Initiative uses its own single d10. [W20 core, pp. 123, 234–235](https://theonyxpath.com/w20-is-on-sale/)
+
+Any seated player can switch **Shared specialty mode** in **Table settings** to Revised-style explosions. Each specialty 10 then adds a die to the felt at the same difficulty. A bonus 10 continues the chain and a bonus 1 cancels nothing. [Werewolf Revised, “Specialties”](https://www.drivethrurpg.com/en/product/637/werewolf-the-apocalypse-revised-edition)
+
+In **Roll Log**, **Roll again** starts a new attempt. Characters with **Lucky** can replace up to three failures or botches per story. **Fair Fortune** costs one temporary Gnosis and allows one replacement per scene. Replacements keep the original roll settings and the new result, even on another botch. If a sheet activation offers a replacement, **Keep result** applies its original consequences. Closing the choice leaves it in the log until resolved, and advancing the rule clock accepts outstanding results. [W20 core, pp. 179, 236, 483](https://theonyxpath.com/w20-is-on-sale/)
+
 ## Architecture
 
 - **`packages/core` (`@w20-vtt/core`)** — Zero-IO pure TypeScript W20 rules engine:

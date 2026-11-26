@@ -45,7 +45,6 @@ export interface ResolvedTraitRollSelection {
   abilDots: number;
   bonusDice: number;
   basePool: number;
-  autoSpecialty: boolean;
   specialtyReason?: string;
   effectiveHasSpecialty: boolean;
   autoApplyWounds: boolean;
@@ -268,8 +267,7 @@ export function resolveTraitRollSelection(params: {
       abilDots: 0,
       bonusDice,
       basePool,
-      autoSpecialty: false,
-      effectiveHasSpecialty: specialtyOverride ?? false,
+      effectiveHasSpecialty: false,
       autoApplyWounds,
       effectiveApplyWounds,
       woundPenalty: stats.woundPenalty,
@@ -320,10 +318,11 @@ export function resolveTraitRollSelection(params: {
     isSecretRoll: false,
   };
 
-  const resolved = resolveSheetShortcut(sheet, synthetic, params.ruleContext);
+  const resolved = resolveSheetShortcut(sheet, synthetic, {
+    ...params.ruleContext,
+    ...(specialtyOverride !== null && { specialtyOverride }),
+  });
   const basePool = Math.max(0, Math.min(30, resolved.rawPool));
-  const autoSpecialty = resolved.hasSpecialty;
-  const effectiveHasSpecialty = specialtyOverride ?? autoSpecialty;
   const autoApplyWounds = resolved.applyWoundPenalty;
   const effectiveApplyWounds = woundOverride ?? autoApplyWounds;
   const effectivePool = Math.max(0, basePool + (effectiveApplyWounds ? resolved.woundPenalty : 0));
@@ -349,9 +348,8 @@ export function resolveTraitRollSelection(params: {
     abilDots,
     bonusDice,
     basePool,
-    autoSpecialty,
-    ...(resolved.specialtyReason ? { specialtyReason: resolved.specialtyReason } : {}),
-    effectiveHasSpecialty,
+    specialtyReason: resolved.hasEligibleNamedSpecialty ? resolved.specialtyReason : undefined,
+    effectiveHasSpecialty: resolved.hasSpecialty,
     autoApplyWounds,
     effectiveApplyWounds,
     woundPenalty: resolved.woundPenalty,

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   type GarouForm,
   type ResolvedSheetShortcut,
+  type SpecialtyMode,
   resolveSheetShortcut,
   type W20UserCharacterSheet,
 } from '@w20-vtt/core';
@@ -75,7 +76,9 @@ export interface DiceTableHudProps {
   rageDiceCount: number;
   difficulty: number;
   hasSpecialty: boolean;
-  isAutoSpecialty: boolean;
+  specialtyDeclared: boolean;
+  specialtyMode: SpecialtyMode;
+  canChangeSpecialtyMode: boolean;
   specialtyReason?: string;
   perceptionFormMod: number;
   untrainedHint?: string;
@@ -120,6 +123,7 @@ export interface DiceTableHudProps {
   onSetRageDiceCount: React.Dispatch<React.SetStateAction<number>>;
   onSetDifficulty: React.Dispatch<React.SetStateAction<number>>;
   onToggleSpecialty: () => void;
+  onSetSpecialtyMode: (mode: SpecialtyMode) => void;
   onToggleSpendWillpower: () => void;
   onToggleApplyWoundPenalty: () => void;
   onToggleSecretRoll: () => void;
@@ -416,7 +420,7 @@ export const QuickRollBar: React.FC<QuickRollBarProps> = ({
               const tooltip = [
                 resolved.label !== sc.name ? `${resolved.label}` : '',
                 resolved.formulaSummary,
-                resolved.specialtyReason ? `Specialty: ${resolved.specialtyReason}` : '',
+                resolved.hasEligibleNamedSpecialty ? `Specialty available: ${resolved.specialtyReason}` : '',
                 `Diff ${resolved.difficulty}`,
               ]
                 .filter(Boolean)

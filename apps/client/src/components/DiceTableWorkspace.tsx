@@ -7,9 +7,10 @@ import {
   type RuleContext,
   type ResolvedSheetShortcut,
   type SheetShortcut,
+  type SpecialtyMode,
   sheetToLightTrackers,
 } from '@w20-vtt/core';
-import type { LightGarouTrackers, RollHistoryEntry, TableParticipant } from '@w20-vtt/protocol';
+import type { LightGarouTrackers, RollHistoryEntry, RollReplacementOption, TableParticipant } from '@w20-vtt/protocol';
 import { diceSoundEngine, type DiceSoundPreferences } from '../audio/DiceSoundEngine';
 import type { DiscordSessionContext } from '../discordBootstrap';
 import { useViewportLayout, VIEWPORT_BREAKPOINTS } from '../hooks/useViewportLayout';
@@ -48,7 +49,7 @@ import {
   isRageDieThemeColor,
 } from './dice-table/rollQueueController';
 import { PackPresenceDrawer } from './dice-table/PackPresenceDrawer';
-import { toast, useToasts } from './ui';
+import { Button, Modal, toast, useToasts } from './ui';
 import { useUiPref } from '../store/useUiPrefsStore';
 import { openSheetRule, useRuleTargetOptions } from './character-sheet/sheetShared';
 import {
@@ -59,6 +60,8 @@ import {
   type RollPreview,
 } from './dice-table/RuleRollReview';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
+import { RollReplacementActions } from './dice-table/RollReplacementActions';
+import { AuthoritativeDieChips } from './dice-table/DieFaceTiles';
 
 type RollOptions = Partial<SheetRollRequest> & {
   spendWillpower?: boolean;
@@ -152,8 +155,15 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const participants = useVttRoomStore((s) => s.participants);
   const speakingDiscordIds = useVttRoomStore((s) => s.speakingDiscordIds);
   const rollHistory = useVttRoomStore((s) => s.rollHistory);
+  const replacementOptions = useVttRoomStore((s) => s.ruleState?.rerollOptions) ?? [];
+  const pendingActivations = useVttRoomStore((s) => s.ruleState?.pendingActivations) ?? [];
+  const [deferredChoiceIds, setDeferredChoiceIds] = useState<string[]>([]);
   const diceQueue = useVttRoomStore((s) => s.diceQueue);
   const sendCommand = useVttRoomStore((s) => s.sendCommand);
+  const specialtyMode = useVttRoomStore((s) => s.specialtyMode);
+  const canChangeSpecialtyMode =
+    connectionStatus === 'authenticated' &&
+    participants.some((seat) => seat.discordUserId === session.userId && seat.isConnected);
 
   const sheetsById = useCharacterSheetStore((s) => s.sheetsById);
   const seats = useCharacterSheetStore((s) => s.seats);
@@ -445,7 +455,6 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   const arenaWrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
-  const boxRef = useRef<DiceBox | null>(null);
   const safeDiceBoxRef = useRef<SafeDiceBoxController | null>(null);
   if (!safeDiceBoxRef.current) {
     safeDiceBoxRef.current = new SafeDiceBoxController();
@@ -465,7 +474,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       dequeueRemoteRoll: (id) => useVttRoomStore.getState().dequeue3DRoll(id),
       consumeRemoteRollByClientId: (clientId) =>
         useVttRoomStore.getState().consume3DRollByClientId(clientId),
-      onSendRollCommand: (spec: LocalQueuedRollSpec, physicalDiceValues) => {
+      onSendRollCommand: (spec: LocalQueuedRollSpec, physicalDiceValues, physicalBonusWaves) => {
         useVttRoomStore.getState().sendCommand({
           type: 'ROLL_TABLE_POOL',
           pool: spec.pool,
@@ -490,6 +499,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
           ...(spec.label ? { label: spec.label } : {}),
           isSecretRoll: spec.isSecretRoll,
           ...(physicalDiceValues ? { physicalDiceValues } : {}),
+          ...(physicalBonusWaves ? { physicalBonusWaves } : {}),
           rollClientId: spec.rollClientId,
           seatId: spec.seatId,
           rollerDisplayName: spec.rollerDisplayName,
@@ -585,12 +595,17 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
             }
             return;
           }
-          boxRef.current = box;
+          // dice-box can initialize with a random-number fallback and no physics canvas.
+          if (!host?.querySelector('canvas')) {
+            toast.info(NO_3D_DICE_MESSAGE);
+            return;
+          }
           safeDiceBoxRef.current?.setBox(box, true);
           setWebglReady(true);
           window.dispatchEvent(new Event('resize'));
         })
         .catch((err: unknown) => {
+          if (cancelled) return;
           console.warn('3D DiceBox unavailable; using authoritative CSPRNG mode.', err);
           toast.info(NO_3D_DICE_MESSAGE);
           safeDiceBoxRef.current?.setBox(null, false);
@@ -607,12 +622,6 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       cancelled = true;
       safeDiceBoxRef.current?.setBox(null, false);
       setWebglReady(false);
-      try {
-        boxRef.current?.clear();
-      } catch {
-        // Ignore cleanup errors if WebGL context already tore down
-      }
-      boxRef.current = null;
       if (host) {
         host.innerHTML = '';
       }
@@ -689,6 +698,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       if (shortcut && activeSheet && local && !overrides?.preview) {
         const facts = actionableFacts(local.pending.flatMap((item) => item.reasons));
         if (
+          (overrides && shortcut.forceSpecialty === undefined && local.hasEligibleNamedSpecialty) ||
           facts.length ||
           getRollReserves(activeSheet).length ||
           (hasRuleTargets &&
@@ -725,8 +735,8 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         preview?.difficulty ?? local?.difficulty ?? overrides?.difficulty ?? difficulty;
       const targetSpec =
         preview?.hasSpecialty ??
-        overrides?.hasSpecialty ??
         local?.hasSpecialty ??
+        overrides?.hasSpecialty ??
         activeHasSpecialty;
       const usePack = Boolean(
         spendPackWillpower &&
@@ -765,6 +775,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
           rageDiceCount: effectiveRage,
           difficulty: targetDiff,
           hasSpecialty: targetSpec,
+          specialtyMode,
           spendWillpower: targetWp,
           willpowerSource:usePack ? 'pack' : undefined,
           applyWoundPenalty: targetApplyWounds,
@@ -794,6 +805,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       isSheetTraitsMode, traitSelection, specialtyOverride, woundOverride,hasRuleTargets,reviewTarget,spendPackWillpower,activePack,
       difficulty,
       activeHasSpecialty,
+      specialtyMode,
       spendWillpower,
       activeApplyWounds,
       isSecretRoll,
@@ -924,12 +936,21 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   }, []);
 
   const handleToggleSpecialty = useCallback(() => {
-    if (isSheetTraitsMode && traitSelection) {
-      setSpecialtyOverride((prev) => !(prev ?? traitSelection.autoSpecialty));
+    if (isSheetTraitsMode) {
+      if (traitSelection?.specialtyReason) setSpecialtyOverride((prev) => !prev);
       return;
     }
     setManualSpecialty((v) => !v);
-  }, [isSheetTraitsMode, traitSelection]);
+  }, [isSheetTraitsMode, traitSelection?.specialtyReason]);
+
+  const handleSetSpecialtyMode = useCallback(
+    (mode: SpecialtyMode) => {
+      if (canChangeSpecialtyMode && mode !== specialtyMode) {
+        sendCommand({ type: 'SET_TABLE_SPECIALTY_MODE', specialtyMode: mode });
+      }
+    },
+    [canChangeSpecialtyMode, sendCommand, specialtyMode]
+  );
 
   const handleToggleApplyWoundPenalty = useCallback(() => {
     if (isSheetTraitsMode && traitSelection) {
@@ -1004,7 +1025,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         setDifficulty(resolved.shortcut.difficulty);
         setRageDiceCount(nextRage);
         setSpecialtyOverride(
-          resolved.hasSpecialty !== autoBaseline.autoSpecialty ? resolved.hasSpecialty : null
+          autoBaseline.specialtyReason ? resolved.shortcut.forceSpecialty ?? null : null
         );
         setWoundOverride(
           resolved.applyWoundPenalty !== autoBaseline.autoApplyWounds
@@ -1082,22 +1103,28 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         return;
       }
 
-      const targetPool = Math.max(1, entry.roll.effectivePool);
+      const targetPool = entry.roll.effectivePool;
       const targetRage = Math.min(targetPool, Math.max(0, entry.rageDiceCount));
       const targetDiff = entry.roll.clampedDifficulty;
-      const usedSpecialty = entry.roll.dice.some(
-        (d) => d.contributedSuccesses === 2 || d.isBonusExplosionDie
-      );
-      if (!isSheetTraitsMode) {
-        setManualPool(targetPool);
+      const usedSpecialty = entry.roll.declaredSpecialty ?? entry.roll.hasApplicableSpecialty;
+      if (!isSheetTraitsMode || usedSpecialty === undefined || targetPool === 0) {
+        setManualPool(Math.max(1, targetPool));
         setRageDiceCount(targetRage);
         setDifficulty(targetDiff);
-        setManualSpecialty(usedSpecialty);
+        setManualSpecialty(usedSpecialty ?? false);
         setManualApplyWounds(false);
         setIsSecretRoll(entry.isSecretRoll);
         setRollLabel(entry.label);
       }
-
+      if (usedSpecialty === undefined || targetPool === 0) {
+        setRollSourceMode('manual');
+        setManualControlsOpen(true);
+        setSpendWillpower(false);
+        setSpendPackWillpower(false);
+        setFeedOpen(false);
+        toast.info('Review the pool and specialty before rolling again.');
+        return;
+      }
       void executeRoll({
         pool: targetPool,
         rageDiceCount: targetRage,
@@ -1109,8 +1136,16 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         isSecretRoll: entry.isSecretRoll,
       });
     },
-    [executeInitiativeRoll, executeRoll, isSheetTraitsMode]
+    [executeInitiativeRoll, executeRoll, isSheetTraitsMode, setFeedOpen, setManualControlsOpen]
   );
+
+  const pendingChoice = pendingActivations.find((choice) =>
+    seats.some((seat) => seat.sheetId === choice.sheetId) && !deferredChoiceIds.includes(choice.rollId));
+  const chooseReplacement = (option: RollReplacementOption) => {
+    const seat = seats.find((item) => item.sheetId === option.sheetId);
+    if (seat) sendCommand({ type: 'REROLL_RULE_ROLL', seatId: seat.seatId,
+      sheetId: option.sheetId, rollId: option.rollId, ruleId: option.ruleId });
+  };
 
   const handleClearTable = useCallback(() => {
     coordinatorRef.current?.clearFelt();
@@ -1175,7 +1210,6 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
 
   const handlePinComposerShortcut = useCallback(() => {
     if (!activeSheet || (!composerAttr && !composerAbil)) return;
-    const autoSpecialty = traitSelection?.autoSpecialty ?? false;
 
     const shortcut: SheetShortcut = {
       id: `sc-${crypto.randomUUID().slice(0, 8)}`,
@@ -1195,7 +1229,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       difficulty,
       rageDiceCount,
       applyWoundPenalty: activeApplyWounds,
-      ...(activeHasSpecialty && !autoSpecialty ? { forceSpecialty: true } : {}),
+      forceSpecialty: Boolean(traitSelection?.specialtyReason && specialtyOverride),
       isSecretRoll,
     };
     pinShortcutToActiveSheet(shortcut);
@@ -1210,7 +1244,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     difficulty,
     rageDiceCount,
     activeApplyWounds,
-    activeHasSpecialty,
+    specialtyOverride,
     isSecretRoll,
     pinShortcutToActiveSheet,
   ]);
@@ -1233,7 +1267,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
       difficulty,
       rageDiceCount,
       applyWoundPenalty: activeApplyWounds,
-      ...(activeHasSpecialty ? { forceSpecialty: true } : {}),
+      forceSpecialty: manualSpecialty,
       isSecretRoll,
     };
     pinShortcutToActiveSheet(shortcut);
@@ -1248,7 +1282,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     difficulty,
     rageDiceCount,
     activeApplyWounds,
-    activeHasSpecialty,
+    manualSpecialty,
     isSecretRoll,
     pinShortcutToActiveSheet,
   ]);
@@ -1323,16 +1357,13 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const clampedPreviewRage = Math.min(effectivePreviewPool, rageDiceCount);
   const obsidianPreviewCount = Math.max(0, effectivePreviewPool - clampedPreviewRage);
 
+  const specialtyDeclared = isSheetTraitsMode
+    ? Boolean(traitSelection?.specialtyReason && specialtyOverride)
+    : manualSpecialty;
   const activeModifierCount =
     (isSheetTraitsMode && bonusDice !== 0 ? 1 : 0) +
     (rageDiceCount > 0 ? 1 : 0) +
-    (isSheetTraitsMode
-      ? specialtyOverride !== null && specialtyOverride !== traitSelection?.autoSpecialty
-        ? 1
-        : 0
-      : manualSpecialty
-        ? 1
-        : 0) +
+    (specialtyDeclared ? 1 : 0) +
     (spendWillpower ? 1 : 0) +
     (!activeApplyWounds ? 1 : 0) +
     (isSecretRoll ? 1 : 0);
@@ -1366,7 +1397,9 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     rageDiceCount,
     difficulty,
     hasSpecialty: activeHasSpecialty,
-    isAutoSpecialty: Boolean(isSheetTraitsMode && traitSelection?.autoSpecialty),
+    specialtyDeclared,
+    specialtyMode,
+    canChangeSpecialtyMode,
     specialtyReason: isSheetTraitsMode ? traitSelection?.specialtyReason : undefined,
     perceptionFormMod: isSheetTraitsMode ? (traitSelection?.perceptionFormMod ?? 0) : 0,
     untrainedHint: isSheetTraitsMode ? traitSelection?.untrainedHint : undefined,
@@ -1410,6 +1443,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     onSetRageDiceCount: setRageDiceCount,
     onSetDifficulty: setDifficulty,
     onToggleSpecialty: handleToggleSpecialty,
+    onSetSpecialtyMode: handleSetSpecialtyMode,
     onToggleSpendWillpower: () => {
       setSpendPackWillpower(false);
       setSpendWillpower((v) => !v);
@@ -1535,11 +1569,10 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         }
         onClose={() => setFeedOpen(false)}
         onReroll={handleRerollFromHistory}
-        canUseLuck={entry=>Boolean(activeSheet && entry.sheetId === activeSheet.id && entry.rollerDiscordId === session.userId && !entry.rerollOf && !rollHistory.some(other=>other.rerollOf === entry.id) && entry.roll.rollMode !== 'initiative' && entry.roll.netSuccesses <= 0 && entry.modifiers?.some(m=>m.target==='reroll:story_limit' && m.value>0))}
-        onUseLuck={entry=>{
-          const ruleId=entry.modifiers?.find(m=>m.target==='reroll:story_limit')?.ruleId;
-          if (activeSheet && ruleId) sendCommand({type:'REROLL_RULE_ROLL',seatId:activeSeat.seatId,sheetId:activeSheet.id,rollId:entry.id,ruleId});
-        }}
+        replacementOptions={replacementOptions}
+        onReplace={chooseReplacement}
+        pendingActivations={pendingActivations}
+        onReviewActivation={(id) => setDeferredChoiceIds((ids) => ids.filter((item) => item !== id))}
       />
 
       {/* Single-Instance Roster & Interactive W20 Sheet Modals mounted outside isMobile branch */}
@@ -1551,6 +1584,26 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         }}/>}
       <CharacterRosterModal session={session} />
       <W20InteractiveSheetModal onRollFromSheet={handleRollFromSheet} />
+      {pendingChoice && <Modal open size="sm" title={pendingChoice.label}
+        subtitle="Choose the result before applying this activation’s effects."
+        onClose={() => {
+          setDeferredChoiceIds((ids) => [...ids, pendingChoice.rollId]);
+          setFeedOpen(true);
+        }}>
+        <p className="mb-2 font-semibold">
+          {pendingChoice.roll.isBotch ? 'Botch' : `${pendingChoice.roll.netSuccesses} net successes`} · difficulty {pendingChoice.roll.clampedDifficulty}
+        </p>
+        <AuthoritativeDieChips roll={pendingChoice.roll} rageDiceCount={0} compact />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button disabled={connectionStatus !== 'authenticated'} onClick={() => {
+            const seat = seats.find((item) => item.sheetId === pendingChoice.sheetId);
+            if (seat) sendCommand({ type: 'KEEP_ACTIVATION_RESULT', seatId: seat.seatId,
+              sheetId: pendingChoice.sheetId, rollId: pendingChoice.rollId });
+          }}>Keep result</Button>
+          <RollReplacementActions options={replacementOptions.filter((option) => option.rollId === pendingChoice.rollId)}
+            disabled={connectionStatus !== 'authenticated'} onChoose={chooseReplacement} />
+        </div>
+      </Modal>}
     </div>
   );
 };

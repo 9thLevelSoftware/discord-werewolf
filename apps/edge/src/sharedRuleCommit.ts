@@ -21,6 +21,7 @@ export type SharedRuleCommand = Extract<
       | 'ACTIVATE_RULE'
       | 'ROLL_TABLE_POOL'
       | 'REROLL_RULE_ROLL'
+      | 'KEEP_ACTIVATION_RESULT'
       | 'APPLY_RULE_EVENT'
       | 'END_RULE_EFFECT';
   }

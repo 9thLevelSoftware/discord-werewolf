@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Monitor, Settings, Smartphone, Volume2, VolumeX } from 'lucide-react';
+import type { SpecialtyMode } from '@w20-vtt/core';
 import type { ViewportLayoutMode } from '../../../hooks/useViewportLayout';
 import { cx } from '../../ui';
 import { usePopoverDismiss } from '../../ui/usePopoverDismiss';
@@ -21,9 +22,12 @@ export interface TableSettingsMenuProps {
   /** 0 to 1. */
   volume: number;
   layoutMode: ViewportLayoutMode;
+  specialtyMode: SpecialtyMode;
+  canChangeSpecialtyMode: boolean;
   onToggleMute: () => void;
   onVolumeChange: (percent: number) => void;
   onCycleLayoutMode: () => void;
+  onSetSpecialtyMode: (mode: SpecialtyMode) => void;
 }
 
 /**
@@ -34,9 +38,12 @@ export const TableSettingsMenu: React.FC<TableSettingsMenuProps> = ({
   muted,
   volume,
   layoutMode,
+  specialtyMode,
+  canChangeSpecialtyMode,
   onToggleMute,
   onVolumeChange,
   onCycleLayoutMode,
+  onSetSpecialtyMode,
 }) => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -54,7 +61,7 @@ export const TableSettingsMenu: React.FC<TableSettingsMenuProps> = ({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-label="Table settings: sound and layout"
+        aria-label="Table settings"
         title="Table settings"
         className={cx(
           'w20-obsidian-panel flex h-8 w-8 items-center justify-center rounded-full transition hover:border-amber-400/55',
@@ -102,6 +109,21 @@ export const TableSettingsMenu: React.FC<TableSettingsMenuProps> = ({
               className="h-1.5 w-full cursor-pointer accent-amber-400"
             />
           </div>
+
+          <div className="w20-gold-divider" />
+
+          <label className="block space-y-1.5">
+            <span className="block font-semibold text-stone-200">Shared specialty mode</span>
+            <select
+              value={specialtyMode}
+              disabled={!canChangeSpecialtyMode}
+              onChange={(e) => onSetSpecialtyMode(e.target.value as SpecialtyMode)}
+              className="w-full rounded-lg border border-stone-700 bg-obsidian-950 px-2 py-1.5 text-stone-200 disabled:opacity-60"
+            >
+              <option value="w20_double">W20 · 10s count twice</option>
+              <option value="revised_explode">Revised · 10s explode</option>
+            </select>
+          </label>
 
           <div className="w20-gold-divider" />
 

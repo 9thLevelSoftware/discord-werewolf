@@ -11,6 +11,7 @@ import {
   SavePinButton,
 } from '../console/consoleShared';
 import { MAX_LOCAL_QUEUED_ROLLS } from '../rollQueueController';
+import { TableSettingsMenu } from '../console/TableSettingsMenu';
 
 describe('getRollGate', () => {
   const base = {
@@ -117,8 +118,8 @@ describe('RollModifierToggles', () => {
     render(
       <RollModifierToggles
         layout="row"
-        hasSpecialty
-        specialtyFromSheet
+        specialtyDeclared
+        specialtyReason="Firearms: Rifles"
         spendWillpower={false}
         applyWoundPenalty
         isSecretRoll={false}
@@ -128,7 +129,7 @@ describe('RollModifierToggles', () => {
       />
     );
 
-    expect(screen.getByRole('button', { name: /Specialty/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'Apply specialty (Firearms: Rifles)' })).toHaveAttribute(
       'aria-pressed',
       'true'
     );
@@ -142,6 +143,34 @@ describe('RollModifierToggles', () => {
     expect(secret).toHaveAttribute('aria-pressed', 'false');
     await user.click(secret);
     expect(handlers.onToggleSecretRoll).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TableSettingsMenu', () => {
+  it('shows the shared mode and dispatches a selection without changing the confirmed value', async () => {
+    const user = userEvent.setup();
+    const onSetSpecialtyMode = vi.fn();
+    const props = {
+      muted: false,
+      volume: 0.5,
+      layoutMode: 'mobile' as const,
+      canChangeSpecialtyMode: true,
+      onSetSpecialtyMode,
+      onToggleMute: vi.fn(),
+      onVolumeChange: vi.fn(),
+      onCycleLayoutMode: vi.fn(),
+    };
+    const { rerender } = render(<TableSettingsMenu {...props} specialtyMode="w20_double" />);
+    await user.click(screen.getByRole('button', { name: 'Table settings' }));
+    const mode = screen.getByRole('combobox', { name: 'Shared specialty mode' });
+    await user.selectOptions(mode, 'revised_explode');
+    expect(onSetSpecialtyMode).toHaveBeenCalledWith('revised_explode');
+    expect(mode).toHaveValue('w20_double');
+
+    rerender(<TableSettingsMenu {...props} specialtyMode="revised_explode" />);
+    expect(mode).toHaveValue('revised_explode');
+    rerender(<TableSettingsMenu {...props} specialtyMode="revised_explode" canChangeSpecialtyMode={false} />);
+    expect(mode).toBeDisabled();
   });
 });
 

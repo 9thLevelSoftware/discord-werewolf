@@ -16,8 +16,49 @@ import { useVttRoomStore } from '../../../store/useVttRoomStore';
 import { RuleEditor } from '../../character-sheet/RuleEditor';
 import { shortcutToRollRequest } from '../../character-sheet/sheetShared';
 import { resolveTraitRollSelection } from '../traitRollMath';
+import { RuleRollReview } from '../RuleRollReview';
 
 describe('sheet rule integration', () => {
+  it('asks whether the named specialty applies to a sheet roll', () => {
+    const sheet = createBlankUserCharacterSheet({ id: 'sheet', ownerDiscordId: 'owner' });
+    sheet.abilities.firearms = 4;
+    sheet.specialties.firearms = 'Rifles';
+    const shortcut: SheetShortcut = {
+      id: 'shot',
+      name: 'Called shot',
+      source: { kind: 'trait_combo', attribute: 'dexterity', ability: 'firearms' },
+      difficulty: 6,
+      rageDiceCount: 0,
+      applyWoundPenalty: false,
+      isSecretRoll: false,
+    };
+    const onConfirm = vi.fn();
+    render(
+      <RuleRollReview
+        sheet={sheet}
+        seatId="main"
+        shortcut={shortcut}
+        initial={{}}
+        onCancel={vi.fn()}
+        onConfirm={onConfirm}
+      />
+    );
+    const specialty = screen.getByRole('checkbox', { name: 'Apply specialty (Firearms: Rifles)' });
+    const roll = screen.getByRole('button', { name: /Roll \d+ dice/ });
+    expect(specialty).not.toBeChecked();
+    fireEvent.click(roll);
+    expect(onConfirm).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ hasSpecialty: false })
+    );
+    fireEvent.click(specialty);
+    fireEvent.click(roll);
+    expect(onConfirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ specialtyOverride: true }),
+      expect.objectContaining({ hasSpecialty: true })
+    );
+  });
+
   it('retains the editable source and resolves Leadership in the composer and the submitted shortcut', () => {
     const sheet = createBlankUserCharacterSheet({ id: 'sheet', ownerDiscordId: 'owner' });
     sheet.baseAttributes.charisma = 3;
