@@ -1,5 +1,8 @@
+import { applyRuleValue, effectiveRuleHealth, evaluateModifierRules, getSheetModifierSources, ruleTraits, ruleSilverPenalty, resolveRulePenalties } from './modifierRules';
+import type { RuleBinding, ActiveRuleInstance, RuleContext, AppliedRuleModifier, EvaluatedRules } from './ruleTypes';
 import {
   AbilityCategory,
+  ABILITY_GROUPS,
   STARTING_GNOSIS_BY_BREED,
   STARTING_RAGE_BY_AUSPICE,
   STARTING_WILLPOWER_BY_TRIBE,
@@ -32,13 +35,13 @@ export interface CustomAbilityEntry {
   specialty?: string;
 }
 
-export interface SheetBackgroundEntry {
+export interface SheetBackgroundEntry extends RuleBinding {
   id: string;
   name: string;
   dots: number;
 }
 
-export interface SheetGiftEntry {
+export interface SheetGiftEntry extends RuleBinding {
   id: string;
   name: string;
   level: number;
@@ -51,16 +54,19 @@ export interface SheetGiftEntry {
   summary: string;
 }
 
-export interface SheetFetishItem {
+export interface SheetFetishItem extends RuleBinding {
   id: string;
   name: string;
   level: number;
   gnosisRating: number;
   power: string;
+  carried?: boolean;
+  active?: boolean;
   isSilver?: boolean;
+  isAttuned?: boolean;
 }
 
-export interface SheetRiteEntry {
+export interface SheetRiteEntry extends RuleBinding {
   id: string;
   name: string;
   level?: number;
@@ -69,7 +75,7 @@ export interface SheetRiteEntry {
 
 export type OtherTraitKind = 'merit' | 'flaw' | 'other';
 
-export interface SheetOtherTraitEntry {
+export interface SheetOtherTraitEntry extends RuleBinding {
   id: string;
   name: string;
   dots: number;
@@ -103,9 +109,11 @@ export function cleanOtherTraitDisplayName(name: string): string {
   return name.replace(/\s*\((?:merit|flaw)\)\s*$/i, '').trim() || name.trim();
 }
 
-export interface SheetWeaponEntry {
+export interface SheetWeaponEntry extends RuleBinding {
   id: string;
   name: string;
+  carried?: boolean;
+  isSilver?: boolean;
   rollAttribute: AttributeKey;
   rollAbility: string;
   difficulty: number;
@@ -137,6 +145,7 @@ export interface SheetShortcut {
   id: string;
   name: string;
   source: ShortcutPoolSource;
+  ruleContext?: RuleContext;
   difficulty: number;
   rageDiceCount: number;
   applyWoundPenalty: boolean;
@@ -145,6 +154,7 @@ export interface SheetShortcut {
 }
 
 export interface ResolvedSheetShortcut {
+  context: RuleContext;
   shortcut: SheetShortcut;
   label: string;
   basePool: number;
@@ -157,6 +167,11 @@ export interface ResolvedSheetShortcut {
   applyWoundPenalty: boolean;
   isSecretRoll: boolean;
   formulaSummary: string;
+  modifiers: AppliedRuleModifier[];
+  pending: EvaluatedRules['pending'];
+  woundPenalty: number;
+  bonusAutomaticSuccesses: number;
+  automaticFailure: boolean;
 }
 
 export interface BrawlingManeuverRow {
@@ -171,6 +186,8 @@ export interface BrawlingManeuverRow {
 }
 
 export interface W20UserCharacterSheet {
+  /** Idempotency keys for accepted room resource and effect mutations. */
+  ruleActivationReceipts?: string[];
   id: string;
   ownerDiscordId: string;
   syncCode?: string | null;
@@ -182,6 +199,7 @@ export interface W20UserCharacterSheet {
   tribe: string;
   packName: string;
   packTotem: string;
+  packTotemRule?: RuleBinding;
   concept: string;
   deedName?: string;
   metisDeformity?: string;
@@ -203,15 +221,30 @@ export interface W20UserCharacterSheet {
   silverCarriedItems: number;
   health: HealthState;
   experience: {
+    mystical?: number;
     total: number;
     spent: number;
   };
   activeForm: GarouForm;
+  ruleContextTags?: string[];
+  activeRuleEffects?: ActiveRuleInstance[];
+  ruleHealthBonus?: number;
   otherTraits: SheetOtherTraitEntry[];
   fetishes: SheetFetishItem[];
   rites: SheetRiteEntry[];
   combatWeapons: SheetWeaponEntry[];
-  armor: {
+  equipment?: Array<
+    RuleBinding & {
+      id: string;
+      name: string;
+      worn?: boolean;
+      carried?: boolean;
+      isSilver?: boolean;
+    }
+  >;
+  armor: RuleBinding & {
+    dexterityDifficultyPenalty?: number;
+    worn?: boolean;
     rating: number;
     description: string;
   };
@@ -289,9 +322,16 @@ export function generateRandomSyncCode(rngBytes?: Uint8Array): string {
 // ============================================================================
 
 export interface UserSheetComputedStats {
+  modifiers: AppliedRuleModifier[];
+  effectiveAbilities: Record<string, number>;
+  ruleEvaluation: EvaluatedRules;
+  health: HealthState;
+  ruleInitiativeBonus: number;
   effectiveAttributes: BaseAttributes;
   formSpec: FormModifierSpec;
   effectiveGnosisPool: number;
+  effectiveRagePool: number;
+  effectiveWillpowerPool: number;
   woundPenalty: number;
   isIncapacitated: boolean;
   woundLabel: string;
@@ -384,9 +424,14 @@ function lookupSpecialtyForTrait(
  * Computes W20 five-form effective stats, soak capabilities, wound state,
  * initiative bonus, and the Page 2 brawling maneuver chart.
  */
-export function computeUserSheetStats(sheet: W20UserCharacterSheet): UserSheetComputedStats {
+export function computeUserSheetStats(sheet: W20UserCharacterSheet, context: RuleContext = {}): UserSheetComputedStats {
   const spec = W20_FORM_MATRIX[sheet.activeForm];
   const base = sheet.baseAttributes;
+  const rules = evaluateModifierRules(
+    getSheetModifierSources(sheet),
+    { ...sheet, ruleTraits: ruleTraits(sheet) },
+    context
+  );
 
   const effectiveAttributes: BaseAttributes = {
     strength: Math.max(1, base.strength + (spec.deltas.strength ?? 0)),
@@ -402,14 +447,56 @@ export function computeUserSheetStats(sheet: W20UserCharacterSheet): UserSheetCo
     wits: base.wits,
   };
 
-  const woundState = computeWoundState(sheet.health);
+  if (applyRuleValue(rules, 'form:social_penalty', 1) === 0) {
+    effectiveAttributes.manipulation = base.manipulation;
+    effectiveAttributes.appearance = base.appearance;
+  }
+  for (const key of Object.keys(effectiveAttributes) as AttributeKey[]) {
+    effectiveAttributes[key] = Math.max(
+      key === 'manipulation' || key === 'appearance' ? 0 : 1,
+      applyRuleValue(rules, `attribute:${key}`, effectiveAttributes[key])
+    );
+  }
+  if (
+    spec.overrideAppearanceZero ||
+    rules.modifiers.some(
+      (modifier) =>
+        modifier.target === 'attribute:appearance' &&
+        modifier.operation === 'set' &&
+        modifier.value === 0
+    )
+  )
+    effectiveAttributes.appearance = 0;
+  const effectiveAbilities = Object.fromEntries(
+    [
+      ...new Set([
+        ...Object.keys(sheet.abilities),
+        ...rules.modifiers
+          .filter((mod) => mod.target.startsWith('ability:'))
+          .map((mod) => mod.target.slice(8)),
+      ]),
+    ].map((key) => [
+      key,
+      Math.max(0, applyRuleValue(rules, `ability:${key}`, lookupSheetAbilityDots(sheet, key))),
+    ])
+  );
+  const health = reconcileSheetRuleHealth(sheet).health;
+  const woundState = computeWoundState(health);
+  woundState.penalty = Math.min(0, applyRuleValue(rules, 'wound:penalty', woundState.penalty));
   const naturalBreedForm = getBreedNaturalForm(sheet.breed);
   const isBreedForm = sheet.activeForm === naturalBreedForm;
   const isHumanForm = sheet.activeForm === 'homid';
 
   const naturalSoakPool = effectiveAttributes.stamina;
-  const armorRating = Math.max(0, Math.floor(sheet.armor.rating));
-  const brawlDots = lookupSheetAbilityDots(sheet, 'brawl');
+  const armorRating = Math.max(
+    0,
+    applyRuleValue(
+      rules,
+      'armor:rating',
+      sheet.armor.worn === false ? 0 : Math.floor(sheet.armor.rating)
+    )
+  );
+  const brawlDots = effectiveAbilities.brawl ?? lookupSheetAbilityDots(sheet, 'brawl');
   const attackPool = effectiveAttributes.dexterity + brawlDots;
   const str = effectiveAttributes.strength;
   const biteDamage = str + 1 + spec.bonusBiteDamageDice;
@@ -481,19 +568,26 @@ export function computeUserSheetStats(sheet: W20UserCharacterSheet): UserSheetCo
 
   return {
     effectiveAttributes,
+    effectiveAbilities,
+    ruleEvaluation:rules,
+    modifiers:rules.modifiers,
+    health,
+    ruleInitiativeBonus: applyRuleValue(rules,'initiative',0),
     formSpec: spec,
+    effectiveRagePool: Math.max(0,applyRuleValue(rules,'resource:rage:max',applyRuleValue(rules,'resource:rage',sheet.rage.permanent))),
+    effectiveWillpowerPool: Math.max(0,applyRuleValue(rules,'resource:willpower:max',applyRuleValue(rules,'resource:willpower',sheet.willpower.permanent))),
     effectiveGnosisPool: Math.max(
       0,
-      Math.floor(sheet.gnosis.permanent) - Math.max(0, Math.floor(sheet.silverCarriedItems))
+      applyRuleValue(rules,'resource:gnosis', Math.floor(sheet.gnosis.permanent)) - ruleSilverPenalty(sheet,getSheetModifierSources(sheet),rules)
     ),
     woundPenalty: woundState.penalty,
     isIncapacitated: woundState.isIncapacitated,
     woundLabel: woundState.woundLabel,
-    perceptionDifficultyMod: spec.perceptionDifficultyMod,
+    perceptionDifficultyMod: rules.modifiers.some(mod => mod.stackingKey === 'perception-form') ? 0 : applyRuleValue(rules,'form:perception_difficulty',spec.perceptionDifficultyMod),
     shiftDifficulty: spec.shiftDifficulty,
-    incitesDelirium: spec.incitesDelirium,
+    incitesDelirium: Boolean(applyRuleValue(rules,'delirium:trigger',applyRuleValue(rules,'delirium:enabled',Number(spec.incitesDelirium)))),
     initiativeBonus:
-      effectiveAttributes.dexterity + effectiveAttributes.wits + woundState.penalty,
+      applyRuleValue(rules,'initiative',effectiveAttributes.dexterity + effectiveAttributes.wits + woundState.penalty),
     soakCapabilities: {
       naturalSoakPool,
       armorRating,
@@ -501,7 +595,7 @@ export function computeUserSheetStats(sheet: W20UserCharacterSheet): UserSheetCo
       canSoakBashing: true,
       canSoakLethal: !isHumanForm,
       canSoakAggravated: !isHumanForm,
-      canSoakSilver: sheet.breed !== 'metis' && isBreedForm,
+      canSoakSilver: Boolean(applyRuleValue(rules,'soak:silver',Number(sheet.breed !== 'metis' && isBreedForm))),
     },
     brawlingChart,
     experienceRemaining: sheet.experience.total - sheet.experience.spent,
@@ -550,11 +644,53 @@ function resolveTraitComboSpecialty(
  */
 export function resolveSheetShortcut(
   sheet: W20UserCharacterSheet,
-  shortcut: SheetShortcut
+  shortcut: SheetShortcut,
+  context: RuleContext = {}
 ): ResolvedSheetShortcut {
-  const stats = computeUserSheetStats(sheet);
-  const spec = stats.formSpec;
   const source = shortcut.source;
+  const weapon =
+    source.kind === 'weapon_attack' || source.kind === 'weapon_damage'
+      ? sheet.combatWeapons.find((item) => item.id === source.weaponId)
+      : undefined;
+  const inferred: RuleContext =
+    source.kind === 'trait_combo'
+      ? {
+          attribute: source.attribute ?? undefined,
+          ability: source.ability ?? undefined,
+          tags: source.ability === 'brawl' ? ['weapon:natural'] : [],
+        }
+      : source.kind === 'weapon_attack'
+        ? {
+            attribute: weapon?.rollAttribute,
+            ability: weapon?.rollAbility,
+            rollKind: 'attack',
+            selectedItemId: source.weaponId,
+          }
+        : source.kind === 'weapon_damage'
+          ? {
+              rollKind: 'damage',
+              attribute: weapon?.damageMode === 'strength_plus' ? 'strength' : undefined,
+              selectedItemId: source.weaponId,
+            }
+          : source.kind === 'natural_brawl_damage'
+            ? { rollKind: 'damage', attribute: 'strength', maneuver: source.maneuver }
+            : source.kind === 'soak'
+              ? { rollKind: 'soak', attribute: 'stamina' }
+              : source.kind === 'fetish_activate'
+                ? { rollKind: 'activation', attribute: 'gnosis', selectedItemId: source.fetishId }
+                : {};
+  const rollContext = { ...inferred, ...shortcut.ruleContext, ...context };
+  rollContext.authoritativeTags = [
+    ...(shortcut.difficulty >= 6 ? ['roll:difficulty_6_or_more'] : []),
+  ];
+  if (
+    shortcut.applyWoundPenalty &&
+    !['damage', 'soak'].includes(rollContext.rollKind ?? '') &&
+    !['rage', 'gnosis', 'willpower'].includes(rollContext.attribute ?? '')
+  )
+    rollContext.authoritativeTags.push('roll:wound-sensitive');
+  const stats = computeUserSheetStats(sheet, rollContext);
+  const spec = stats.formSpec;
 
   let label = shortcut.name;
   let rawPool = 0;
@@ -573,7 +709,7 @@ export function resolveSheetShortcut(
       let attrDots = 0;
 
       if (source.attribute === 'rage') {
-        attrDots = Math.max(0, Math.floor(sheet.rage.permanent));
+        attrDots = stats.effectiveRagePool;
         parts.push(`Rage (${attrDots})`);
       } else if (source.attribute === 'gnosis') {
         attrDots = stats.effectiveGnosisPool;
@@ -583,7 +719,7 @@ export function resolveSheetShortcut(
             : `Gnosis (${attrDots})`
         );
       } else if (source.attribute === 'willpower') {
-        attrDots = Math.max(0, Math.floor(sheet.willpower.permanent));
+        attrDots = stats.effectiveWillpowerPool;
         parts.push(`Willpower (${attrDots})`);
       } else if (source.attribute) {
         const attrSource = useFormStats ? stats.effectiveAttributes : sheet.baseAttributes;
@@ -593,7 +729,8 @@ export function resolveSheetShortcut(
 
       let abilDots = 0;
       if (source.ability) {
-        abilDots = lookupSheetAbilityDots(sheet, source.ability);
+        abilDots =
+          stats.effectiveAbilities[source.ability] ?? lookupSheetAbilityDots(sheet, source.ability);
         const custom = findCustomAbility(sheet, source.ability);
         parts.push(`${custom ? custom.name : formatTraitLabel(source.ability)} (${abilDots})`);
       }
@@ -606,7 +743,7 @@ export function resolveSheetShortcut(
       rawPool = attrDots + abilDots + flatMod;
 
       if (source.attribute === 'perception' && source.applyPerceptionFormDiff !== false) {
-        rawDiff += spec.perceptionDifficultyMod;
+        rawDiff += stats.perceptionDifficultyMod;
       }
 
       const isPureInnerTrait =
@@ -682,14 +819,16 @@ export function resolveSheetShortcut(
 
     case 'weapon_attack': {
       const weapon = sheet.combatWeapons.find((w) => w.id === source.weaponId);
-      if (weapon) {
+      if (weapon && weapon.carried !== false) {
         const attrDots = stats.effectiveAttributes[weapon.rollAttribute];
-        const abilDots = lookupSheetAbilityDots(sheet, weapon.rollAbility);
+        const abilDots =
+          stats.effectiveAbilities[weapon.rollAbility] ??
+          lookupSheetAbilityDots(sheet, weapon.rollAbility);
         const custom = findCustomAbility(sheet, weapon.rollAbility);
         rawPool = attrDots + abilDots;
         rawDiff =
           weapon.difficulty +
-          (weapon.rollAttribute === 'perception' ? spec.perceptionDifficultyMod : 0);
+          (weapon.rollAttribute === 'perception' ? stats.perceptionDifficultyMod : 0);
         const specResult = resolveTraitComboSpecialty(
           sheet,
           weapon.rollAttribute,
@@ -703,7 +842,9 @@ export function resolveSheetShortcut(
         } (${abilDots})`;
       } else {
         rawPool = 0;
-        formulaSummary = `Missing weapon (${source.weaponId})`;
+        formulaSummary = weapon
+          ? `${weapon.name} is not carried`
+          : `Missing weapon (${source.weaponId})`;
       }
       break;
     }
@@ -711,7 +852,7 @@ export function resolveSheetShortcut(
     case 'weapon_damage': {
       const weapon = sheet.combatWeapons.find((w) => w.id === source.weaponId);
       applyWoundPenalty = false;
-      if (weapon) {
+      if (weapon && weapon.carried !== false) {
         const str = stats.effectiveAttributes.strength;
         rawPool =
           weapon.damageMode === 'strength_plus'
@@ -723,7 +864,9 @@ export function resolveSheetShortcut(
             : `${weapon.damageDice} dice (${weapon.damageType})`;
       } else {
         rawPool = 0;
-        formulaSummary = `Missing weapon (${source.weaponId})`;
+        formulaSummary = weapon
+          ? `${weapon.name} is not carried`
+          : `Missing weapon (${source.weaponId})`;
       }
       break;
     }
@@ -732,8 +875,9 @@ export function resolveSheetShortcut(
       const fetish = sheet.fetishes.find((f) => f.id === source.fetishId);
       applyWoundPenalty = false;
       if (fetish) {
-        rawPool = fetish.gnosisRating;
-        formulaSummary = `Fetish Gnosis (${fetish.gnosisRating})`;
+        rawPool = stats.effectiveGnosisPool;
+        rawDiff = fetish.gnosisRating;
+        formulaSummary = `Gnosis (${stats.effectiveGnosisPool}), difficulty ${fetish.gnosisRating} (${fetish.name})`;
       } else {
         rawPool = 0;
         formulaSummary = `Missing fetish (${source.fetishId})`;
@@ -748,12 +892,85 @@ export function resolveSheetShortcut(
     }
   }
 
+  const rules = stats.ruleEvaluation;
+  if (
+    rollContext.rollKind === 'damage' &&
+    rules.modifiers.some((mod) => mod.target === 'weapon:strength_damage_bonus')
+  ) {
+    rawPool =
+      stats.effectiveAttributes.strength + applyRuleValue(rules, 'weapon:strength_damage_bonus', 0);
+  }
+  if (
+    rollContext.rollKind === 'damage' &&
+    rules.modifiers.some((mod) => mod.target === 'damage:base-strength-bonus')
+  )
+    rawPool =
+      stats.effectiveAttributes.strength + applyRuleValue(rules, 'damage:base-strength-bonus', 0);
+  if (
+    rollContext.rollKind === 'damage' &&
+    rules.modifiers.some((mod) => mod.target === 'weapon:flat_damage')
+  )
+    rawPool = applyRuleValue(rules, 'weapon:flat_damage', rawPool);
+  const rolledAbility =
+    source.kind === 'trait_combo'
+      ? source.ability
+      : source.kind === 'weapon_attack'
+        ? weapon?.rollAbility
+        : undefined;
+  const untrainedAbility =
+    rolledAbility &&
+    (stats.effectiveAbilities[rolledAbility] ?? lookupSheetAbilityDots(sheet, rolledAbility)) === 0
+      ? rolledAbility
+      : undefined;
+  const untrainedSkill =
+    untrainedAbility && (ABILITY_GROUPS.skills as string[]).includes(untrainedAbility);
+  const untrainedKnowledge =
+    untrainedAbility && (ABILITY_GROUPS.knowledges as string[]).includes(untrainedAbility);
+  if (untrainedKnowledge && !applyRuleValue(rules, 'untrained:knowledge', 0))
+    rules.modifiers.push({
+      sourceId: 'untrained-knowledge',
+      ruleId: 'w20-untrained-knowledge',
+      name: 'Untrained Knowledge',
+      source: { book: 'W20' },
+      target: 'roll:automatic_failure',
+      operation: 'allow',
+      value: 1,
+    });
+  const penalties = resolveRulePenalties(rules, {
+    ...rollContext,
+    penalties: [
+      ...(rollContext.penalties ?? []),
+      ...(untrainedSkill ? [{ key: 'untrained_skill', difficulty: 1 }] : []),
+    ],
+  });
+  rawPool = Math.floor(applyRuleValue(rules, 'pool', rawPool) + penalties.pool);
+  rawDiff = applyRuleValue(rules, 'difficulty', rawDiff) + penalties.difficulty;
+  if (rollContext.rollKind === 'soak') rawDiff = applyRuleValue(rules, 'soak:difficulty', rawDiff);
+  if (
+    rollContext.attribute === 'dexterity' &&
+    sheet.armor.worn !== false &&
+    !rules.modifiers.some((mod) => mod.sourceId === 'armor' && mod.target === 'difficulty')
+  )
+    rawDiff += sheet.armor.dexterityDifficultyPenalty ?? 0;
+  if (rollContext.specialtyOverride !== undefined) hasSpecialty = rollContext.specialtyOverride;
+  if (rollContext.woundOverride !== undefined) applyWoundPenalty = rollContext.woundOverride;
+  const woundPenalty = stats.woundPenalty;
+  const explanations = rules.modifiers
+    .filter((mod) => mod.target === 'pool' || mod.target === 'difficulty')
+    .map((mod) => `${mod.name} (${mod.value > 0 ? '+' : ''}${mod.value} ${mod.target})`);
+  if (explanations.length) formulaSummary += `; ${explanations.join(', ')}`;
+  if (
+    (source.kind === 'weapon_damage' || source.kind === 'weapon_attack') &&
+    (!weapon || weapon.carried === false)
+  )
+    rawPool = 0;
   const basePool = Math.max(1, Math.min(30, rawPool));
   const difficulty = Math.max(2, Math.min(10, rawDiff));
-  const effectivePool = Math.max(0, rawPool + (applyWoundPenalty ? stats.woundPenalty : 0));
+  const effectivePool = Math.max(0, Math.min(30, rawPool) + (applyWoundPenalty ? woundPenalty : 0));
 
   return {
     shortcut,
+    context:rollContext,
     label,
     basePool,
     rawPool,
@@ -765,6 +982,11 @@ export function resolveSheetShortcut(
     applyWoundPenalty,
     isSecretRoll: shortcut.isSecretRoll,
     formulaSummary,
+    modifiers: rules.modifiers,
+    pending: rules.pending,
+    woundPenalty,
+    bonusAutomaticSuccesses: Math.max(0,applyRuleValue(rules,'roll:automatic_successes',0)),
+    automaticFailure: Boolean(applyRuleValue(rules,'roll:automatic_failure',0) || (untrainedKnowledge && !applyRuleValue(rules,'untrained:knowledge',0))),
   };
 }
 
@@ -777,6 +999,7 @@ export function buildDefaultSheetShortcuts(sheet: W20UserCharacterSheet): SheetS
     {
       id: 'default-brawl',
       name: 'Brawl Attack',
+      ruleContext: { rollKind: 'attack', tags: ['weapon:natural'] },
       source: { kind: 'trait_combo', attribute: 'dexterity', ability: 'brawl' },
       difficulty: 6,
       rageDiceCount: 0,
@@ -1109,6 +1332,10 @@ export function draftToUserCharacterSheet(
     name: mf.name,
     dots: mf.pointValue,
     kind: mf.kind,
+    ruleId: mf.ruleId,
+    ruleChoice: mf.ruleChoice,
+    ruleChoices: mf.ruleChoices,
+    customRule: mf.customRule,
     ...(mf.category ? { category: mf.category } : {}),
   }));
 
@@ -1191,4 +1418,83 @@ export function sheetToLightTrackers(sheet: W20UserCharacterSheet): {
     willpower: Math.max(0, Math.min(10, Math.floor(sheet.willpower.temporary))),
     woundPenalty,
   };
+}
+
+export function reconcileSheetRuleHealth(
+  sheet: W20UserCharacterSheet,
+  previous?: W20UserCharacterSheet
+): W20UserCharacterSheet {
+  sheet = reconcileSheetRuleSources(sheet);
+  const evaluation = evaluateModifierRules(getSheetModifierSources(sheet), {
+    ...sheet,
+    ruleTraits: ruleTraits(sheet),
+  });
+  const bonus = Math.max(
+    0,
+    Math.floor(
+      applyRuleValue(evaluation, 'health:bruised', 0) +
+        applyRuleValue(evaluation, 'health:temporary', 0)
+    )
+  );
+  const priorBonus =
+    sheet.ruleHealthBonus ??
+    previous?.ruleHealthBonus ??
+    (previous
+      ? Math.max(
+          0,
+          applyRuleValue(
+            evaluateModifierRules(getSheetModifierSources(previous), previous),
+            'health:bruised',
+            0
+          )
+        )
+      : bonus);
+  const inherited = Math.max(0, sheet.health.bonusBruisedBoxes - priorBonus);
+  const damage = sheet.health.boxes.filter((box) => box !== 'none');
+  const desiredBonus = Math.max(inherited + bonus, damage.length - 7);
+  const boxes = (
+    sheet.health.boxes.length <= 7 + desiredBonus
+      ? [...sheet.health.boxes, ...Array(7 + desiredBonus - sheet.health.boxes.length).fill('none')]
+      : [...damage, ...Array(Math.max(0, 7 + desiredBonus - damage.length)).fill('none')]
+  ) as DamageType[];
+  const managedBonus = desiredBonus - inherited;
+  if (
+    sheet.ruleHealthBonus === managedBonus &&
+    sheet.health.bonusBruisedBoxes === desiredBonus &&
+    sheet.health.boxes.length === boxes.length
+  )
+    return sheet;
+  return {
+    ...sheet,
+    ruleHealthBonus: managedBonus,
+    health: { bonusBruisedBoxes: desiredBonus, boxes },
+  };
+}
+
+export function reconcileSheetRuleSources(sheet: W20UserCharacterSheet): W20UserCharacterSheet {
+  const used = new Set<string>();
+  let changed = false;
+  const reconcile = <T extends { id: string }>(entries: T[], category: string): T[] =>
+    entries.map((entry, index) => {
+      let id = entry.id;
+      if (used.has(id)) {
+        const base = `${id}-${category}-${index + 1}`;
+        id = base;
+        let suffix = 1;
+        while (used.has(id)) id = `${base}-${suffix++}`;
+        changed = true;
+      }
+      used.add(id);
+      return id === entry.id ? entry : { ...entry, id };
+    });
+  const otherTraits = reconcile(sheet.otherTraits, 'trait');
+  const backgrounds = reconcile(sheet.backgrounds, 'background');
+  const gifts = reconcile(sheet.gifts, 'gift');
+  const rites = reconcile(sheet.rites, 'rite');
+  const fetishes = reconcile(sheet.fetishes, 'fetish');
+  const combatWeapons = reconcile(sheet.combatWeapons, 'weapon');
+  const equipment = sheet.equipment ? reconcile(sheet.equipment, 'equipment') : undefined;
+  return changed
+    ? { ...sheet, otherTraits, backgrounds, gifts, rites, fetishes, combatWeapons, equipment }
+    : sheet;
 }

@@ -5,6 +5,8 @@ import {
   Auspice,
   Breed,
   buildDefaultSheetShortcuts,
+  reconcileSheetRuleHealth,
+  resolveRuleShift,
   createBlankUserCharacterSheet,
   DamageType,
   draftToUserCharacterSheet,
@@ -33,6 +35,7 @@ export interface LocalTableSeat {
 }
 
 export interface SheetRollRequest {
+  shortcut?: SheetShortcut;
   label: string;
   pool: number;
   difficulty: number;
@@ -173,7 +176,7 @@ function readLocalCache(userId: string): {
       for (const [id, candidate] of Object.entries(parsed.sheetsById)) {
         const valid = W20UserCharacterSheetSchema.safeParse(candidate);
         if (valid.success) {
-          sheetsById[id] = valid.data;
+          sheetsById[id] = reconcileSheetRuleHealth(valid.data);
         }
       }
     }
@@ -302,6 +305,7 @@ export interface CharacterSheetStoreState {
   activeSeatId: string;
   rosterModalOpen: boolean;
   sheetModalOpen: boolean;
+  focusedRuleId: string | null;
   wizardSeatId: string | null;
   loadingRoster: boolean;
   saveStatus: SheetSaveStatus;
@@ -326,6 +330,7 @@ export interface CharacterSheetStoreState {
     seatId: string,
     params: CreateGuidedSheetParams
   ) => Promise<W20UserCharacterSheet>;
+  receiveRuleSheets: (sheets: W20UserCharacterSheet[], previous?: W20UserCharacterSheet[]) => void;
   updateSheet: (
     sheetId: string,
     updater:
@@ -361,6 +366,59 @@ const DIRTY_RETRY_MAX_DELAY_MS = 120_000;
 let dirtyRetryDelayMs = DIRTY_RETRY_MIN_DELAY_MS;
 let dirtyRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let sessionInitGeneration = 0;
+let ruleSnapshotUserId: string | null = null;
+const remoteRuleSheetSnapshots = new Map<string, W20UserCharacterSheet>();
+const initialLocalEditSnapshots = new Map<string, W20UserCharacterSheet>();
+
+function sameSheetValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isSheetRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Merge remote changes while retaining fields edited locally since the last remote snapshot. */
+function mergeRemoteSheetValue(local: unknown, remote: unknown, baseline: unknown): unknown {
+  if (sameSheetValue(local, baseline)) return remote;
+  if (sameSheetValue(remote, baseline)) return local;
+
+  if (Array.isArray(local) && Array.isArray(remote) && Array.isArray(baseline)) {
+    const hasIds = (entries: unknown[]) =>
+      entries.every((entry) => isSheetRecord(entry) && typeof entry.id === 'string');
+    if (hasIds(local) && hasIds(remote) && hasIds(baseline)) {
+      const remoteById = new Map(remote.map((entry) => [entry.id as string, entry]));
+      const baselineById = new Map(baseline.map((entry) => [entry.id as string, entry]));
+      const localIds = new Set(local.map((entry) => entry.id as string));
+      const merged = local.flatMap((entry) => {
+        const id = entry.id as string;
+        const received = remoteById.get(id);
+        // A remote deletion also removes consumed inventory that was renamed locally.
+        if (!received) return baselineById.has(id) ? [] : [entry];
+        return [mergeRemoteSheetValue(entry, received, baselineById.get(id))];
+      });
+      for (const entry of remote) {
+        if (!localIds.has(entry.id as string) && !baselineById.has(entry.id as string))
+          merged.push(entry);
+      }
+      return merged;
+    }
+  }
+
+  if (isSheetRecord(local) && isSheetRecord(remote) && isSheetRecord(baseline)) {
+    const merged: Record<string, unknown> = {};
+    for (const key of new Set([
+      ...Object.keys(local),
+      ...Object.keys(remote),
+      ...Object.keys(baseline),
+    ])) {
+      const value = mergeRemoteSheetValue(local[key], remote[key], baseline[key]);
+      if (value !== undefined) merged[key] = value;
+    }
+    return merged;
+  }
+  return local;
+}
 
 function clearAllDebounceTimers(): void {
   for (const timer of putDebounceTimers.values()) {
@@ -465,6 +523,17 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
           keepalive,
         });
 
+        if (get().initializedUserId !== state.initializedUserId) return;
+        if (res.status === 409) {
+          const conflict = await res.json() as { sheet?: W20UserCharacterSheet };
+          const latest = W20UserCharacterSheetSchema.safeParse(conflict.sheet);
+          if (latest.success && latest.data.id === sheetId) {
+            get().receiveRuleSheets([latest.data]);
+          }
+          set({ saveStatus: 'local_only', errorMessage: 'The sheet changed at the table. Retrying your edits.' });
+          scheduleDirtyRetry();
+          return;
+        }
         if (!res.ok) {
           const msg = await extractErrorMessage(res, 'Failed to save character sheet');
           const isPermanentFailure = res.status === 400 || res.status === 403 || res.status === 404;
@@ -478,27 +547,32 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
 
         const data = (await res.json()) as { sheet?: W20UserCharacterSheet };
         const currentInStore = get().sheetsById[sheetId];
+        const saved = W20UserCharacterSheetSchema.safeParse(data.sheet);
+        const savedReceipts = saved.success ? saved.data.ruleActivationReceipts ?? [] : [];
+        if (saved.success && currentInStore?.ruleActivationReceipts?.some(id => !savedReceipts.includes(id))) {
+          // A newer room confirmation arrived while this editor save was in flight.
+          scheduleDirtyRetry();
+          return;
+        }
         // Avoid overwriting newer optimistic edits made while this PUT was in flight
         if (currentInStore && currentInStore.updatedAt > sentUpdatedAt) {
+          if (saved.success && savedReceipts.some(id => !currentInStore.ruleActivationReceipts?.includes(id))) {
+            get().receiveRuleSheets([saved.data]);
+          }
           return;
         }
 
         dirtySheetIds.delete(sheetId);
         dirtyRetryDelayMs = DIRTY_RETRY_MIN_DELAY_MS;
-        if (data.sheet) {
-          const valid = W20UserCharacterSheetSchema.safeParse(data.sheet);
-          if (valid.success) {
-            set((prev) => ({
-              sheetsById: {
-                ...prev.sheetsById,
-                [sheetId]: valid.data,
-              },
-              saveStatus: putDebounceTimers.size > 0 ? 'saving' : 'saved',
-              errorMessage: null,
-            }));
-            persistSnapshot();
-            return;
-          }
+        if (saved.success) {
+          remoteRuleSheetSnapshots.set(sheetId, structuredClone(saved.data));
+          set((prev) => ({
+            sheetsById: { ...prev.sheetsById, [sheetId]: saved.data },
+            saveStatus: putDebounceTimers.size > 0 ? 'saving' : 'saved',
+            errorMessage: null,
+          }));
+          persistSnapshot();
+          return;
         }
 
         set({
@@ -524,6 +598,7 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
       activeSeatId: 'primary',
       rosterModalOpen: false,
       sheetModalOpen: false,
+      focusedRuleId: null,
       wizardSeatId: null,
       loadingRoster: false,
       saveStatus: 'idle',
@@ -538,6 +613,9 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
         if (isNewUserSession) {
           clearAllDebounceTimers();
           dirtySheetIds.clear();
+          remoteRuleSheetSnapshots.clear();
+          initialLocalEditSnapshots.clear();
+          ruleSnapshotUserId = userId;
         }
 
         const cached = readLocalCache(userId);
@@ -614,7 +692,7 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
           for (const item of cloudList) {
             const parsed = W20UserCharacterSheetSchema.safeParse(item);
             if (parsed.success) {
-              cloudById[parsed.data.id] = parsed.data;
+              cloudById[parsed.data.id] = reconcileSheetRuleHealth(parsed.data);
             }
           }
 
@@ -629,6 +707,16 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
               currentState.seats.some((s) => s.sheetId === id || Boolean(s.syncCode));
 
             if (isForeignReferenced) {
+              reconciled[id] = localSheet;
+              continue;
+            }
+
+            const roomSnapshot = remoteRuleSheetSnapshots.get(id);
+            if (
+              !dirtySheetIds.has(id) &&
+              roomSnapshot &&
+              (!cloudSheet || roomSnapshot.updatedAt > cloudSheet.updatedAt)
+            ) {
               reconciled[id] = localSheet;
               continue;
             }
@@ -673,7 +761,7 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
                   };
                   const parsed = W20UserCharacterSheetSchema.safeParse(syncData.sheet);
                   if (parsed.success) {
-                    const resolvedSheet = parsed.data;
+                    const resolvedSheet = reconcileSheetRuleHealth(parsed.data);
                     reconciled[resolvedSheet.id] = resolvedSheet;
                     for (const seat of nextSeats) {
                       if (seat.syncCode && normalizeSyncCode(seat.syncCode) === code) {
@@ -1012,17 +1100,71 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
         }
       },
 
+      receiveRuleSheets: (incoming) => {
+        const userId = get().initializedUserId;
+        if (!userId) return;
+        if (ruleSnapshotUserId !== userId) {
+          remoteRuleSheetSnapshots.clear();
+          initialLocalEditSnapshots.clear();
+          ruleSnapshotUserId = userId;
+        }
+        const next = {...get().sheetsById};
+        let changed = false;
+        for (const sheet of incoming) {
+          const current = next[sheet.id];
+          const receipts = sheet.ruleActivationReceipts ?? [];
+          const old = current?.ruleActivationReceipts ?? [];
+          if (old.length && !old.every(id => receipts.includes(id))) continue;
+          const newReceipt = receipts.some(id => !old.includes(id));
+          const remoteBaseline = remoteRuleSheetSnapshots.get(sheet.id);
+          const initialLocalBaseline = initialLocalEditSnapshots.get(sheet.id);
+          const knownRemoteTime = remoteBaseline?.updatedAt ?? initialLocalBaseline?.updatedAt ?? (dirtySheetIds.has(sheet.id) ? 0 : current?.updatedAt ?? 0);
+          if (!newReceipt && sheet.updatedAt < knownRemoteTime) continue;
+          if (remoteBaseline && sameSheetValue(remoteBaseline, sheet)) continue;
+          const baseline = remoteBaseline ?? initialLocalBaseline;
+          const merged = structuredClone(current && baseline
+            ? mergeRemoteSheetValue(current, sheet, baseline) as W20UserCharacterSheet
+            : current && dirtySheetIds.has(sheet.id) ? { ...sheet, ...current } : sheet);
+          if (newReceipt) {
+            // Acknowledging a spend also acknowledges its balance, even with a pending local edit.
+            for (const resource of ['rage', 'gnosis', 'willpower'] as const) {
+              if (!baseline || !sameSheetValue(baseline[resource], sheet[resource])) {
+                merged[resource] = { ...sheet[resource] };
+              }
+            }
+          }
+          merged.activeRuleEffects = structuredClone(sheet.activeRuleEffects ?? []);
+          merged.ruleActivationReceipts = [...receipts];
+          merged.updatedAt = Math.max(current?.updatedAt ?? 0, sheet.updatedAt);
+          remoteRuleSheetSnapshots.set(sheet.id, structuredClone(sheet));
+          initialLocalEditSnapshots.delete(sheet.id);
+          const reconciled = reconcileSheetRuleHealth(merged, newReceipt ? undefined : current);
+          if (sameSheetValue(current, reconciled)) continue;
+          next[sheet.id] = reconciled;
+          changed = true;
+        }
+        if (changed) { set({sheetsById:next}); persistSnapshot(); }
+      },
+
       updateSheet: (sheetId, updater) => {
         const prevSheet = get().sheetsById[sheetId];
         if (!prevSheet) return;
+        if (ruleSnapshotUserId !== get().initializedUserId) {
+          remoteRuleSheetSnapshots.clear();
+          initialLocalEditSnapshots.clear();
+          ruleSnapshotUserId = get().initializedUserId;
+        }
+        if (!remoteRuleSheetSnapshots.has(sheetId) && !initialLocalEditSnapshots.has(sheetId)) {
+          initialLocalEditSnapshots.set(sheetId, structuredClone(prevSheet));
+        }
 
         const now = Date.now();
         const nextRaw =
           typeof updater === 'function' ? updater(prevSheet) : { ...prevSheet, ...updater };
         const nextSheet: W20UserCharacterSheet = {
-          ...nextRaw,
+          ...reconcileSheetRuleHealth(nextRaw, prevSheet),
           id: prevSheet.id,
-          updatedAt: now,
+          updatedAt: Math.max(now, prevSheet.updatedAt + 1),
           lastUsedAt: now,
         };
 
@@ -1043,7 +1185,7 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
         }
 
         const timer = setTimeout(() => {
-          void flushPutForSheet(sheetId, now);
+          void flushPutForSheet(sheetId, nextSheet.updatedAt);
         }, PUT_DEBOUNCE_MS);
         putDebounceTimers.set(sheetId, timer);
       },
@@ -1251,7 +1393,7 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
             return null;
           }
 
-          const resolvedSheet = parsed.data;
+          const resolvedSheet = reconcileSheetRuleHealth(parsed.data);
           const activeCode = resolvedSheet.syncCode ?? data.syncCode ?? normalized;
 
           set((prev) => ({
@@ -1545,10 +1687,14 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
         const state = get();
         const activeSeat = state.seats.find((s) => s.seatId === state.activeSeatId);
         if (!activeSeat?.sheetId) return;
-        get().updateSheet(activeSeat.sheetId, (prev) => ({
-          ...prev,
-          activeForm: form,
-        }));
+        const sheet = state.sheetsById[activeSeat.sheetId];
+        if (!sheet || sheet.activeForm === form) return;
+        const shift = resolveRuleShift(sheet, { targetForm: form, method: 'roll_primal_urge' });
+        if (!shift.allowed) {
+          toast.info(shift.reason ?? 'The current rules prevent that transformation.');
+          return;
+        }
+        get().updateSheet(activeSeat.sheetId, (prev) => ({ ...prev, activeForm: form }));
       },
 
       pinShortcutToActiveSheet: (shortcut) => {

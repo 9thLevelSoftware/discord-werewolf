@@ -195,7 +195,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   onToggleSecretRoll,
   onSetRollLabel,
   onSetManualControlsOpen,
-  onExecuteRoll,
+  onExecuteRoll,ruleRollOptions,
   initiativeModifier,
   initiativeFormula,
   onRollInitiative,
@@ -569,6 +569,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
                 onToggleApplyWoundPenalty={onToggleApplyWoundPenalty}
                 onToggleSecretRoll={onToggleSecretRoll}
               />
+              {ruleRollOptions}
             </div>
 
             {/* Dual-tone Obsidian / Rage Dice Preview Strip */}

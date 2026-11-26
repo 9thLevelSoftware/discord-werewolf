@@ -33,6 +33,7 @@ import { GameRoomDO } from './GameRoomDO';
 import { handleGetR2Asset, handlePutR2Asset } from './r2Assets';
 import { SupabaseRestClient, SupabaseRestError } from './supabaseRest';
 import { UserSheetRepository } from './userSheetStore';
+import { RuleSpendConflictError } from './userSheetTransactions';
 
 export { GameRoomDO };
 
@@ -252,6 +253,27 @@ async function handleCreateMyCharacterSheet(request: Request, env: WorkerEnv): P
   return errorResponse('Unsupported mode. Expected "guided" or "freeform".', 400);
 }
 
+async function saveEditedSheet(
+  repo: UserSheetRepository,
+  sheet: W20UserCharacterSheet,
+  expectedUpdatedAt: number,
+  syncCode?: string,
+): Promise<Response> {
+  try {
+    const updated = await repo.update(sheet, expectedUpdatedAt);
+    return updated
+      ? jsonResponse({ sheet: updated }, 200)
+      : errorResponse('Character sheet not found.', 404);
+  } catch (error) {
+    if (!(error instanceof RuleSpendConflictError) || error.code !== 'STALE') throw error;
+    const latest = error.latestSheet;
+    if (!latest || latest.ownerDiscordId !== sheet.ownerDiscordId || (syncCode && latest.syncCode !== syncCode)) {
+      return errorResponse('Character sheet is no longer accessible.', 404);
+    }
+    return jsonResponse({ error: 'The sheet changed while saving.', sheet: latest }, 409);
+  }
+}
+
 async function handleUpdateMyCharacterSheet(
   request: Request,
   env: WorkerEnv,
@@ -299,11 +321,7 @@ async function handleUpdateMyCharacterSheet(
     lastUsedAt: now,
   };
 
-  const updated = await repo.update(nextSheet);
-  if (!updated) {
-    return errorResponse('Character sheet not found.', 404);
-  }
-  return jsonResponse({ sheet: updated }, 200);
+  return saveEditedSheet(repo, nextSheet, existing.updatedAt);
 }
 
 async function handleDeleteMyCharacterSheet(
@@ -361,7 +379,7 @@ async function handleGenerateMySheetSyncCode(
         ...existing,
         syncCode: candidate,
         updatedAt: now,
-      });
+      }, existing.updatedAt);
       if (!updated) {
         return errorResponse('Character sheet not found.', 404);
       }
@@ -407,7 +425,7 @@ async function handleRevokeMySheetSyncCode(
     ...existing,
     syncCode: null,
     updatedAt: Date.now(),
-  });
+  }, existing.updatedAt);
   if (!updated) {
     return errorResponse('Character sheet not found.', 404);
   }
@@ -496,11 +514,7 @@ async function handleUpdateSheetBySyncCode(
     lastUsedAt: now,
   };
 
-  const updated = await repo.update(nextSheet);
-  if (!updated) {
-    return errorResponse('Character sheet not found.', 404);
-  }
-  return jsonResponse({ sheet: updated }, 200);
+  return saveEditedSheet(repo, nextSheet, existing.updatedAt, syncCode);
 }
 
 async function handleListCampaigns(request: Request, env: WorkerEnv): Promise<Response> {
@@ -930,6 +944,7 @@ async function handleSpendXp(
   await supa.patchCharacterFields(characterId, dbPatch);
   if ((category === 'in_tribe_gift' || category === 'out_of_tribe_gift') && giftId) {
     await supa.insertCharacterGifts(characterId, [giftId]);
+    roomPatch.giftIds = [...new Set([...(char.giftIds ?? []), giftId])];
   }
 
   if (env.GAME_ROOM) {
@@ -1097,6 +1112,12 @@ export default {
 
       return await env.ASSETS.fetch(request);
     } catch (err) {
+      if (err instanceof RuleSpendConflictError) {
+        if (err.code === 'OWNER_MISMATCH' || err.code === 'NOT_FOUND') {
+          return errorResponse('Character sheet is no longer accessible.', 404);
+        }
+        return errorResponse(err.message, 409);
+      }
       if (err instanceof SupabaseRestError) {
         return errorResponse(err.message, err.status >= 400 && err.status < 600 ? err.status : 502);
       }

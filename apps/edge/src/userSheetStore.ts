@@ -1,3 +1,11 @@
+import {
+  applyRuleSpend,
+  nextSheetVersion,
+  preserveRuleTransactions,
+  RuleSpendConflictError,
+  type RuleSpendInput,
+} from './userSheetTransactions';
+export { preserveRuleTransactions, RuleSpendConflictError, type RuleSpendInput } from './userSheetTransactions';
 import type { W20UserCharacterSheet } from '@w20-vtt/core';
 import type { WorkerEnv } from './env';
 import { SupabaseRestClient, SupabaseRestError } from './supabaseRest';
@@ -23,16 +31,20 @@ function syncIndexKey(syncCode: string): string {
 }
 
 export function isMissingUserSheetsTableError(err: unknown): boolean {
-  if (!(err instanceof SupabaseRestError)) {
+  if (!(err instanceof SupabaseRestError)) return false;
+  let body: { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  try {
+    body = JSON.parse(err.bodyText);
+  } catch {
     return false;
   }
-  if (err.status === 404) {
-    return true;
-  }
-  return (
-    err.bodyText.includes('PGRST205') ||
-    err.bodyText.toLowerCase().includes('user_character_sheets')
-  );
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const missingTable = body.code === 'PGRST205' || body.code === '42P01';
+  const description = [body.message, body.details, body.hint]
+    .filter(value => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
+  return missingTable && /\b(?:public\.)?user_character_sheets\b/.test(description);
 }
 
 interface SyncIndexRecord {
@@ -83,70 +95,107 @@ export class UserSheetRepository {
       return null;
     }
     try {
-      return await obj.json<W20UserCharacterSheet>();
+      const sheet = await obj.json<W20UserCharacterSheet & {_deleted?:boolean}>();
+      return sheet._deleted ? null : sheet;
     } catch {
       return null;
     }
   }
 
-  private async r2WriteSheetAndIndexes(
-    sheet: W20UserCharacterSheet,
-    previous?: W20UserCharacterSheet | null,
-  ): Promise<W20UserCharacterSheet> {
+  private async r2WriteSheetAndIndexes(sheet: W20UserCharacterSheet): Promise<W20UserCharacterSheet> {
     const bucket = this.requireBucket();
-    const keysToDelete: string[] = [];
-
-    if (previous) {
-      if (previous.syncCode && previous.syncCode !== sheet.syncCode) {
-        keysToDelete.push(syncIndexKey(previous.syncCode));
-      }
-      if (previous.ownerDiscordId !== sheet.ownerDiscordId) {
-        keysToDelete.push(ownerIndexKey(previous.ownerDiscordId, sheet.id));
-      }
-    }
-
-    if (keysToDelete.length > 0) {
-      await bucket.delete(keysToDelete);
-    }
-
-    const jsonMeta = {
-      httpMetadata: {
-        contentType: 'application/json; charset=utf-8',
-        cacheControl: 'no-store',
-      },
-    };
-
-    const writes: Promise<unknown>[] = [
-      bucket.put(sheetKey(sheet.id), JSON.stringify(sheet), jsonMeta),
-      bucket.put(
-        ownerIndexKey(sheet.ownerDiscordId, sheet.id),
-        JSON.stringify({
-          id: sheet.id,
-          ownerDiscordId: sheet.ownerDiscordId,
-          lastUsedAt: sheet.lastUsedAt,
-          updatedAt: sheet.updatedAt,
-        }),
-        jsonMeta,
-      ),
-    ];
-
-    if (sheet.syncCode) {
-      writes.push(
-        bucket.put(
-          syncIndexKey(sheet.syncCode),
-          JSON.stringify({
-            sheetId: sheet.id,
-            ownerDiscordId: sheet.ownerDiscordId,
-            syncCode: sheet.syncCode,
-            updatedAt: sheet.updatedAt,
-          }),
-          jsonMeta,
-        ),
+    await this.r2ClaimSyncCode(sheet);
+    const saved = await bucket.put(sheetKey(sheet.id), JSON.stringify(sheet), {
+      onlyIf: {etagDoesNotMatch: '*'},
+      httpMetadata: {contentType: 'application/json; charset=utf-8', cacheControl: 'no-store'},
+    });
+    if (!saved) {
+      throw new RuleSpendConflictError(
+        'STALE',
+        'A character sheet with this ID already exists.',
+        await this.r2GetById(sheet.id) ?? undefined,
       );
     }
-
-    await Promise.all(writes);
+    await this.r2PublishIndexes(sheet);
     return sheet;
+  }
+
+  private async r2ClaimSyncCode(sheet: W20UserCharacterSheet): Promise<void> {
+    if (!sheet.syncCode) return;
+    const bucket = this.requireBucket();
+    const key = syncIndexKey(sheet.syncCode);
+    const current = await bucket.get(key);
+    if (current) {
+      const record = await current.json<SyncIndexRecord>();
+      if ((record.sheetId ?? record.id) === sheet.id) return;
+      throw new SupabaseRestError('This sync code is already allocated.', 409, '23505');
+    }
+    const claimed = await bucket.put(key, JSON.stringify({sheetId: sheet.id}), {
+      onlyIf: {etagDoesNotMatch: '*'},
+      httpMetadata: {contentType: 'application/json; charset=utf-8'},
+    });
+    if (!claimed) {
+      const winner = await bucket.get(key);
+      const record = winner ? await winner.json<SyncIndexRecord>() : undefined;
+      if ((record?.sheetId ?? record?.id) !== sheet.id) {
+        throw new SupabaseRestError('This sync code is already allocated.', 409, '23505');
+      }
+    }
+  }
+
+  private async r2PublishIndexes(
+    sheet: W20UserCharacterSheet,
+    previous?: W20UserCharacterSheet,
+  ): Promise<void> {
+    if (previous?.ownerDiscordId === sheet.ownerDiscordId && previous.syncCode === sheet.syncCode) return;
+    const bucket = this.requireBucket();
+    const current = await this.r2GetById(sheet.id);
+    if (!current) return;
+    if (previous?.syncCode && previous.syncCode !== current.syncCode) {
+      const key = syncIndexKey(previous.syncCode);
+      const object = await bucket.get(key);
+      const record = object ? await object.json<SyncIndexRecord>() : undefined;
+      if ((record?.sheetId ?? record?.id) === sheet.id) await bucket.delete(key);
+    }
+    if (previous?.ownerDiscordId === current.ownerDiscordId) return;
+    // The owner index is a lookup hint. Ordering and details come from the canonical sheet.
+    await bucket.put(
+      ownerIndexKey(current.ownerDiscordId, current.id),
+      JSON.stringify({id: current.id}),
+      {httpMetadata: {contentType: 'application/json; charset=utf-8', cacheControl: 'no-store'}},
+    );
+  }
+
+  private async r2RemoveIndexes(id: string, ownerDiscordId?: string): Promise<void> {
+    const bucket = this.requireBucket();
+    const keys = new Set<string>();
+    if (ownerDiscordId) keys.add(ownerIndexKey(ownerDiscordId, id));
+    else {
+      let ownerCursor: string | undefined;
+      do {
+        const page = await bucket.list({prefix: OWNERS_PREFIX, ...(ownerCursor ? {cursor: ownerCursor} : {})});
+        for (const entry of page.objects) {
+          if (entry.key.endsWith(`/${id}.json`)) keys.add(entry.key);
+        }
+        ownerCursor = page.truncated ? page.cursor : undefined;
+      } while (ownerCursor);
+    }
+    let cursor: string | undefined;
+    do {
+      const page = await bucket.list({prefix: SYNC_PREFIX, ...(cursor ? {cursor} : {})});
+      for (const entry of page.objects) {
+        const object = await bucket.get(entry.key);
+        if (!object) continue;
+        try {
+          const record = await object.json<SyncIndexRecord>();
+          if ((record.sheetId ?? record.id) === id) keys.add(entry.key);
+        } catch {
+          // An unrelated malformed hint does not belong to this sheet.
+        }
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    if (keys.size) await bucket.delete([...keys]);
   }
 
   async listByOwner(ownerDiscordId: string): Promise<W20UserCharacterSheet[]> {
@@ -218,17 +267,14 @@ export class UserSheetRepository {
         try {
           record = await obj.json<SyncIndexRecord>();
         } catch {
-          await bucket.delete(indexKey);
           return null;
         }
         const sheetId = record?.sheetId ?? record?.id;
         if (!sheetId) {
-          await bucket.delete(indexKey);
           return null;
         }
         const sheet = await this.r2GetById(sheetId);
         if (!sheet || sheet.syncCode !== syncCode) {
-          await bucket.delete(indexKey);
           return null;
         }
         return sheet;
@@ -239,21 +285,36 @@ export class UserSheetRepository {
   async create(sheet: W20UserCharacterSheet): Promise<W20UserCharacterSheet> {
     return this.withFallback(
       () => this.supa.insertUserCharacterSheet(sheet),
-      () => this.r2WriteSheetAndIndexes(sheet, null),
+      () => this.r2WriteSheetAndIndexes(sheet),
     );
   }
 
-  async update(sheet: W20UserCharacterSheet): Promise<W20UserCharacterSheet | null> {
-    return this.withFallback(
-      () => this.supa.updateUserCharacterSheet(sheet),
-      async () => {
-        const existing = await this.r2GetById(sheet.id);
-        if (!existing) {
-          return null;
-        }
-        return this.r2WriteSheetAndIndexes(sheet, existing);
-      },
-    );
+  async update(
+    sheet: W20UserCharacterSheet,
+    expectedUpdatedAt?: number,
+  ): Promise<W20UserCharacterSheet | null> {
+    return this.mutateRuleState(sheet.id, existing => {
+      if (expectedUpdatedAt !== undefined && existing.updatedAt !== expectedUpdatedAt) {
+        throw new RuleSpendConflictError('STALE', 'Character sheet changed while saving.', existing);
+      }
+      return preserveRuleTransactions(existing, sheet);
+    }, true);
+  }
+
+  async authorizeRuleSpend(
+    input: RuleSpendInput,
+    mutate?: (sheet: W20UserCharacterSheet) => W20UserCharacterSheet,
+  ): Promise<{sheet: W20UserCharacterSheet; alreadyCommitted: boolean}> {
+    let alreadyCommitted = false;
+    const sheet = await this.mutateRuleState(input.sheetId, existing => {
+      const next = applyRuleSpend(existing, input, mutate);
+      alreadyCommitted = next === existing;
+      return next;
+    });
+    if (!sheet) {
+      throw new RuleSpendConflictError('NOT_FOUND', 'The character sheet is no longer in shared storage.');
+    }
+    return {sheet, alreadyCommitted};
   }
 
   async delete(id: string): Promise<void> {
@@ -261,15 +322,73 @@ export class UserSheetRepository {
       () => this.supa.deleteUserCharacterSheet(id),
       async () => {
         const bucket = this.requireBucket();
-        const existing = await this.r2GetById(id);
-        const keysToDelete = [sheetKey(id)];
-        if (existing) {
-          keysToDelete.push(ownerIndexKey(existing.ownerDiscordId, id));
-          if (existing.syncCode) {
-            keysToDelete.push(syncIndexKey(existing.syncCode));
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const current = await bucket.get(sheetKey(id));
+          if (!current) return;
+          const existing = await current.json<W20UserCharacterSheet & {_deleted?: boolean}>();
+          if (existing._deleted) {
+            await this.r2RemoveIndexes(id);
+            await bucket.delete(sheetKey(id));
+            return;
+          }
+          const saved = await bucket.put(
+            sheetKey(id),
+            JSON.stringify({id, _deleted: true, updatedAt: nextSheetVersion(existing)}),
+            {
+              onlyIf: {etagMatches: current.etag},
+              httpMetadata: {contentType: 'application/json; charset=utf-8'},
+            },
+          );
+          if (saved) {
+            await this.r2RemoveIndexes(id, existing.ownerDiscordId);
+            await bucket.delete(sheetKey(id));
+            return;
           }
         }
-        await bucket.delete(keysToDelete);
+        throw new RuleSpendConflictError('STALE', 'Character sheet changed while deleting.');
+      },
+    );
+  }
+
+  /** Resource/effect mutations merge against the latest sheet with optimistic concurrency. */
+  async mutateRuleState(
+    id: string,
+    mutate: (sheet: W20UserCharacterSheet) => W20UserCharacterSheet,
+    updateMetadata = false,
+  ): Promise<W20UserCharacterSheet | null> {
+    return this.withFallback(
+      () => this.supa.mutateUserCharacterSheet(id, mutate, updateMetadata),
+      async () => {
+        const bucket = this.requireBucket();
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const current = await bucket.get(sheetKey(id));
+          if (!current) return null;
+          const sheet = await current.json<W20UserCharacterSheet & {_deleted?: boolean}>();
+          if (sheet._deleted) return null;
+          const changed = mutate(sheet);
+          if (changed === sheet) return sheet;
+          const next = {
+            ...changed,
+            id: sheet.id,
+            ownerDiscordId: sheet.ownerDiscordId,
+            createdAt: sheet.createdAt,
+            updatedAt: nextSheetVersion(sheet),
+          };
+          if (next.syncCode !== sheet.syncCode) await this.r2ClaimSyncCode(next);
+          const saved = await bucket.put(sheetKey(id), JSON.stringify(next), {
+            onlyIf: {etagMatches: current.etag},
+            httpMetadata: {contentType: 'application/json; charset=utf-8'},
+          });
+          if (saved) {
+            await this.r2PublishIndexes(next, sheet);
+            return next;
+          }
+        }
+        throw new RuleSpendConflictError(
+          'STALE',
+          'Character sheet changed while applying a rule.',
+          await this.r2GetById(id) ?? undefined,
+        );
       },
     );
   }

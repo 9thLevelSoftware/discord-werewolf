@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { resolveModifierRule } from '@w20-vtt/core';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type {
   CombatEncounterView,
@@ -22,11 +23,15 @@ import type {
   ParticipantRole,
   ProjectedMapToken,
   RollHistoryEntry,
+  RoomRuleStateView,
   ServerEnvelope,
+  ServerEvent,
   TableInitiativeEntry,
   TableParticipant,
   WhisperCardPayload,
 } from '@w20-vtt/protocol';
+import { useCharacterSheetStore } from './useCharacterSheetStore';
+import { toast } from '../components/ui/Toast';
 import { soundscapeEngine } from '../audio/SyncedSoundscapeEngine';
 
 export type ConnectionStatus =
@@ -77,7 +82,7 @@ interface VttRoomStoreState {
   connectionStatus: ConnectionStatus;
   lastSeq: number;
   serverClockOffsetMs: number;
-  lastError: { code: CommandRejectionCode | string; message: string } | null;
+  lastError: { code: CommandRejectionCode | string; message: string; reqId?:string } | null;
 
   // Viewer Context
   sessionJwt: string | null;
@@ -110,6 +115,9 @@ interface VttRoomStoreState {
   diceQueue: Queued3DRoll[];
   participants: TableParticipant[];
   rollHistory: RollHistoryEntry[];
+  ruleState: RoomRuleStateView | null;
+  lastRuleActivation:{reqId:string;ruleId:string} | null;
+  rulePreview: {reqId:string;event:Extract<ServerEvent,{type:'RULE_ROLL_PREVIEW'}>} | null;
   /** Shared initiative order for this dice room (unsorted; see rankInitiative). */
   tableInitiative: TableInitiativeEntry[];
   clearTableInitiative: () => void;
@@ -285,6 +293,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
     speakingDiscordIds: new Set<string>(),
     diceQueue: [],
     participants: [],
+    ruleState: null, rulePreview:null,lastRuleActivation:null,
     rollHistory: [],
     tableInitiative: [],
 
@@ -329,6 +338,9 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               frenzyPrompt: null,
               diceQueue: [],
               participants: [],
+              ruleState: null,
+              rulePreview: null,
+              lastRuleActivation: null,
               rollHistory: [],
               tableInitiative: [],
             }),
@@ -380,6 +392,10 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
           case 'SYNC_SNAPSHOT': {
             const { snapshot } = event;
             const prevRealm = get().viewerRealm;
+            if (snapshot.ruleState)
+              useCharacterSheetStore
+                .getState()
+                .receiveRuleSheets(snapshot.ruleState.sheets, get().ruleState?.sheets);
             for (const entry of snapshot.rollHistory ?? []) {
               recordSeenRollHistoryId(entry.id);
             }
@@ -388,6 +404,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               lastSeq: seq,
               serverClockOffsetMs: offsetMs,
               campaignId: snapshot.campaignId,
+              ruleState: snapshot.ruleState ?? null,
               localGauntlet: snapshot.localGauntlet,
               moonPhase: snapshot.moonPhase,
               specialtyMode: snapshot.specialtyMode,
@@ -439,11 +456,26 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
               lastSeq: event.currentSeq,
               serverClockOffsetMs: offsetMs,
               optimisticTokenCoords: {},
-              lastError: { code: event.code, message: event.message },
+              lastError: { code: event.code, message: event.message, reqId: envelope.replyToReqId },
             });
             break;
           }
 
+          case 'RULE_ROLL_PREVIEW': {
+            set({rulePreview:{reqId:envelope.replyToReqId ?? '',event}});
+            break;
+          }
+          case 'RULE_STATE_UPDATED': {
+            useCharacterSheetStore.getState().receiveRuleSheets(event.state.sheets,get().ruleState?.sheets);
+            set({ruleState:event.state,lastSeq:Math.max(seq,get().lastSeq),serverClockOffsetMs:offsetMs});
+            break;
+          }
+          case 'RULE_ACTIVATION_RESOLVED': {
+            set({lastRuleActivation:{reqId:envelope.replyToReqId ?? '',ruleId:event.ruleId},lastSeq:Math.max(get().lastSeq,seq)});
+            const name = resolveModifierRule(event.ruleId)?.name ?? 'Activation';
+            toast.info(event.succeeded ? name + ' succeeded.' : (event.reason ?? name + ' failed.'));
+            break;
+          }
           case 'TABLE_INITIATIVE_UPDATED': {
             set({ tableInitiative: event.entries });
             break;
@@ -759,6 +791,9 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
         frenzyPrompt: null,
         diceQueue: [],
         participants: [],
+        ruleState: null,
+        rulePreview: null,
+        lastRuleActivation: null,
         rollHistory: [],
         tableInitiative: [],
       });

@@ -1,3 +1,5 @@
+import { applyRuleValue, effectiveRuleHealth, evaluateModifierRules, getCharacterModifierSources, ruleTraits, ruleSilverPenalty, resolveRulePenalties } from './modifierRules';
+import type { EvaluatedRules, RuleContext, ResolvedCharacterRuleRoll } from './ruleTypes';
 import {
   BaseAttributes,
   Breed,
@@ -79,8 +81,13 @@ export interface NaturalAttackProfile {
 }
 
 export interface ComputedCharacterStats {
+  effectiveAbilities: Record<string, number>;
+  ruleEvaluation: EvaluatedRules;
+  health: HealthState;
   effectiveAttributes: BaseAttributes;
   effectiveGnosisPool: number;
+  effectiveRagePool: number;
+  effectiveWillpowerPool: number;
   woundPenalty: number; // 0, -1, -2, or -5
   isIncapacitated: boolean;
   woundLabel: string;
@@ -150,10 +157,16 @@ export function computeWoundState(health: HealthState): {
 }
 
 export function computeEffectiveCharacterStats(
-  char: W20CharacterState
+  char: W20CharacterState,
+  context: RuleContext = {}
 ): ComputedCharacterStats {
   const spec = W20_FORM_MATRIX[char.activeForm];
   const base = char.baseAttributes;
+  const rules = evaluateModifierRules(
+    getCharacterModifierSources(char),
+    { ...char, ruleTraits: ruleTraits(char) },
+    context
+  );
 
   const effectiveAttributes: BaseAttributes = {
     strength: Math.max(1, base.strength + (spec.deltas.strength ?? 0)),
@@ -169,9 +182,53 @@ export function computeEffectiveCharacterStats(
     wits: base.wits,
   };
 
-  const rawWound = computeWoundState(char.health);
+  if (applyRuleValue(rules, 'form:social_penalty', 1) === 0) {
+    effectiveAttributes.manipulation = base.manipulation;
+    effectiveAttributes.appearance = base.appearance;
+  }
+  for (const key of Object.keys(effectiveAttributes) as (keyof BaseAttributes)[]) {
+    effectiveAttributes[key] = Math.max(
+      key === 'manipulation' || key === 'appearance' ? 0 : 1,
+      applyRuleValue(rules, `attribute:${key}`, effectiveAttributes[key])
+    );
+  }
+  if (
+    spec.overrideAppearanceZero ||
+    rules.modifiers.some(
+      (modifier) =>
+        modifier.target === 'attribute:appearance' &&
+        modifier.operation === 'set' &&
+        modifier.value === 0
+    )
+  )
+    effectiveAttributes.appearance = 0;
+  const effectiveAbilities = Object.fromEntries(
+    [
+      ...new Set([
+        ...Object.keys(char.abilities),
+        ...rules.modifiers
+          .filter((mod) => mod.target.startsWith('ability:'))
+          .map((mod) => mod.target.slice(8)),
+      ]),
+    ].map((key) => [
+      key,
+      Math.max(0, applyRuleValue(rules, `ability:${key}`, char.abilities[key] ?? 0)),
+    ])
+  );
+  const healthBonus = Math.max(
+    0,
+    applyRuleValue(rules, 'health:bruised', 0) + applyRuleValue(rules, 'health:temporary', 0)
+  );
+  const priorBonus = char.ruleHealthBonus ?? healthBonus;
+  const health = effectiveRuleHealth(
+    { ...char.health, bonusBruisedBoxes: Math.max(0, char.health.bonusBruisedBoxes - priorBonus) },
+    healthBonus + Math.max(0, char.health.bonusBruisedBoxes - priorBonus)
+  );
+  const rawWound = computeWoundState(health);
   const ignoreWounds = char.inFrenzy || char.turnLocks.ignoringWoundPenaltiesThisTurn;
-  const effectiveWoundPenalty = ignoreWounds ? 0 : rawWound.penalty;
+  const effectiveWoundPenalty = ignoreWounds
+    ? 0
+    : Math.min(0, applyRuleValue(rules, 'wound:penalty', rawWound.penalty));
 
   let clawDamageBuff = 0;
   let soakPerSuccessBuff = 0;
@@ -221,16 +278,21 @@ export function computeEffectiveCharacterStats(
 
   return {
     effectiveAttributes,
-    effectiveGnosisPool: Math.max(0, char.gnosis.permanent - Math.max(0, char.silverCarriedItems)),
+    effectiveAbilities,
+    ruleEvaluation:rules,
+    health,
+    effectiveRagePool: Math.max(0,applyRuleValue(rules,'resource:rage:max',applyRuleValue(rules,'resource:rage',char.rage.permanent))),
+    effectiveWillpowerPool: Math.max(0,applyRuleValue(rules,'resource:willpower:max',applyRuleValue(rules,'resource:willpower',char.willpower.permanent))),
+    effectiveGnosisPool: Math.max(0, applyRuleValue(rules,'resource:gnosis',char.gnosis.permanent) - ruleSilverPenalty(char,getCharacterModifierSources(char),rules)),
     woundPenalty: effectiveWoundPenalty,
     isIncapacitated: rawWound.isIncapacitated,
     woundLabel: rawWound.woundLabel,
-    perceptionDifficultyMod: spec.perceptionDifficultyMod,
+    perceptionDifficultyMod: rules.modifiers.some(mod => mod.stackingKey === 'perception-form') ? 0 : applyRuleValue(rules,'form:perception_difficulty',spec.perceptionDifficultyMod),
     initiativeBonus:
       effectiveAttributes.dexterity +
       effectiveAttributes.wits +
       effectiveWoundPenalty +
-      initiativeFlatBuff,
+      initiativeFlatBuff + applyRuleValue(rules,'initiative',0),
     soakCapabilities: {
       soakPool: effectiveAttributes.stamina + soakPerSuccessBuff,
       canSoakBashing: true,
@@ -238,8 +300,43 @@ export function computeEffectiveCharacterStats(
       canSoakLethal: !isHumanForm,
       canSoakAggravated: !isHumanForm,
       // Homid/Lupus soak silver ONLY in breed form; Metis cannot soak silver in any form
-      canSoakSilver: char.breed !== 'metis' && isBreedForm,
+      canSoakSilver: Boolean(applyRuleValue(rules,'soak:silver',Number(char.breed !== 'metis' && isBreedForm))),
     },
     naturalAttacks,
+  };
+}
+
+export function resolveCharacterRuleRoll(
+  char: W20CharacterState,
+  input: RuleContext & { pool: number; difficulty: number; woundPenalty?: number }
+): ResolvedCharacterRuleRoll {
+  const stats = computeEffectiveCharacterStats(char, input);
+  const evaluation = stats.ruleEvaluation;
+  const penalties = resolveRulePenalties(evaluation, input);
+  let pool = input.pool;
+  if (input.attribute && input.attribute in stats.effectiveAttributes) {
+    const key = input.attribute as keyof BaseAttributes;
+    const baseline = computeEffectiveCharacterStats(char);
+    pool += stats.effectiveAttributes[key] - baseline.effectiveAttributes[key];
+  }
+  if (input.ability)
+    pool +=
+      (stats.effectiveAbilities[input.ability] ?? 0) -
+      (computeEffectiveCharacterStats(char).effectiveAbilities[input.ability] ?? 0);
+  return {
+    pool: Math.max(0, Math.floor(applyRuleValue(evaluation, 'pool', pool) + penalties.pool)),
+    difficulty: Math.max(
+      2,
+      Math.min(
+        10,
+        applyRuleValue(
+          evaluation,
+          input.rollKind === 'soak' ? 'soak:difficulty' : 'difficulty',
+          input.difficulty
+        ) + penalties.difficulty
+      )
+    ),
+    woundPenalty: input.woundPenalty === 0 ? 0 : stats.woundPenalty,
+    modifiers: evaluation.modifiers,
   };
 }

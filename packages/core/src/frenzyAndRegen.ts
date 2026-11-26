@@ -1,4 +1,7 @@
-import { Auspice, DamageType, MoonPhase, W20CharacterState } from './types';
+import { resolveIncomingRuleDamage } from './ruleActions';
+import type { RuleContext } from './ruleTypes';
+import { applyRuleValue } from './modifierRules';
+import { Auspice, DamageType, HealthState, MoonPhase, W20CharacterState } from './types';
 import { computeEffectiveCharacterStats, getBreedNaturalForm } from './forms';
 import { resolveW20DicePool, rollCsprngD10, W20RollResult } from './diceResolver';
 
@@ -20,84 +23,67 @@ const SEVERITY_WEIGHT: Record<DamageType, number> = {
 /**
  * Applies W20 cascading health damage (Bashing wraps to Lethal when track is full; sorted heaviest-first).
  */
-export function applyHealthDamage(
-  char: W20CharacterState,
+export function applyHealthStateDamage(
+  health: HealthState,
   levels: number,
   type: Exclude<DamageType, 'none'>
-): W20CharacterState {
-  if (levels <= 0) return char;
-  const boxes = [...char.health.boxes];
-
-  for (let i = 0; i < levels; i++) {
-    const emptyIdx = boxes.findIndex((b) => b === 'none');
-    if (emptyIdx !== -1) {
-      boxes[emptyIdx] = type;
-    } else if (type === 'bashing') {
-      // Overflow Bashing upgrades existing Bashing to Lethal
-      const bashingIdx = boxes.findIndex((b) => b === 'bashing');
-      if (bashingIdx !== -1) boxes[bashingIdx] = 'lethal';
+): HealthState {
+  if (levels <= 0) return health;
+  const boxes = [...health.boxes];
+  for (let index = 0; index < levels; index++) {
+    const empty = boxes.indexOf('none');
+    if (empty !== -1) boxes[empty] = type;
+    else if (type === 'bashing') {
+      const bashing = boxes.indexOf('bashing');
+      if (bashing !== -1) boxes[bashing] = 'lethal';
     } else {
-      // Overflow Lethal/Aggravated upgrades lighter wounds
-      const weakerIdx = boxes.findIndex((b) => SEVERITY_WEIGHT[b] < SEVERITY_WEIGHT[type]);
-      if (weakerIdx !== -1) boxes[weakerIdx] = type;
+      const weaker = boxes.findIndex((box) => SEVERITY_WEIGHT[box] < SEVERITY_WEIGHT[type]);
+      if (weaker !== -1) boxes[weaker] = type;
     }
-    boxes.sort((a, b) => SEVERITY_WEIGHT[b] - SEVERITY_WEIGHT[a]);
+    boxes.sort((left, right) => SEVERITY_WEIGHT[right] - SEVERITY_WEIGHT[left]);
   }
-
-  return {
-    ...char,
-    health: { ...char.health, boxes },
-    stateVersion: char.stateVersion + 1,
-  };
+  return { ...health, boxes };
 }
-
-/**
- * Heals up to `levels` health boxes. By default heals Bashing then Lethal (never Aggravated unless
- * `healAggravated: true` or `damageType: 'aggravated'`). Keeps track sorted heaviest-first.
- */
-export function healHealthDamage(
-  char: W20CharacterState,
-  levels: number,
-  options: {
-    healAggravated?: boolean;
-    damageType?: Exclude<DamageType, 'none'>;
-  } = {}
-): W20CharacterState {
-  if (levels <= 0) return char;
-
-  const boxes = [...char.health.boxes];
+export function healHealthStateDamage(health: HealthState, levels: number, options: {healAggravated?:boolean;damageType?:Exclude<DamageType,'none'>} = {}): HealthState {
+  if (levels <= 0) return health;
+  const boxes = [...health.boxes];
   let healed = 0;
-
-  for (let i = 0; i < levels; i++) {
-    let targetIdx = -1;
-
-    if (options.damageType) {
-      targetIdx = boxes.findIndex((b) => b === options.damageType);
-    } else if (options.healAggravated) {
-      // Gifts like Mother's Touch heal the worst wounds (including Aggravated) first
-      targetIdx = boxes.findIndex((b) => b === 'aggravated');
-      if (targetIdx === -1) targetIdx = boxes.findIndex((b) => b === 'lethal');
-      if (targetIdx === -1) targetIdx = boxes.findIndex((b) => b === 'bashing');
-    } else {
-      // Standard Garou regeneration heals Bashing first, then Lethal
-      targetIdx = boxes.findIndex((b) => b === 'bashing');
-      if (targetIdx === -1) targetIdx = boxes.findIndex((b) => b === 'lethal');
-    }
-
-    if (targetIdx === -1) break;
-    boxes[targetIdx] = 'none';
-    healed += 1;
+  const order: DamageType[] = options.damageType
+    ? [options.damageType]
+    : options.healAggravated
+      ? ['aggravated', 'lethal', 'bashing']
+      : ['bashing', 'lethal'];
+  for (let index = 0; index < levels; index++) {
+    const type = order.find((candidate) => boxes.includes(candidate));
+    if (!type) break;
+    boxes[boxes.indexOf(type)] = 'none';
+    healed++;
   }
-
-  if (healed === 0) return char;
-
-  boxes.sort((a, b) => SEVERITY_WEIGHT[b] - SEVERITY_WEIGHT[a]);
-
-  return {
-    ...char,
-    health: { ...char.health, boxes },
-    stateVersion: char.stateVersion + 1,
-  };
+  if (!healed) return health;
+  boxes.sort((left,right) => SEVERITY_WEIGHT[right] - SEVERITY_WEIGHT[left]);
+  return {...health,boxes};
+}
+export function applyHealthDamage(char: W20CharacterState, levels: number, type: Exclude<DamageType,'none'>, context: RuleContext & {isSilver?:boolean;ordinaryType?:Exclude<DamageType,'none'>} = {}): W20CharacterState {
+  const incoming = resolveIncomingRuleDamage(char,levels,type,context);
+  levels = incoming.levels;
+  type = incoming.type;
+  if (levels <= 0) return char;
+  const derived = computeEffectiveCharacterStats(char);
+  const health = applyHealthStateDamage(derived.health,levels,type);
+  const grantedBonus = Math.max(0,applyRuleValue(derived.ruleEvaluation,'health:bruised',0) + applyRuleValue(derived.ruleEvaluation,'health:temporary',0));
+  const inheritedBonus = Math.max(0,char.health.bonusBruisedBoxes - (char.ruleHealthBonus ?? grantedBonus));
+  const ruleHealthBonus = derived.health.bonusBruisedBoxes - inheritedBonus;
+  return {...char,health,ruleHealthBonus,stateVersion:char.stateVersion + 1};
+}
+export function healHealthDamage(char: W20CharacterState, levels: number, options: {healAggravated?:boolean;damageType?:Exclude<DamageType,'none'>} = {}): W20CharacterState {
+  if (levels <= 0) return char;
+  const derived = computeEffectiveCharacterStats(char);
+  const health = healHealthStateDamage(derived.health,levels,options);
+  if (health === derived.health) return char;
+  const grantedBonus = Math.max(0,applyRuleValue(derived.ruleEvaluation,'health:bruised',0) + applyRuleValue(derived.ruleEvaluation,'health:temporary',0));
+  const inheritedBonus = Math.max(0,char.health.bonusBruisedBoxes - (char.ruleHealthBonus ?? grantedBonus));
+  const ruleHealthBonus = derived.health.bonusBruisedBoxes - inheritedBonus;
+  return {...char,health,ruleHealthBonus,stateVersion:char.stateVersion + 1};
 }
 
 export interface RegenerationResult {
@@ -119,7 +105,18 @@ export function resolveCombatRegeneration(
   rngD10: () => number = rollCsprngD10
 ): RegenerationResult {
   const isNaturalBreedForm = char.activeForm === getBreedNaturalForm(char.breed);
-  const canRegenerate = char.breed === 'metis' || !isNaturalBreedForm;
+  const regenerationRules = computeEffectiveCharacterStats(char).ruleEvaluation;
+  const canRegenerate = Boolean(
+    applyRuleValue(
+      regenerationRules,
+      'regeneration',
+      applyRuleValue(
+        regenerationRules,
+        'healing:regeneration',
+        Number(char.breed === 'metis' || !isNaturalBreedForm)
+      )
+    )
+  );
   const hasRegenerableWound = char.health.boxes.some(
     (b) => b === 'bashing' || b === 'lethal'
   );
@@ -133,7 +130,7 @@ export function resolveCombatRegeneration(
     };
   }
 
-  if (!inCombat) {
+  if (!inCombat || applyRuleValue(regenerationRules, 'healing:combat-regeneration', 0)) {
     const updatedChar = healHealthDamage(char, 1);
     return {
       updatedChar,
@@ -147,7 +144,8 @@ export function resolveCombatRegeneration(
   const rollResult = resolveW20DicePool(
     {
       label: `${char.name}: Combat Regeneration`,
-      basePool: stats.effectiveAttributes.stamina,
+      basePool: applyRuleValue(stats.ruleEvaluation, 'pool', stats.effectiveAttributes.stamina),
+      ruleModifiers: stats.ruleEvaluation.modifiers,
       applyWoundPenalty: false,
       baseDifficulty: 8,
     },

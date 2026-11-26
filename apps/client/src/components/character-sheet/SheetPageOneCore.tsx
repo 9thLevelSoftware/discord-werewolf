@@ -36,6 +36,8 @@ import {
   X,
 } from 'lucide-react';
 import { diceSoundEngine } from '../../audio/DiceSoundEngine';
+import { openSheetRule } from './sheetShared';
+import { getSourceModifierRule, resolveSheetShortcut } from '@w20-vtt/core';
 import type { SheetRollRequest } from '../../store/useCharacterSheetStore';
 import {
   formatFormName,
@@ -251,7 +253,14 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
       ...prev,
       backgrounds: [
         ...prev.backgrounds,
-        { id: `bg-${crypto.randomUUID().slice(0, 8)}`, name, dots: 1 },
+        {
+          id: `bg-${crypto.randomUUID().slice(0, 8)}`,
+          name,
+          dots: 1,
+          ruleId: W20_BACKGROUND_CATALOG.find(
+            (entry) => entry.label.toLowerCase() === name.toLowerCase()
+          )?.key,
+        },
       ].slice(0, 50),
     }));
     if (!explicitName) {
@@ -278,6 +287,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
     if (sheet.gifts.some((g) => g.id === entry.id)) return;
     const newGift: SheetGiftEntry = {
       id: entry.id,
+      ruleId: entry.id,
       name: entry.name,
       level: entry.level,
       rollAttribute: entry.rollAttribute,
@@ -352,6 +362,11 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
   const isStandardTribe = W20_TRIBES.some((t) => t.key === sheet.tribe);
 
   const renderGiftCard = (gift: SheetGiftEntry) => {
+    const activation = getSourceModifierRule({
+      ...gift,
+      rollAbility: gift.rollAbility ?? undefined,
+      kind: 'gift',
+    })?.activation;
     const isPureInner =
       (gift.rollAttribute === 'gnosis' ||
         gift.rollAttribute === 'willpower' ||
@@ -413,10 +428,20 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
+            {activation && (
+              <button
+                type="button"
+                onClick={() => openSheetRule(gift.id)}
+                className="rounded bg-red-800 px-2 py-1 font-bold text-amber-50"
+              >
+                Activate
+              </button>
+            )}
             {giftShortcut && (
               <>
                 <button
                   type="button"
+                  hidden={Boolean(activation)}
                   onClick={() => onRoll(shortcutToRollRequest(sheet, giftShortcut))}
                   className="flex items-center gap-1 rounded-md bg-red-800/90 px-2 py-1 text-caption font-bold text-amber-50 hover:bg-red-700"
                 >
@@ -633,7 +658,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                   maxLength={120}
                   value={sheet.packTotem}
                   list="w20-pack-totems"
-                  onChange={(e) => onUpdateSheet((p) => ({ ...p, packTotem: e.target.value }))}
+                  onChange={(e) => onUpdateSheet((p) => ({ ...p, packTotem: e.target.value, packTotemRule: {ruleId: W20_TOTEM_CATALOG.find(t => t.name.toLowerCase() === e.target.value.trim().toLowerCase())?.id} }))}
                   className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-stone-100"
                 />
               </label>
@@ -965,6 +990,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                             </div>
                           </div>
 
+                          {stats.effectiveAbilities[row.key] !== undefined && stats.effectiveAbilities[row.key] !== row.dots && <p className="text-xs text-amber-200">Effective rating {stats.effectiveAbilities[row.key]}</p>}
                           <SheetPipTrack
                             label={row.label}
                             value={row.dots}
@@ -1074,7 +1100,7 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                               </div>
                               <div className="mt-2 flex items-center justify-between gap-1">
                                 <span className="font-mono text-caption text-emerald-300">
-                                  {stats.effectiveAttributes[pairedAttr] + lookupSheetAbilityDots(sheet, row.key)}
+                                  {resolveSheetShortcut(sheet, popoverShortcut).rawPool}
                                   d10 • Diff{' '}
                                   {Math.max(
                                     2,
@@ -1747,6 +1773,10 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     >
                       {stats.experienceRemaining}
                     </div>
+                    {sheet.experience.mystical !== undefined && <label>Mystical XP remaining
+                      <input type="number" min={0} max={10000} value={sheet.experience.mystical} className="w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 font-mono"
+                        onChange={e=>onUpdateSheet(p=>({...p,experience:{...p.experience,mystical:Math.max(0,Math.min(10000,Math.trunc(Number(e.target.value))))}}))}/>
+                    </label>}
                   </div>
                 </div>
               </div>

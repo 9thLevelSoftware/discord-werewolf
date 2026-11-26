@@ -1,4 +1,9 @@
 import {
+  nextSheetVersion,
+  preserveRuleTransactions,
+  RuleSpendConflictError,
+} from './userSheetTransactions';
+import {
   createBlankUserCharacterSheet,
   type ActiveCharacterBuff,
   type Auspice,
@@ -62,6 +67,18 @@ export interface CharacterFetishRow {
 }
 
 export interface CharacterRow {
+  rule_state?: Partial<
+    Pick<
+      W20CharacterState,
+      | 'activeRuleEffects'
+      | 'ruleContextTags'
+      | 'packTotem'
+      | 'packTotemRule'
+      | 'equipment'
+      | 'ruleHealthBonus'
+      | 'mysticalExperience'
+    >
+  >;
   id: string;
   campaign_id: string;
   pack_id: string | null;
@@ -113,6 +130,8 @@ export interface CharacterRow {
   macros: W20MacroDefinition[];
   state_version: number;
   character_fetishes?: CharacterFetishRow[];
+  character_gifts?: Array<{ gift_id: string }>;
+  packs?: { totem_name: string | null } | null;
 }
 
 export interface XpLedgerRow {
@@ -171,8 +190,8 @@ export function mapUserCharacterSheetRowToSheet(row: UserCharacterSheetRow): W20
     row.created_at,
     typeof rawData.createdAt === 'number' ? rawData.createdAt : now,
   );
-  const updatedAt = parseIsoTimestampMs(
-    row.updated_at,
+  const updatedAt = Math.max(
+    parseIsoTimestampMs(row.updated_at, createdAt),
     typeof rawData.updatedAt === 'number' ? rawData.updatedAt : createdAt,
   );
   const lastUsedAt = parseIsoTimestampMs(
@@ -350,6 +369,7 @@ export function mapCharacterRowToState(row: CharacterRow): W20CharacterState {
         : ['none', 'none', 'none', 'none', 'none', 'none', 'none'],
     },
     activeBuffs: Array.isArray(row.active_buffs) ? row.active_buffs : [],
+    giftIds: row.character_gifts?.map((gift) => gift.gift_id),
     macros: Array.isArray(row.macros) ? row.macros : [],
     fetishes,
     portraitsByForm:
@@ -362,12 +382,19 @@ export function mapCharacterRowToState(row: CharacterRow): W20CharacterState {
       declaredExtraRageActions: 0,
     },
     stateVersion: Number(row.state_version ?? 1),
+    activeRuleEffects: row.rule_state?.activeRuleEffects,
+    ruleContextTags: row.rule_state?.ruleContextTags,
+    packTotem: row.packs ? row.packs.totem_name ?? undefined : row.rule_state?.packTotem,
+    packTotemRule: row.rule_state?.packTotemRule,
+    equipment: row.rule_state?.equipment,
+    ruleHealthBonus: row.rule_state?.ruleHealthBonus,
+    mysticalExperience: typeof row.rule_state?.mysticalExperience === 'number' && Number.isFinite(row.rule_state.mysticalExperience) ? Math.max(0, Math.floor(row.rule_state.mysticalExperience)) : 0,
   };
 }
 
 export function mapStateToCharacterInsertRow(
   char: W20CharacterState,
-): Omit<CharacterRow, 'character_fetishes'> {
+): Omit<CharacterRow, 'character_fetishes' | 'character_gifts' | 'packs'> {
   return {
     id: char.id,
     campaign_id: char.campaignId,
@@ -419,28 +446,54 @@ export function mapStateToCharacterInsertRow(
     active_buffs: char.activeBuffs,
     macros: char.macros,
     state_version: char.stateVersion,
+    rule_state: {
+      activeRuleEffects: char.activeRuleEffects,
+      ruleContextTags: char.ruleContextTags,
+      packTotem: char.packTotem,
+      packTotemRule: char.packTotemRule,
+      equipment: char.equipment,
+      ruleHealthBonus: char.ruleHealthBonus,
+      mysticalExperience: char.mysticalExperience,
+    },
   };
 }
 
 export function mapStateToMutablePatch(char: W20CharacterState): Record<string, unknown> {
   return {
+    rank: char.rank,
     active_form: char.activeForm,
     active_realm: char.activeRealm,
     caught_in_gauntlet: char.caughtInGauntlet,
     in_frenzy: char.inFrenzy,
     frenzy_type: char.frenzyType,
     rage_temp: char.rage.temporary,
+    rage_perm: char.rage.permanent,
     gnosis_temp: char.gnosis.temporary,
+    gnosis_perm: char.gnosis.permanent,
     silver_carried_items: char.silverCarriedItems,
     willpower_temp: char.willpower.temporary,
+    willpower_perm: char.willpower.permanent,
+    renown_glory_perm: char.renown.glory.permanent,
+    renown_honor_perm: char.renown.honor.permanent,
+    renown_wisdom_perm: char.renown.wisdom.permanent,
     renown_glory_temp: char.renown.glory.temporary,
     renown_honor_temp: char.renown.honor.temporary,
     renown_wisdom_temp: char.renown.wisdom.temporary,
     health_boxes: char.health.boxes,
+    bonus_bruised_boxes: char.health.bonusBruisedBoxes,
     active_buffs: char.activeBuffs,
     macros: char.macros,
     portraits_by_form: char.portraitsByForm,
     state_version: char.stateVersion,
+    rule_state: {
+      activeRuleEffects: char.activeRuleEffects,
+      ruleContextTags: char.ruleContextTags,
+      packTotem: char.packTotem,
+      packTotemRule: char.packTotemRule,
+      equipment: char.equipment,
+      ruleHealthBonus: char.ruleHealthBonus,
+      mysticalExperience: char.mysticalExperience,
+    },
   };
 }
 
@@ -600,14 +653,14 @@ export class SupabaseRestClient {
 
   async listCampaignCharacters(campaignId: string): Promise<W20CharacterState[]> {
     const rows = await this.request<CharacterRow[]>(
-      `/characters?campaign_id=eq.${encodeURIComponent(campaignId)}&select=*,character_fetishes(*)&order=created_at.asc`,
+      `/characters?campaign_id=eq.${encodeURIComponent(campaignId)}&select=*,character_fetishes(*),character_gifts(gift_id),packs(totem_name)&order=created_at.asc`,
     );
     return rows.map(mapCharacterRowToState);
   }
 
   async getCharacterById(characterId: string): Promise<W20CharacterState | null> {
     const rows = await this.request<CharacterRow[]>(
-      `/characters?id=eq.${encodeURIComponent(characterId)}&select=*,character_fetishes(*)&limit=1`,
+      `/characters?id=eq.${encodeURIComponent(characterId)}&select=*,character_fetishes(*),character_gifts(gift_id),packs(totem_name)&limit=1`,
     );
     return rows[0] ? mapCharacterRowToState(rows[0]) : null;
   }
@@ -660,6 +713,7 @@ export class SupabaseRestClient {
       const knownGifts = await this.selectKnownGiftIds(uniqueGifts);
       if (knownGifts.length > 0) {
         await this.insertCharacterGifts(created.id, knownGifts);
+        created.character_gifts = knownGifts.map((gift_id) => ({ gift_id }));
       }
     }
 
@@ -836,42 +890,84 @@ export class SupabaseRestClient {
 
   async updateUserCharacterSheet(
     sheet: W20UserCharacterSheet,
+    expectedUpdatedAt?: number,
   ): Promise<W20UserCharacterSheet | null> {
-    const row = mapUserCharacterSheetToRow(sheet);
-    const patch = {
-      player_name: row.player_name,
-      name: row.name,
-      breed: row.breed,
-      auspice: row.auspice,
-      tribe: row.tribe,
-      rank: row.rank,
-      active_form: row.active_form,
-      sync_code: row.sync_code,
-      sheet_data: row.sheet_data,
-      last_used_at: row.last_used_at,
-      updated_at: row.updated_at,
-    };
-    const rows = await this.request<UserCharacterSheetRow[] | undefined>(
-      `/user_character_sheets?id=eq.${encodeURIComponent(sheet.id)}`,
-      {
-        method: 'PATCH',
-        prefer: 'return=representation',
-        body: JSON.stringify(patch),
-      },
-    );
-    if (!rows) {
-      return sheet;
-    }
-    if (!rows[0]) {
-      return null;
-    }
-    return mapUserCharacterSheetRowToSheet(rows[0]);
+    return this.mutateUserCharacterSheet(sheet.id, existing => {
+      if (expectedUpdatedAt !== undefined && existing.updatedAt !== expectedUpdatedAt) {
+        throw new RuleSpendConflictError('STALE', 'Character sheet changed while saving.', existing);
+      }
+      return preserveRuleTransactions(existing, sheet);
+    }, true);
   }
 
   async deleteUserCharacterSheet(sheetId: string): Promise<void> {
-    await this.request<unknown>(`/user_character_sheets?id=eq.${encodeURIComponent(sheetId)}`, {
-      method: 'DELETE',
-      prefer: 'return=minimal',
-    });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await this.request<UserCharacterSheetRow[]>(
+        `/user_character_sheets?id=eq.${encodeURIComponent(sheetId)}&select=*&limit=1`,
+      );
+      if (!current[0]) return;
+      const rows = await this.request<UserCharacterSheetRow[]>(
+        `/user_character_sheets?id=eq.${encodeURIComponent(sheetId)}&updated_at=eq.${encodeURIComponent(current[0].updated_at)}`,
+        {method: 'DELETE', prefer: 'return=representation'},
+      );
+      if (rows?.[0]) return;
+    }
+    const remaining = await this.getUserCharacterSheetById(sheetId);
+    if (remaining) {
+      throw new RuleSpendConflictError('STALE', 'Character sheet changed while deleting.', remaining);
+    }
+  }
+
+  async mutateUserCharacterSheet(
+    sheetId: string,
+    mutate: (sheet: W20UserCharacterSheet) => W20UserCharacterSheet,
+    updateMetadata = false,
+  ): Promise<W20UserCharacterSheet | null> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const currentRows = await this.request<UserCharacterSheetRow[]>(
+        `/user_character_sheets?id=eq.${encodeURIComponent(sheetId)}&select=*&limit=1`,
+      );
+      const row = currentRows[0];
+      if (!row) return null;
+      const existing = mapUserCharacterSheetRowToSheet(row);
+      const changed = mutate(existing);
+      if (changed === existing) return existing;
+      const next = {
+        ...changed,
+        id: existing.id,
+        ownerDiscordId: existing.ownerDiscordId,
+        createdAt: existing.createdAt,
+        updatedAt: nextSheetVersion(existing),
+      };
+      const mapped = mapUserCharacterSheetToRow(next);
+      const rows = await this.request<UserCharacterSheetRow[]>(
+        `/user_character_sheets?id=eq.${encodeURIComponent(sheetId)}&updated_at=eq.${encodeURIComponent(row.updated_at)}`,
+        {
+          method: 'PATCH',
+          prefer: 'return=representation',
+          body: JSON.stringify({
+            sheet_data: mapped.sheet_data,
+            updated_at: mapped.updated_at,
+            rank: mapped.rank,
+            active_form: mapped.active_form,
+            ...(updateMetadata ? {
+              player_name: mapped.player_name,
+              name: mapped.name,
+              breed: mapped.breed,
+              auspice: mapped.auspice,
+              tribe: mapped.tribe,
+              sync_code: mapped.sync_code,
+              last_used_at: mapped.last_used_at,
+            } : {}),
+          }),
+        },
+      );
+      if (rows?.[0]) return mapUserCharacterSheetRowToSheet(rows[0]);
+    }
+    throw new RuleSpendConflictError(
+      'STALE',
+      'Character sheet changed while applying a rule.',
+      await this.getUserCharacterSheetById(sheetId) ?? undefined,
+    );
   }
 }

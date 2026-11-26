@@ -82,6 +82,7 @@ export interface DiceTableHudProps {
   compactTraitFormula: string;
   hasTraitSelection: boolean;
   traitSelection: ResolvedTraitRollSelection | null;
+  ruleRollOptions?: React.ReactNode;
   spendWillpower: boolean;
   applyWoundPenalty: boolean;
   isSecretRoll: boolean;

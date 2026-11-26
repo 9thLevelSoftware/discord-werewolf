@@ -21,6 +21,7 @@ import {
   type SheetSaveStatus,
   useCharacterSheetStore,
 } from '../../store/useCharacterSheetStore';
+import { SheetRules } from './SheetRules';
 import { SheetPageOneCore } from './SheetPageOneCore';
 import { SheetPageTwoTactical } from './SheetPageTwoTactical';
 import { formatFormName, formatTraitName } from './sheetShared';
@@ -32,7 +33,8 @@ type MobileSectionTab =
   | 'bg_merits'
   | 'vitals'
   | 'forms'
-  | 'combat_gifts';
+  | 'combat_gifts'
+  | 'rules';
 
 const MOBILE_TABS: readonly { key: MobileSectionTab; label: string }[] = [
   { key: 'identity', label: 'Identity' },
@@ -42,6 +44,7 @@ const MOBILE_TABS: readonly { key: MobileSectionTab; label: string }[] = [
   { key: 'vitals', label: 'Vitals' },
   { key: 'forms', label: 'Forms' },
   { key: 'combat_gifts', label: 'Combat & Gifts' },
+  { key: 'rules', label: 'Rules & Equipment' },
 ];
 
 const SAVE_STATUS_META: Record<
@@ -461,6 +464,7 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                     >
                       Forms &amp; Combat
                     </button>
+                    <button type="button" role="tab" aria-selected={desktopPage === 'rules'} onClick={() => setDesktopPage('rules')} className={`rounded-lg px-3 py-1 text-xs font-bold ${desktopPage === 'rules' ? 'bg-red-800 text-amber-50' : 'text-stone-400'}`}>Rules &amp; Equipment</button>
                   </div>
                 )}
               </div>
@@ -558,6 +562,8 @@ export const W20InteractiveSheetModal: React.FC<W20InteractiveSheetModalProps> =
                 Open Roster &amp; Seats
               </button>
             </div>
+          ) : (isMobile ? mobileTab === 'rules' : desktopPage === 'rules') ? (
+            <SheetRules key={activeSheet.id} sheet={activeSheet} seatId={activeSeat.seatId} onUpdate={updater => updateSheet(activeSheet.id, updater)}/>
           ) : isMobile ? (
             <div className="space-y-4">
               {(mobileTab === 'identity' ||

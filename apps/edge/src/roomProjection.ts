@@ -7,6 +7,9 @@ import {
   type RealmLayer,
   type SpecialtyMode,
   type W20CharacterState,
+  type W20UserCharacterSheet,
+  type ActiveRuleInstance,
+  type W20RollRequest,
 } from '@w20-vtt/core';
 import type {
   AudioSyncPayload,
@@ -22,7 +25,97 @@ import type {
   ServerEvent,
   SocketAttachment,
   TableParticipant,
+  RoomRuleEffect,
+  RoomRuleStateView,
+  RuleClock,
 } from '@w20-vtt/protocol';
+import type { SharedActionRecord, SharedRuleIntent } from './sharedRuleCommit';
+
+export interface BoundRuleSheet {
+  sheet: W20UserCharacterSheet;
+  controlledByDiscordId: string;
+  /** Version supplied by the editor, before room resource deductions. */
+  editorUpdatedAt: number;
+  canonicalKnown?: boolean;
+}
+
+export interface PersistedRuleState {
+  sheets: Record<string, BoundRuleSheet>;
+  seatBindings: Record<string, string>;
+  effects: RoomRuleEffect[];
+  clock: RuleClock;
+  /** Successful and failed activations both retain their result across reconnects. */
+  activationReceipts: Record<string, Extract<ServerEvent, { type: 'RULE_ACTIVATION_RESOLVED' }>>;
+  advanceReceipts: string[];
+  rollReceipts: Record<string, RollHistoryEntry>;
+  rollRequests: Record<
+    string,
+    {
+      sheetId: string;
+      discordUserId: string;
+      request: W20RollRequest;
+      history: RollHistoryEntry;
+      rerolled?: boolean;
+      superseded?: boolean;
+      refundedWillpower?: boolean;
+      packKey?: string;
+    }
+  >;
+  rerollUsage: Record<string, number>;
+  frequencyReceipts: string[];
+  packWillpower?: { current: number; max: number };
+  packPools: Record<string, { current: number; max: number; name: string }>;
+  turnSpends: Record<string, { turn: number; rage: boolean; gnosis: boolean }>;
+  persistenceQueue: RuleSheetMutation[];
+  sharedActionRecords?: Record<string, SharedActionRecord>;
+  seatAuthorizations: Record<string, { ownerDiscordId: string; syncCode?: string }>;
+}
+
+export interface RuleSheetMutation {
+  grantWithdrawals?: Array<{
+    effectId: string;
+    resourceDelta: {rage: number; gnosis: number; willpower: number};
+  }>;
+  operationId: string;
+  sheetId: string;
+  resourceDelta: { rage: number; gnosis: number; willpower: number };
+  consumedSourceIds: string[];
+  effects: ActiveRuleInstance[];
+  removedEffectIds: string[];
+  renownDelta?: Partial<
+    Record<'glory' | 'honor' | 'wisdom', { temporary: number; permanent: number }>
+  >;
+  experienceDelta?: number;
+  mysticalExperienceDelta?: number;
+  permanentResourceDelta?: { rage?: number; gnosis?: number; willpower?: number };
+  healthChanges?: Array<{
+    levels: number;
+    type?: 'bashing' | 'lethal' | 'aggravated';
+    healAggravated?: boolean;
+    mode: 'damage' | 'heal';
+  }>;
+  rank?: number;
+  activeForm?: GarouForm;
+}
+
+export function createEmptyRuleState(): PersistedRuleState {
+  return {
+    sheets: {},
+    seatBindings: {},
+    effects: [],
+    clock: { turn: 0, scene: 0, story: 0, session: 0, seconds: 0 },
+    activationReceipts: {},
+    advanceReceipts: [],
+    rollReceipts: {},
+    rollRequests: {},
+    rerollUsage: {},
+    frequencyReceipts: [],
+    packPools: {},
+    turnSpends: {},
+    persistenceQueue: [],
+    seatAuthorizations: {},
+  };
+}
 
 export interface StoredMapToken {
   id: string;
@@ -37,6 +130,8 @@ export interface StoredMapToken {
 }
 
 export interface PersistedRoomState {
+  ruleCommitNamespace?: string;
+  sharedRuleIntent?: SharedRuleIntent;
   campaignId: string | null;
   storytellerDiscordId: string | null;
   diceLogWebhookUrl: string | null;
@@ -60,6 +155,7 @@ export interface PersistedRoomState {
   rollHistory?: RollHistoryEntry[];
   /** Shared initiative order for dice rooms. Separate from the campaign combat machine. */
   tableInitiative?: TableInitiativeEntry[];
+  ruleState?: PersistedRuleState;
 }
 
 export interface BufferedRoomEvent {
@@ -95,6 +191,7 @@ export function createEmptyRoomState(): PersistedRoomState {
     tableParticipants: {},
     rollHistory: [],
     tableInitiative: [],
+    ruleState: createEmptyRuleState(),
   };
 }
 
@@ -231,6 +328,36 @@ export function buildProjectedSnapshot(
         entry.rollerDiscordId === attachment.discordUserId,
     ),
     tableInitiative: state.tableInitiative ?? [],
+    ruleState: projectRuleState(state, attachment),
+  };
+}
+
+export function projectRuleState(
+  state: PersistedRoomState,
+  attachment: Pick<SocketAttachment, 'role'> & { discordUserId?: string },
+): RoomRuleStateView {
+  const rules = state.ruleState ?? createEmptyRuleState();
+  const visibleIds = new Set(
+    Object.values(rules.sheets)
+      .filter((record) => record.controlledByDiscordId === attachment.discordUserId || Object.entries(rules.seatBindings).some(([key, id]) => id === record.sheet.id && (key === attachment.discordUserId || key.startsWith(`${attachment.discordUserId}::`))))
+      .map((record) => record.sheet.id),
+  );
+  for (const character of Object.values(state.characters)) {
+    if (attachment.role === 'storyteller' || character.ownerDiscordId === attachment.discordUserId) {
+      visibleIds.add(character.id);
+    }
+  }
+  return {
+    sheets: Object.values(rules.sheets)
+      .filter((record) => visibleIds.has(record.sheet.id))
+      .map((record) => record.sheet),
+    effects: rules.effects.filter(
+      (effect) =>
+        visibleIds.has(effect.targetId) || effect.casterDiscordId === attachment.discordUserId,
+    ),
+    clock: { ...rules.clock },
+    packWillpower: rules.packWillpower,
+    packPools: Object.fromEntries(Object.entries(rules.packPools).filter(([key]) => attachment.role === 'storyteller' || Object.values(rules.sheets).some((record) => visibleIds.has(record.sheet.id) && record.sheet.packName.trim().toLowerCase() === key))),
   };
 }
 
@@ -263,6 +390,13 @@ export function projectEnvelopeForAttachment(
   const { envelope } = entry;
   const event = envelope.event;
   const viewerRealm = resolveViewerRealm(attachment, state.characters);
+
+  if (event.type === 'RULE_STATE_UPDATED') {
+    return {
+      ...envelope,
+      event: { type: 'RULE_STATE_UPDATED', state: projectRuleState(state, attachment) },
+    };
+  }
 
   if (event.type === 'CHARACTER_PATCHED') {
     if (event.character.isNpc && attachment.role !== 'storyteller') {

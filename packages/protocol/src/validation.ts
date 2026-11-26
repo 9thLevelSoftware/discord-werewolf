@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { createModifierCommandSchemas } from './modifierCommands';
+import { ruleBindingFields, RuleContextSchema, ActiveRuleInstanceSchema } from './ruleValidation';
 import type { W20UserCharacterSheet } from '@w20-vtt/core';
 import type { ClientEnvelope } from './messages';
 
@@ -130,6 +132,7 @@ export const SubActionSlotInputSchema = z.object({
   abilityKey: z.string().min(1).optional(),
   allocatedDice: z.number().int().min(1).max(30).optional(),
   baseDifficulty: z.number().int().min(2).max(10),
+  weaponId: z.string().min(1).max(120).optional(),
   weaponDamageBonus: z.number().int().min(-5).max(20).optional(),
   damageType: NonEmptyDamageTypeSchema.optional(),
   isSilverAttack: z.boolean().optional(),
@@ -214,6 +217,8 @@ export const DualTrackerSchema = z.object({
   temporary: DotRatingSchema,
 });
 
+const RenownTrackerSchema = DualTrackerSchema.extend({ temporary: z.number().int().nonnegative() });
+
 export const BaseAttributesSchema = z.object({
   strength: DotRatingSchema,
   dexterity: DotRatingSchema,
@@ -240,6 +245,7 @@ export const CustomAbilityEntrySchema = z.object({
 });
 
 export const SheetBackgroundEntrySchema = z.object({
+  ...ruleBindingFields,
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   dots: DotRatingSchema,
@@ -251,6 +257,7 @@ export const SheetRollTraitSchema = z.union([
 ]);
 
 export const SheetGiftEntrySchema = z.object({
+  ...ruleBindingFields,
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   level: z.number().int().min(1).max(6),
@@ -264,15 +271,19 @@ export const SheetGiftEntrySchema = z.object({
 });
 
 export const SheetFetishItemSchema = z.object({
+  ...ruleBindingFields,
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   level: z.number().int().min(0).max(6),
   gnosisRating: z.number().int().min(1).max(10),
   power: z.string().max(2000),
   isSilver: z.boolean().optional(),
+  carried: z.boolean().optional(),
+  isAttuned: z.boolean().optional(),
 });
 
 export const SheetRiteEntrySchema = z.object({
+  ...ruleBindingFields,
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   level: z.number().int().min(0).max(6).optional(),
@@ -283,6 +294,7 @@ export const OtherTraitKindSchema = z.enum(['merit', 'flaw', 'other']);
 export const MeritFlawCategorySchema = z.enum(['physical', 'mental', 'social', 'supernatural']);
 
 export const SheetOtherTraitEntrySchema = z.object({
+  ...ruleBindingFields,
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   dots: DotRatingSchema,
@@ -291,11 +303,14 @@ export const SheetOtherTraitEntrySchema = z.object({
 });
 
 export const SheetWeaponEntrySchema = z.object({
+  ...ruleBindingFields,
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   rollAttribute: AttributeKeySchema,
   rollAbility: z.string().min(1).max(120),
   difficulty: z.number().int().min(2).max(10),
+  carried: z.boolean().optional(),
+  isSilver: z.boolean().optional(),
   damageMode: z.enum(['strength_plus', 'flat']),
   damageDice: z.number().int().min(0).max(30),
   damageType: NonEmptyDamageTypeSchema,
@@ -340,6 +355,7 @@ export const ShortcutPoolSourceSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const SheetShortcutSchema = z.object({
+  ruleContext: RuleContextSchema.optional(),
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   source: ShortcutPoolSourceSchema,
@@ -372,9 +388,9 @@ export const W20UserCharacterSheetSchema: z.ZodType<W20UserCharacterSheet> = z.o
   backgrounds: z.array(SheetBackgroundEntrySchema).max(50),
   gifts: z.array(SheetGiftEntrySchema).max(100),
   renown: z.object({
-    glory: DualTrackerSchema,
-    honor: DualTrackerSchema,
-    wisdom: DualTrackerSchema,
+    glory: RenownTrackerSchema,
+    honor: RenownTrackerSchema,
+    wisdom: RenownTrackerSchema,
   }),
   rank: z.number().int().min(0).max(6),
   rage: DualTrackerSchema,
@@ -384,6 +400,7 @@ export const W20UserCharacterSheetSchema: z.ZodType<W20UserCharacterSheet> = z.o
   health: HealthStateSchema,
   experience: z.object({
     total: z.number().int().min(0).max(10000),
+    mystical: z.number().int().min(0).max(10000).optional(),
     spent: z.number().int().min(0).max(10000),
   }),
   activeForm: GarouFormSchema,
@@ -391,7 +408,14 @@ export const W20UserCharacterSheetSchema: z.ZodType<W20UserCharacterSheet> = z.o
   fetishes: z.array(SheetFetishItemSchema).max(50),
   rites: z.array(SheetRiteEntrySchema).max(100),
   combatWeapons: z.array(SheetWeaponEntrySchema).max(50),
+  ruleActivationReceipts: z.array(z.string().min(1).max(512)).optional(),
+  packTotemRule: z.object(ruleBindingFields).optional(),
+  ruleHealthBonus: z.number().int().min(0).max(10).optional(),
+  ruleContextTags: z.array(z.string().max(160)).max(80).optional(),
+  activeRuleEffects: z.array(ActiveRuleInstanceSchema).max(200).optional(),
+  equipment: z.array(z.object({ ...ruleBindingFields, id: z.string().min(1).max(120), name: z.string().min(1).max(120), worn: z.boolean().optional(), carried: z.boolean().optional(), isSilver: z.boolean().optional() })).max(80).optional(),
   armor: z.object({
+    ...ruleBindingFields, worn: z.boolean().optional(), dexterityDifficultyPenalty: z.number().int().min(0).max(10).optional(),
     rating: z.number().int().min(0).max(15),
     description: z.string().max(500),
   }),
@@ -402,6 +426,7 @@ export const W20UserCharacterSheetSchema: z.ZodType<W20UserCharacterSheet> = z.o
 });
 
 export const ClientCommandSchema = z.discriminatedUnion('type', [
+  ...createModifierCommandSchemas(W20UserCharacterSheetSchema, RuleContextSchema, SheetShortcutSchema),
   z.object({
     type: z.literal('HELLO_AUTH'),
     sessionJwt: z.string().min(1),
@@ -446,6 +471,7 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('ROLL_FREEFORM_POOL'),
+    ruleContext: RuleContextSchema.optional(),
     characterId: z.string().min(1),
     label: z.string().min(1).max(200),
     attributeKey: AttributeKeySchema,
@@ -457,11 +483,14 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('ROLL_TABLE_POOL'),
-    pool: z.number().int().min(1).max(30),
+    sheetId: z.string().min(1).max(120).optional(), initiativeAdjustment: z.number().int().min(-30).max(30).optional(),
+    shortcut: SheetShortcutSchema.optional(), ruleContext: RuleContextSchema.optional(),
+    pool: z.number().int().min(0).max(30),
     rageDiceCount: z.number().int().min(0).max(30),
     difficulty: z.number().int().min(2).max(10),
     hasSpecialty: z.boolean(),
     spendWillpower: z.boolean(),
+    willpowerSource:z.literal('pack').optional(),
     applyWoundPenalty: z.boolean(),
     rollMode: z.enum(['pool', 'initiative']).optional(),
     initiativeModifier: z.number().int().min(-30).max(50).optional(),

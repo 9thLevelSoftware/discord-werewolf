@@ -2,6 +2,12 @@ import { DurableObject } from 'cloudflare:workers';
 import {
   advanceEndOfRound,
   applyHealthDamage,
+  applyHealthStateDamage,
+  healHealthStateDamage,
+  getRuleResultTriggers,
+  resolveRuleShift,
+  getW20RankRenownRequirement,
+  buildSharedGiftGrant,
   computeEffectiveCharacterStats,
   createCombatEncounter,
   declarePreInitiativeResources,
@@ -21,6 +27,19 @@ import {
   triggerHoldInterrupt,
   validateResourceSpend,
   W20_FORM_MATRIX,
+  computeUserSheetStats,
+  computeWoundState,
+  resolveSheetShortcut,
+  resolveCharacterRuleRoll,
+  evaluateModifierRules,
+  getSheetModifierSources,
+  getCharacterModifierSources,
+  getSourceModifierRule,
+  applyRuleValue,
+  ruleTraits,
+  type AppliedRuleModifier,
+  type W20UserCharacterSheet,
+  type RuleContext,
   type W20CharacterState,
   type W20RollResult,
 } from '@w20-vtt/core';
@@ -44,13 +63,33 @@ import { createNpcFromTemplate } from './npcTemplates';
 import {
   buildProjectedSnapshot,
   createEmptyRoomState,
+  createEmptyRuleState,
+  projectRuleState,
   isEntryVisibleToAttachment,
   projectEnvelopeForAttachment,
   type BufferedRoomEvent,
   type PersistedRoomState,
   type StoredMapToken,
+  type RuleSheetMutation,
 } from './roomProjection';
 import { SupabaseRestClient } from './supabaseRest';
+import { UserSheetRepository, RuleSpendConflictError, type RuleSpendInput } from './userSheetStore';
+import { applyRuleSheetMutation, applyCanonicalGrantCleanup, StagedRuleRejection, type SharedRuleCommand, type SharedRuleEmission, type SharedRuleIntent } from './sharedRuleCommit';
+import { SharedActionReplies } from './sharedActionReplies';
+import { isMockDiscordId } from './devMockAuth';
+import {
+  activationCosts,
+  allocationLimit,
+  actorWithEffects,
+  advanceRuleEffect,
+  createRoomRuleEffect,
+  captureRuleTraits,
+  findActorRule,
+  isRuleSheet,
+  rollRuleActivation,
+  validateRuleChoices,
+  type RuleActor,
+} from './ruleLifecycle';
 
 const EVENT_RING_CAPACITY = 100;
 const MAX_FOG_STROKES = 2000;
@@ -108,6 +147,17 @@ interface DeferredRollAudit {
   hasSpecialty?: boolean;
   spentWillpower?: boolean;
   isSecretStRoll?: boolean;
+}
+
+interface SharedRuleStage {
+  payerSheetId: string;
+  operationSeed: string;
+  emissions: SharedRuleEmission[];
+  costs: { rage: number; gnosis: number; willpower: number };
+  requiredSourceIds: string[];
+  requiredAbsentReceipts: string[];
+  characterFlushIds: string[];
+  audits: DeferredRollAudit[];
 }
 
 function classifyCoreErrorCode(message: string): CommandRejectionCode {
@@ -170,9 +220,17 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   private roomState: PersistedRoomState = createEmptyRoomState();
   private eventRing: BufferedRoomEvent[] = [];
   private hydrationPromise: Promise<boolean> | null = null;
+  private rulePersistencePromise: Promise<void> | null = null;
+  private readonly pendingRuleBindings = new Map<string, Promise<void>>();
+  private readonly pendingRuleCharacterIds = new Set<string>();
+  private pendingRuleTokenUpdate = false;
+  private roomOperations: Promise<void> = Promise.resolve();
+  private sharedRuleStage: SharedRuleStage | null = null;
+  private readonly sharedActionReplies: SharedActionReplies;
 
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env);
+    this.sharedActionReplies = new SharedActionReplies(this.ctx.storage);
     this.ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS room_state (
@@ -197,6 +255,17 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         .toArray();
       if (stateRows[0]?.state_json) {
         this.roomState = JSON.parse(stateRows[0].state_json) as PersistedRoomState;
+      }
+      this.roomState.ruleState = { ...createEmptyRuleState(), ...this.roomState.ruleState };
+      this.roomState.ruleState.clock = {
+        ...createEmptyRuleState().clock,
+        ...this.roomState.ruleState.clock,
+      };
+      for (const [key, record] of Object.entries(this.roomState.ruleState.sharedActionRecords ?? {})) this.sharedActionReplies.put(key, record);
+      delete this.roomState.ruleState.sharedActionRecords;
+      if (!this.roomState.ruleCommitNamespace) {
+        this.roomState.ruleCommitNamespace = crypto.randomUUID();
+        this.persistStateSnapshot();
       }
 
       const ringRows = this.ctx.storage.sql
@@ -258,7 +327,17 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     });
   }
 
+  private withRoomLock<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.roomOperations.then(operation, operation);
+    this.roomOperations = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
+
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    return this.withRoomLock(() => this.processWebSocketMessage(ws, message));
+  }
+
+  private async processWebSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const rawText = typeof message === 'string' ? message : new TextDecoder().decode(message);
     const parsed = parseClientEnvelope(rawText);
     if (!parsed.success) {
@@ -275,6 +354,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
 
     if (envelope.command.type === 'HELLO_AUTH') {
       await this.handleHelloAuth(ws, envelope, envelope.command);
+      await this.resumeSharedRuleIntent();
       return;
     }
 
@@ -285,6 +365,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
 
     if (envelope.command.type === 'VOICE_SPEAKING_STATE') {
       this.handleVoiceSpeakingState(ws, attachment, envelope.command.isSpeaking, envelope.reqId);
+      return;
+    }
+
+    if (this.roomState.sharedRuleIntent && !(await this.resumeSharedRuleIntent())) {
+      this.sendRejection(ws, envelope.reqId, 'VALIDATION_ERROR', 'A previous action is awaiting shared storage confirmation. It will recover without a second charge.');
       return;
     }
 
@@ -313,8 +398,108 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return;
     }
 
+    if (envelope.command.type === 'BIND_TABLE_SHEET') {
+      const key = buildParticipantKey(attachment.discordUserId, envelope.command.seatId);
+      const previous = this.pendingRuleBindings.get(key);
+      const binding = (async () => {
+        if (previous) await previous;
+        await this.handleBindTableSheet(
+          ws,
+          attachment,
+          envelope.command as Extract<ClientCommand, { type: 'BIND_TABLE_SHEET' }>,
+          envelope.reqId
+        );
+      })();
+      this.pendingRuleBindings.set(key, binding);
+      await binding;
+      if (this.pendingRuleBindings.get(key) === binding) this.pendingRuleBindings.delete(key);
+      return;
+    }
+
+    if (envelope.command.type === 'PREVIEW_RULE_ROLL') {
+      try {
+        await this.pendingRuleBindings.get(
+          buildParticipantKey(attachment.discordUserId, envelope.command.seatId)
+        );
+        const sheet = this.requireBoundSheet(
+          attachment,
+          envelope.command.seatId,
+          envelope.command.sheetId
+        );
+        const resolved = this.resolveTableRuleRoll(
+          sheet,
+          envelope.command.shortcut,
+          envelope.command.context,
+          attachment
+        );
+        ws.send(
+          JSON.stringify({
+            seq: this.roomState.seq,
+            replyToReqId: envelope.reqId,
+            serverTime: Date.now(),
+            event: { type: 'RULE_ROLL_PREVIEW', sheetId: sheet.id, ...resolved },
+          })
+        );
+      } catch (error) {
+        this.sendRejection(
+          ws,
+          envelope.reqId,
+          'VALIDATION_ERROR',
+          error instanceof Error ? error.message : 'Unable to preview this roll.'
+        );
+      }
+      return;
+    }
+
+    if (
+      envelope.command.type === 'ACTIVATE_RULE' ||
+      envelope.command.type === 'END_RULE_EFFECT' ||
+      envelope.command.type === 'ADVANCE_RULE_CLOCK'
+    ) {
+      if ('seatId' in envelope.command)
+        await this.pendingRuleBindings.get(
+          buildParticipantKey(attachment.discordUserId, envelope.command.seatId)
+        );
+      const command = envelope.command;
+      if (command.type === 'END_RULE_EFFECT' || command.type === 'ACTIVATE_RULE' && !command.characterId) await this.executeSharedRuleCommand(ws, attachment, command, envelope.reqId, () => this.handleRuleCommand(ws, attachment, command, envelope.reqId));
+      else this.handleRuleCommand(ws, attachment, command, envelope.reqId);
+      return;
+    }
+
+    if (
+      envelope.command.type === 'APPLY_RULE_EVENT' ||
+      envelope.command.type === 'REROLL_RULE_ROLL'
+    ) {
+      await this.pendingRuleBindings.get(
+        buildParticipantKey(attachment.discordUserId, envelope.command.seatId)
+      );
+      try {
+        const command = envelope.command;
+        const perform = () => {
+          if (command.type === 'APPLY_RULE_EVENT') this.applyRuleEvent(attachment, command, envelope.reqId);
+          else this.rerollRuleRoll(ws, attachment, command, envelope.reqId);
+        };
+        if ('characterId' in command && command.characterId) perform();
+        else await this.executeSharedRuleCommand(ws, attachment, command, envelope.reqId, perform);
+        this.scheduleRulePersistence();
+      } catch (error) {
+        this.sendRejection(
+          ws,
+          envelope.reqId,
+          'VALIDATION_ERROR',
+          error instanceof Error ? error.message : 'Unable to apply this rule.'
+        );
+      }
+      return;
+    }
+
     if (envelope.command.type === 'ROLL_TABLE_POOL') {
-      this.handleRollTablePool(attachment, envelope.command, envelope.reqId);
+      await this.pendingRuleBindings.get(
+        buildParticipantKey(attachment.discordUserId, envelope.command.seatId)
+      );
+      const command = envelope.command;
+      if (this.getRuleState().seatBindings[buildParticipantKey(attachment.discordUserId, command.seatId)]) await this.executeSharedRuleCommand(ws, attachment, command, envelope.reqId, () => this.handleRollTablePool(ws, attachment, command, envelope.reqId));
+      else this.handleRollTablePool(ws, attachment, command, envelope.reqId);
       return;
     }
 
@@ -341,11 +526,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    this.handleSocketDisconnect(ws);
+    return this.withRoomLock(async () => this.handleSocketDisconnect(ws));
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    this.handleSocketDisconnect(ws);
+    return this.withRoomLock(async () => this.handleSocketDisconnect(ws));
   }
 
   /**
@@ -359,6 +544,13 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     characterId?: string;
     isSecretStRoll?: boolean;
   }): Promise<{ ok: true; seq: number }> {
+    return this.withRoomLock(async () => {
+      if (this.roomState.sharedRuleIntent && !(await this.resumeSharedRuleIntent())) throw new Error('Shared character action confirmation is pending.');
+      return this.broadcastSlashRollUnlocked(payload);
+    });
+  }
+
+  private async broadcastSlashRollUnlocked(payload: { campaignId: string; rollerDiscordId: string; label: string; roll: W20RollResult; characterId?: string; isSecretStRoll?: boolean }): Promise<{ ok: true; seq: number }> {
     if (!this.roomState.campaignId && payload.campaignId) {
       try {
         await this.ensureRoomHydrated(payload.campaignId);
@@ -407,6 +599,13 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     characterId: string,
     patch: Partial<W20CharacterState>,
   ): Promise<{ ok: boolean; seq: number }> {
+    return this.withRoomLock(async () => {
+      if (this.roomState.sharedRuleIntent && !(await this.resumeSharedRuleIntent())) throw new Error('Shared character action confirmation is pending.');
+      return this.applyApprovedXpUnlocked(characterId, patch);
+    });
+  }
+
+  private async applyApprovedXpUnlocked(characterId: string, patch: Partial<W20CharacterState>): Promise<{ ok: boolean; seq: number }> {
     const existing = this.roomState.characters[characterId];
     if (!existing) {
       return { ok: false, seq: this.roomState.seq };
@@ -446,6 +645,13 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
    * Typed Worker RPC invoked when a new character is created via POST /api/characters so live rooms see them immediately.
    */
   async upsertCharacterFromApi(character: W20CharacterState): Promise<{ ok: true; seq: number }> {
+    return this.withRoomLock(async () => {
+      if (this.roomState.sharedRuleIntent && !(await this.resumeSharedRuleIntent())) throw new Error('Shared character action confirmation is pending.');
+      return this.upsertCharacterFromApiUnlocked(character);
+    });
+  }
+
+  private async upsertCharacterFromApiUnlocked(character: W20CharacterState): Promise<{ ok: true; seq: number }> {
     this.roomState.characters[character.id] = character;
     if (!this.roomState.persistedCharacterIds.includes(character.id)) {
       this.roomState.persistedCharacterIds.push(character.id);
@@ -566,6 +772,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       },
       ...(existing?.characterName !== undefined ? { characterName: existing.characterName } : {}),
       ...(existing?.activeForm !== undefined ? { activeForm: existing.activeForm } : {}),
+      ...(existing?.sheetId !== undefined ? { sheetId: existing.sheetId } : {}),
     };
     this.roomState.tableParticipants[participantKey] = next;
     return next;
@@ -665,6 +872,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       keptKeys.add(participantKey);
 
       const existing = this.roomState.tableParticipants[participantKey];
+      const boundSheetId = this.getRuleState().seatBindings[participantKey];
+      const boundSheet = boundSheetId ? this.getRuleState().sheets[boundSheetId]?.sheet : undefined;
       const avatarUrl =
         normalizedSeatId === 'primary'
           ? primaryAvatarUrl
@@ -688,11 +897,12 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
             ? seat.activeForm
             : (existing?.activeForm ?? null),
         avatarUrl,
+        sheetId: this.getRuleState().seatBindings[participantKey] ?? null,
         isConnected: true,
         trackers: {
-          rage: Math.max(0, Math.min(10, seat.trackers.rage)),
-          gnosis: Math.max(0, Math.min(10, seat.trackers.gnosis)),
-          willpower: Math.max(0, Math.min(10, seat.trackers.willpower)),
+          rage: boundSheet?.rage.temporary ?? Math.max(0, Math.min(10, seat.trackers.rage)),
+          gnosis: boundSheet?.gnosis.temporary ?? Math.max(0, Math.min(10, seat.trackers.gnosis)),
+          willpower: boundSheet?.willpower.temporary ?? Math.max(0, Math.min(10, seat.trackers.willpower)),
           woundPenalty: seat.trackers.woundPenalty,
         },
       };
@@ -701,6 +911,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     for (const [key, entry] of Object.entries(this.roomState.tableParticipants)) {
       if (entry.discordUserId === attachment.discordUserId && !keptKeys.has(key)) {
         delete this.roomState.tableParticipants[key];
+        delete this.getRuleState().seatBindings[key];
+        delete this.getRuleState().seatAuthorizations[key];
       }
     }
 
@@ -753,17 +965,22 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     reqId: string,
   ): void {
     const participant = this.resolveTargetParticipant(attachment, command.seatId);
+    const boundId =
+      this.getRuleState().seatBindings[
+        buildParticipantKey(attachment.discordUserId, command.seatId)
+      ];
+    const boundSheet = boundId ? this.getRuleState().sheets[boundId]?.sheet : undefined;
     const nextTrackers: LightGarouTrackers = {
       rage:
-        typeof command.trackers.rage === 'number'
+        boundSheet ? boundSheet.rage.temporary : typeof command.trackers.rage === 'number'
           ? Math.max(0, Math.min(10, command.trackers.rage))
           : participant.trackers.rage,
       gnosis:
-        typeof command.trackers.gnosis === 'number'
+        boundSheet ? boundSheet.gnosis.temporary : typeof command.trackers.gnosis === 'number'
           ? Math.max(0, Math.min(10, command.trackers.gnosis))
           : participant.trackers.gnosis,
       willpower:
-        typeof command.trackers.willpower === 'number'
+        boundSheet ? boundSheet.willpower.temporary : typeof command.trackers.willpower === 'number'
           ? Math.max(0, Math.min(10, command.trackers.willpower))
           : participant.trackers.willpower,
       woundPenalty:
@@ -793,16 +1010,1111 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     );
   }
 
+  private ruleOperationId(kind: string, discordId: string, actionId: string): string {
+    if (this.sharedRuleStage) return this.sharedRuleStage.operationSeed;
+    return kind === 'activation' || kind === 'end' ? `${discordId}:${actionId}` : `${kind}:${discordId}:${actionId}`;
+  }
+
+  private replaceCanonicalRuleSheet(sheet: W20UserCharacterSheet): void {
+    const rules = this.getRuleState();
+    const record = rules.sheets[sheet.id];
+    if (!record) throw new Error('Bind this character before using its rules.');
+    record.sheet = structuredClone(sheet);
+    record.canonicalKnown = true;
+    record.controlledByDiscordId = sheet.ownerDiscordId;
+    for (const [key, id] of Object.entries(rules.seatBindings)) {
+      if (id !== sheet.id) continue;
+      const principal = key.split('::')[0];
+      const grant = rules.seatAuthorizations[key];
+      if (principal !== sheet.ownerDiscordId && (!grant?.syncCode || grant.syncCode !== sheet.syncCode)) {
+        delete rules.seatBindings[key];
+        delete rules.seatAuthorizations[key];
+        if (this.roomState.tableParticipants?.[key]) this.roomState.tableParticipants[key]!.sheetId = null;
+      }
+    }
+    const wrappers = new Map(rules.effects.filter((effect) => effect.targetId === sheet.id).map((effect) => [effect.instance.id, effect]));
+    rules.effects = rules.effects.filter((effect) => effect.targetId !== sheet.id);
+    for (const instance of sheet.activeRuleEffects ?? []) {
+      const previous = wrappers.get(instance.id);
+      rules.effects.push({ ...previous, instance: structuredClone(instance), sourceId: previous?.sourceId ?? instance.sourceOwnerId ?? instance.sourceId.split(':')[0]!, targetId: sheet.id, casterDiscordId: previous?.casterDiscordId ?? sheet.ownerDiscordId, preparedAtTurn: instance.preparationRounds === 0 ? undefined : previous?.preparedAtTurn });
+    }
+    for (const participant of Object.values(this.roomState.tableParticipants ?? {})) {
+      if (participant.sheetId === sheet.id) {
+        participant.trackers = { ...participant.trackers, rage: sheet.rage.temporary, gnosis: sheet.gnosis.temporary, willpower: sheet.willpower.temporary };
+        participant.activeForm = sheet.activeForm;
+      }
+    }
+  }
+
+  private isOrdinaryLocalRoll(command: SharedRuleCommand, sheet: W20UserCharacterSheet): boolean {
+    if (command.type !== 'ROLL_TABLE_POOL' || command.spendWillpower || (sheet.activeRuleEffects?.length ?? 0) > 0 || (sheet.ruleActivationReceipts?.length ?? 0) > 0) return false;
+    const source = command.shortcut?.source;
+    return !source || source.kind !== 'fetish_activate' && !(source.kind === 'trait_combo' && ['rage', 'gnosis', 'willpower'].includes(source.attribute ?? ''));
+  }
+
+  private async executeSharedRuleCommand(ws: WebSocket, attachment: InternalSocketAttachment, command: SharedRuleCommand, reqId: string, perform: () => void, replanCount = 0, payerOverride?: string): Promise<void> {
+    if (isMockDiscordId(attachment.discordUserId)) { perform(); return; }
+    const clientActionId = command.type === 'ROLL_TABLE_POOL' ? command.rollClientId ?? reqId : reqId;
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(clientActionId)));
+    const actionHash = Array.from(digest, (value) => value.toString(16).padStart(2, '0')).join('');
+    const actionKey = `${command.type}:${attachment.discordUserId}:${actionHash}`;
+    const fingerprint = JSON.stringify(command);
+    const previous = this.sharedActionReplies.get(actionKey);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'This action ID was already used with different parameters.');
+      else if (previous.rejection) this.sendRejection(ws, reqId, previous.rejection.code, previous.rejection.message);
+      else {
+        for (const event of previous.replay ?? []) ws.send(JSON.stringify({ seq: this.roomState.seq, replyToReqId: reqId, serverTime: Date.now(), event }));
+        if (previous.payerSheetId) {
+          try {
+            const current = await new UserSheetRepository(this.env).getById(previous.payerSheetId);
+            if (current) {
+              this.replaceCanonicalRuleSheet(current);
+              const key = buildParticipantKey(attachment.discordUserId, command.seatId);
+              const grant = this.getRuleState().seatAuthorizations[key];
+              if (current.ownerDiscordId === attachment.discordUserId || grant?.syncCode && grant.syncCode === current.syncCode) this.sendRuleStateToSocket(ws, attachment, reqId);
+            }
+          } catch { /* Known results can be replayed while fresh private state is unavailable. */ }
+        }
+      }
+      return;
+    }
+    let payerId = payerOverride ?? this.getRuleState().seatBindings[buildParticipantKey(attachment.discordUserId, command.seatId)];
+    if (command.type === 'END_RULE_EFFECT') payerId = this.getRuleState().effects.find((effect) => effect.instance.id === command.effectId)?.targetId ?? payerId;
+    if (!payerId || !this.getRuleState().sheets[payerId]) {
+      if (replanCount > 0) throw new StagedRuleRejection('VALIDATION_ERROR', 'Re-bind this character with its current authorization before using it.');
+      perform(); return;
+    }
+    const repository = new UserSheetRepository(this.env);
+    try {
+      if (this.rulePersistencePromise) await this.rulePersistencePromise;
+      if (this.getRuleState().persistenceQueue.some((mutation) => mutation.sheetId === payerId)) {
+        await this.flushRulePersistence();
+        if (this.getRuleState().persistenceQueue.some((mutation) => mutation.sheetId === payerId)) throw new Error('An earlier character update is awaiting shared storage. Retry when it has synchronized.');
+      }
+      const canonical = await repository.getById(payerId);
+      if (!canonical) {
+        const local = this.getRuleState().sheets[payerId]!;
+        if (local.canonicalKnown === false && this.isOrdinaryLocalRoll(command, local.sheet)) { perform(); return; }
+        throw new StagedRuleRejection('VALIDATION_ERROR', 'Save this local character to the roster before spending resources or using paid effects at a shared table.');
+      }
+      const bindingKey = buildParticipantKey(attachment.discordUserId, command.seatId);
+      const grant = this.getRuleState().seatAuthorizations[bindingKey];
+      const endingOwnCast = command.type === 'END_RULE_EFFECT' && this.getRuleState().effects.some((effect) => effect.instance.id === command.effectId && effect.casterDiscordId === attachment.discordUserId);
+      if (canonical.ownerDiscordId !== attachment.discordUserId && !endingOwnCast && (!grant?.syncCode || grant.ownerDiscordId !== canonical.ownerDiscordId || grant.syncCode !== canonical.syncCode)) throw new StagedRuleRejection('VALIDATION_ERROR', 'Re-bind this character with its current sync code before using it.');
+      this.replaceCanonicalRuleSheet(canonical);
+      for (const targetId of command.type === 'ACTIVATE_RULE' ? command.targetIds : command.type === 'ROLL_TABLE_POOL' ? command.ruleContext?.targetIds ?? [] : []) {
+        if (targetId !== payerId && this.getRuleState().sheets[targetId]) {
+          const target = await repository.getById(targetId);
+          if (target) this.replaceCanonicalRuleSheet(target);
+        }
+      }
+      this.persistStateSnapshot();
+      const before = this.roomState;
+      const staged = structuredClone(before);
+      delete staged.sharedRuleIntent;
+      const stage: SharedRuleStage = { payerSheetId: payerId, operationSeed: `${before.ruleCommitNamespace}:${command.type}:${attachment.discordUserId}:${actionHash.slice(0, 24)}`, emissions: [], costs: { rage: 0, gnosis: 0, willpower: 0 }, requiredSourceIds: [], requiredAbsentReceipts: [], characterFlushIds: [], audits: [] };
+      this.roomState = staged;
+      this.sharedRuleStage = stage;
+      try { perform(); }
+      finally { this.sharedRuleStage = null; this.roomState = before; this.pendingRuleCharacterIds.clear(); this.pendingRuleTokenUpdate = false; }
+      const oldMutations = new Set(before.ruleState!.persistenceQueue.map((mutation) => `${mutation.sheetId}:${mutation.operationId}`));
+      const mutations = staged.ruleState!.persistenceQueue.filter((mutation) => mutation.sheetId === payerId && !oldMutations.has(`${mutation.sheetId}:${mutation.operationId}`));
+      const resourceDelta = { rage: 0, gnosis: 0, willpower: 0 };
+      const permanentResourceDelta = { rage: 0, gnosis: 0, willpower: 0 };
+      for (const mutation of mutations) for (const trait of ['rage', 'gnosis', 'willpower'] as const) { resourceDelta[trait] += mutation.resourceDelta[trait]; permanentResourceDelta[trait] += mutation.permanentResourceDelta?.[trait] ?? 0; }
+      const finalReceipts = staged.ruleState!.sheets[payerId]!.sheet.ruleActivationReceipts ?? [];
+      const newReceipts = finalReceipts.filter((receipt) => !(canonical.ruleActivationReceipts ?? []).includes(receipt));
+      const payerAfter = staged.ruleState!.sheets[payerId]!.sheet;
+      const requiresAuthorization = command.type !== 'ROLL_TABLE_POOL' || command.spendWillpower || (canonical.activeRuleEffects?.length ?? 0) > 0 || !this.isOrdinaryLocalRoll(command, { ...canonical, ruleActivationReceipts: [] }) || mutations.some((mutation) => mutation.resourceDelta.rage || mutation.resourceDelta.gnosis || mutation.resourceDelta.willpower || mutation.permanentResourceDelta || mutation.consumedSourceIds.length || mutation.healthChanges?.length || mutation.rank !== undefined || mutation.activeForm !== undefined) || JSON.stringify(payerAfter.activeRuleEffects ?? []) !== JSON.stringify(canonical.activeRuleEffects ?? []);
+      const intent: SharedRuleIntent = {
+        id: `shared:${before.ruleCommitNamespace}:${actionKey}:${payerId}`, actionKey, operationSeed: stage.operationSeed, fingerprint, reqId, requesterDiscordId: attachment.discordUserId, attachment: structuredClone(attachment), command: structuredClone(command),
+        authorization: { sheetId: payerId, ownerDiscordId: canonical.ownerDiscordId, expectedUpdatedAt: canonical.updatedAt, operationId: `shared:${before.ruleCommitNamespace}:${actionKey}:${payerId}`, costs: stage.costs, resourceDelta, permanentResourceDelta, consumedSourceIds: [...new Set(mutations.flatMap((mutation) => mutation.consumedSourceIds))], requiredSourceIds: [...new Set(stage.requiredSourceIds)], requiredAbsentReceipts: [...new Set([...stage.requiredAbsentReceipts, ...newReceipts.filter((receipt) => /^(rule-use:|event-use:|reroll-use:)/.test(receipt))])], additionalReceipts: [...new Set([...newReceipts, ...mutations.map((mutation) => mutation.operationId), ...mutations.flatMap((mutation) => (mutation.grantWithdrawals ?? []).map((withdrawal) => `grant-ended:${withdrawal.effectId}`))])] },
+        mutations, requiresAuthorization, stagedState: staged, emissions: stage.emissions, characterFlushIds: [...new Set(stage.characterFlushIds)], audits: stage.audits,
+      };
+      this.roomState.sharedRuleIntent = intent;
+      this.persistStateSnapshot();
+      await this.resumeSharedRuleIntent(replanCount);
+    } catch (error) {
+      if (this.roomState.sharedRuleIntent) {
+        this.scheduleSharedRuleRecovery();
+        this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'Shared storage confirmation is pending. This action will recover with its original outcome and without a second charge.');
+        return;
+      }
+      const code = error instanceof StagedRuleRejection ? error.code : error instanceof RuleSpendConflictError && error.code === 'INSUFFICIENT_RESOURCE' ? 'INSUFFICIENT_RESOURCE' : 'VALIDATION_ERROR';
+      const message = error instanceof Error ? error.message : 'Shared character state is unavailable.';
+      if (error instanceof StagedRuleRejection || error instanceof RuleSpendConflictError) {
+        this.sharedActionReplies.put(actionKey, { fingerprint, rejection: { code, message } });
+        this.persistStateSnapshot();
+      }
+      this.sendRejection(ws, reqId, code, message);
+    }
+  }
+
+  private async resumeSharedRuleIntent(replanCount = 0): Promise<boolean> {
+    const intent = this.roomState.sharedRuleIntent;
+    if (!intent) return true;
+    try {
+      const repository = new UserSheetRepository(this.env);
+      const accepted = intent.requiresAuthorization === false ? { sheet: await repository.getById(intent.authorization.sheetId) } : await repository.authorizeRuleSpend(intent.authorization, (sheet) => intent.mutations.reduce(applyRuleSheetMutation, sheet));
+      if (!accepted.sheet) throw new RuleSpendConflictError('NOT_FOUND', 'The character is no longer in shared storage.');
+      this.publishSharedRuleIntent(intent, accepted.sheet);
+      return true;
+    } catch (error) {
+      if (error instanceof RuleSpendConflictError) {
+        delete this.roomState.sharedRuleIntent;
+        if (error.latestSheet) this.replaceCanonicalRuleSheet(error.latestSheet);
+        this.persistStateSnapshot();
+        if (error.code === 'STALE' && replanCount < 3) {
+          const socket = this.ctx.getWebSockets().find((ws) => this.getAttachment(ws).discordUserId === intent.requesterDiscordId) ?? ({ send: () => undefined } as unknown as WebSocket);
+          await this.executeSharedRuleCommand(socket, intent.attachment, intent.command, intent.reqId, () => this.performSharedRuleCommand(socket, intent.attachment, intent.command, intent.reqId), replanCount + 1, intent.authorization.sheetId);
+          return !this.roomState.sharedRuleIntent;
+        }
+        const code = error.code === 'INSUFFICIENT_RESOURCE' ? 'INSUFFICIENT_RESOURCE' : 'VALIDATION_ERROR';
+        this.sharedActionReplies.put(intent.actionKey, { fingerprint: intent.fingerprint, rejection: { code, message: error.message } });
+        this.persistStateSnapshot();
+        for (const socket of this.ctx.getWebSockets()) if (this.getAttachment(socket).authenticated && this.getAttachment(socket).discordUserId === intent.requesterDiscordId) { this.sendRejection(socket, intent.reqId, code, error.message); }
+        return true;
+      }
+      this.scheduleSharedRuleRecovery();
+      return false;
+    }
+  }
+
+  private performSharedRuleCommand(ws: WebSocket, attachment: InternalSocketAttachment, command: SharedRuleCommand, reqId: string): void {
+    if (command.type === 'ROLL_TABLE_POOL') this.handleRollTablePool(ws, attachment, command, reqId);
+    else if (command.type === 'REROLL_RULE_ROLL') this.rerollRuleRoll(ws, attachment, command, reqId);
+    else if (command.type === 'APPLY_RULE_EVENT') this.applyRuleEvent(attachment, command, reqId);
+    else this.handleRuleCommand(ws, attachment, command, reqId);
+  }
+
+  private scheduleSharedRuleRecovery(): void {
+    if (typeof this.ctx.storage.setAlarm === 'function') this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + 5_000));
+  }
+
+  async alarm(): Promise<void> {
+    return this.withRoomLock(async () => { await this.resumeSharedRuleIntent(); });
+  }
+
+  private publishSharedRuleIntent(intent: SharedRuleIntent, canonical: W20UserCharacterSheet): void {
+    const before = this.roomState;
+    const oldRing = this.eventRing;
+    const next = structuredClone(intent.stagedState) as PersistedRoomState;
+    next.seq = before.seq;
+    next.characters = { ...before.characters, ...next.characters };
+    for (const [key, participant] of Object.entries(before.tableParticipants ?? {})) next.tableParticipants![key] = { ...participant, ...next.tableParticipants?.[key], isConnected: participant.isConnected, avatarUrl: participant.avatarUrl };
+    this.roomState = next;
+    this.replaceCanonicalRuleSheet(canonical);
+    const committedIds = new Set(intent.mutations.map((mutation) => mutation.operationId));
+    this.getRuleState().persistenceQueue = this.getRuleState().persistenceQueue.filter((mutation) => mutation.sheetId !== canonical.id || !committedIds.has(mutation.operationId));
+    const records: BufferedRoomEvent[] = [];
+    const outgoing: Array<{ entry?: BufferedRoomEvent; envelope: ServerEnvelope<ServerEvent> }> = [];
+    for (const emission of intent.emissions) {
+      if (emission.kind === 'commit') for (const pending of emission.pending) {
+        const envelope: ServerEnvelope<ServerEvent> = { seq: ++next.seq, replyToReqId: emission.replyToReqId, serverTime: Date.now(), event: pending.event };
+        const entry: BufferedRoomEvent = { seq: envelope.seq, targetRole: pending.targetRole ?? null, targetDiscordId: pending.targetDiscordId ?? null, envelope, ...(pending.rawTokensSnapshot ? { rawTokensSnapshot: pending.rawTokensSnapshot } : {}), ...(pending.rawCombatSnapshot !== undefined ? { rawCombatSnapshot: pending.rawCombatSnapshot } : {}) };
+        records.push(entry); outgoing.push({ entry, envelope });
+      } else outgoing.push({ envelope: { seq: next.seq, replyToReqId: emission.replyToReqId, serverTime: Date.now(), event: emission.event.type === 'PARTICIPANTS_UPDATED' ? { type: 'PARTICIPANTS_UPDATED', participants: Object.values(next.tableParticipants ?? {}) } : emission.event } });
+    }
+    // Activation retries acknowledge the outcome without animating a secondary roll again.
+    const replyType = intent.command.type === 'ACTIVATE_RULE' ? 'RULE_ACTIVATION_RESOLVED' : 'DICE_ROLLED_3D';
+    const replay = records.map((entry) => entry.envelope.event).filter((event) => event.type === replyType);
+    delete this.getRuleState().sharedActionRecords;
+    this.trimRuleReplayCaches();
+    this.eventRing = [...oldRing, ...records].slice(-EVENT_RING_CAPACITY);
+    const persist = () => {
+      this.sharedActionReplies.put(intent.actionKey, { fingerprint: intent.fingerprint, payerSheetId: canonical.id, replay });
+      this.persistStateSnapshot();
+      for (const entry of records) this.ctx.storage.sql.exec('INSERT OR REPLACE INTO room_event_ring (seq, target_role, target_discord_id, envelope_json, raw_tokens_json, raw_combat_json) VALUES (?, ?, ?, ?, ?, ?)', entry.seq, entry.targetRole, entry.targetDiscordId, JSON.stringify(entry.envelope), entry.rawTokensSnapshot ? JSON.stringify(entry.rawTokensSnapshot) : null, entry.rawCombatSnapshot !== undefined ? JSON.stringify(entry.rawCombatSnapshot) : null);
+      if (this.eventRing.length) this.ctx.storage.sql.exec('DELETE FROM room_event_ring WHERE seq < ?', this.eventRing[0]!.seq);
+    };
+    try { if (typeof this.ctx.storage.transactionSync === 'function') this.ctx.storage.transactionSync(persist); else persist(); }
+    catch (error) { this.roomState = before; this.eventRing = oldRing; throw error; }
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = this.getAttachment(socket);
+      if (!attachment.authenticated) continue;
+      for (const output of outgoing) {
+        const projected = output.entry ? projectEnvelopeForAttachment(output.entry, next, attachment) : output.envelope;
+        if (projected) { try { socket.send(JSON.stringify(projected)); } catch { /* Replay remains durable for a disconnected client. */ } }
+      }
+    }
+    this.scheduleCharacterFlush(intent.characterFlushIds.flatMap((id) => next.characters[id] ? [next.characters[id]!] : []));
+    for (const audit of intent.audits) this.scheduleRollAuditAndWebhook(audit);
+    this.scheduleRulePersistence();
+  }
+
+  private getRuleState() {
+    this.roomState.ruleState ??= createEmptyRuleState();
+    return this.roomState.ruleState;
+  }
+
+  private trimRuleReplayCaches(): void {
+    const rules = this.getRuleState();
+    rules.rollReceipts = Object.fromEntries(Object.entries(rules.rollReceipts).slice(-EVENT_RING_CAPACITY));
+    rules.activationReceipts = Object.fromEntries(Object.entries(rules.activationReceipts).slice(-EVENT_RING_CAPACITY));
+    const current = new Set((this.roomState.rollHistory ?? []).flatMap((entry) => [entry.id, ...(entry.rerollOf ? [entry.rerollOf] : []), ...(entry.correctionOf ? [entry.correctionOf] : [])]));
+    rules.rollRequests = Object.fromEntries(Object.entries(rules.rollRequests).filter(([id]) => current.has(id)));
+  }
+
+  private reconcileRuleSources(): boolean {
+    const rules = this.getRuleState();
+    const removed: import('@w20-vtt/protocol').RoomRuleEffect[] = [];
+    const refreshed: import('@w20-vtt/protocol').RoomRuleEffect[] = [];
+    for (const effect of rules.effects) {
+      if (effect.instance.parentGrantId && !rules.effects.some((parent) => parent.instance.id === effect.instance.parentGrantId)) {
+        removed.push(effect);
+        continue;
+      }
+      const source = rules.sheets[effect.sourceId]?.sheet ?? this.roomState.characters[effect.sourceId];
+      if (!source) continue;
+      const itemId = effect.instance.sourceItemId ?? effect.instance.sourceId.slice(source.id.length + 1);
+      const sourceItem = (isRuleSheet(source) ? getSheetModifierSources(source) : getCharacterModifierSources(source)).find((entry) => entry.id === itemId);
+      if (!sourceItem && !effect.instance.rule?.activation?.consumable) removed.push(effect);
+      if (sourceItem) {
+        effect.instance.sourceItemId = sourceItem.id;
+        effect.instance.sourceOwnerId = source.id;
+        effect.instance.sourceWorn = sourceItem.worn;
+        effect.instance.sourceCarried = effect.targetId === source.id ? sourceItem.carried : true;
+        effect.instance.sourceActive = sourceItem.active;
+      }
+      const wounds = computeWoundState(source.health);
+      if (effect.instance.sourceTraits?.sourceWoundPenalty !== wounds.penalty) {
+        effect.instance.sourceTraits = { ...effect.instance.sourceTraits, sourceWoundPenalty: wounds.penalty };
+        refreshed.push(effect);
+      }
+      if (effect.instance.rule?.activation?.endsWhenCasterIncapacitated && wounds.isIncapacitated && !removed.includes(effect)) removed.push(effect);
+    }
+    if (!removed.length && !refreshed.length) return false;
+    rules.effects = rules.effects.filter((effect) => !removed.includes(effect));
+    for (const effect of removed) this.queueRuleSheetMutation(effect.targetId, `conditional-end:${effect.instance.id}`, this.removeEffectResourceGrants(effect), [], [effect.instance.id]);
+    for (const effect of refreshed.filter((entry) => !removed.includes(entry))) this.queueRuleSheetMutation(effect.targetId, `source-refresh:${effect.instance.id}:${this.roomState.seq + 1}:${effect.instance.sourceTraits?.sourceWoundPenalty}`);
+    this.persistStateSnapshot();
+    this.scheduleRulePersistence();
+    return true;
+  }
+
+  private requireBoundSheet(attachment: InternalSocketAttachment, seatId?: string, sheetId?: string): W20UserCharacterSheet {
+    this.reconcileRuleSources();
+    const rules = this.getRuleState();
+    const boundId = rules.seatBindings[buildParticipantKey(attachment.discordUserId, seatId)];
+    if (!boundId || (sheetId && boundId !== sheetId)) throw new Error('This seat is no longer bound to the selected character.');
+    const record = rules.sheets[boundId];
+    if (!record) throw new Error('Bind this character sheet before using its rules.');
+    return actorWithEffects(record.sheet, rules.effects, rules.clock);
+  }
+
+  private async handleBindTableSheet(
+    ws: WebSocket,
+    attachment: InternalSocketAttachment,
+    command: Extract<ClientCommand, { type: 'BIND_TABLE_SHEET' }>,
+    reqId: string,
+  ): Promise<void> {
+    const key = buildParticipantKey(attachment.discordUserId, command.seatId);
+    const rules = this.getRuleState();
+    if (!command.sheet) {
+      delete rules.seatBindings[key];
+      delete rules.seatAuthorizations[key];
+      const participant = this.roomState.tableParticipants?.[key];
+      if (participant) participant.sheetId = null;
+      this.broadcastRuleState(reqId);
+      this.scheduleRulePersistence();
+      return;
+    }
+    try {
+      const submitted = command.sheet;
+      let stored: W20UserCharacterSheet | null = null;
+      if (!isMockDiscordId(attachment.discordUserId) && (new SupabaseRestClient(this.env).isConfigured() || this.env.VTT_MEDIA_BUCKET)) {
+        const repository = new UserSheetRepository(this.env);
+        stored = await repository.getById(submitted.id);
+      }
+      if (stored) {
+        const controlsSheet = stored.ownerDiscordId === attachment.discordUserId ||
+          Boolean(command.syncCode && stored.syncCode === command.syncCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase());
+        if (!controlsSheet) throw new Error('This character requires its owner or a valid sync code.');
+      } else if (submitted.ownerDiscordId !== attachment.discordUserId) {
+        throw new Error('Only the owner may bind a local character sheet.');
+      }
+      const existing = rules.sheets[submitted.id];
+      let sheet = structuredClone(submitted);
+      const pendingLocalReceipts = existing && stored && (existing.sheet.ruleActivationReceipts ?? []).some((receipt) => !(stored.ruleActivationReceipts ?? []).includes(receipt));
+      const base = pendingLocalReceipts ? existing!.sheet : stored && (!existing || stored.updatedAt > existing.sheet.updatedAt) ? stored : existing?.sheet ?? stored;
+      const hasUnacknowledgedChanges = base?.ruleActivationReceipts?.some((receipt) => !(submitted.ruleActivationReceipts ?? []).includes(receipt));
+      if (base && (hasUnacknowledgedChanges || (existing && submitted.updatedAt <= existing.sheet.updatedAt))) {
+        sheet = {
+          ...sheet,
+          rage: base.rage,
+          gnosis: base.gnosis,
+          willpower: base.willpower,
+          health: base.health,
+          experience: base.experience,
+          renown: base.renown,
+          rank: base.rank,
+          activeForm: base.activeForm,
+          fetishes: sheet.fetishes.filter((item) => !(base.ruleActivationReceipts ?? []).includes(`consumed:${item.id}`)),
+          equipment: sheet.equipment?.filter((item) => !(base.ruleActivationReceipts ?? []).includes(`consumed:${item.id}`)),
+          combatWeapons: sheet.combatWeapons.filter((item) => !(base.ruleActivationReceipts ?? []).includes(`consumed:${item.id}`)),
+          activeRuleEffects: base.activeRuleEffects,
+          ruleActivationReceipts: base.ruleActivationReceipts,
+        };
+      }
+      const consumedIds = new Set((base?.ruleActivationReceipts ?? []).filter((receipt) => receipt.startsWith('consumed:')).map((receipt) => receipt.slice(9)));
+      sheet.fetishes = sheet.fetishes.filter((item) => !consumedIds.has(item.id));
+      sheet.equipment = sheet.equipment?.filter((item) => !consumedIds.has(item.id));
+      sheet.combatWeapons = sheet.combatWeapons.filter((item) => !consumedIds.has(item.id));
+      rules.sheets[sheet.id] = { sheet, controlledByDiscordId: attachment.discordUserId, editorUpdatedAt: submitted.updatedAt, canonicalKnown: Boolean(stored || existing?.canonicalKnown || sheet.ruleActivationReceipts?.length) };
+      rules.seatBindings[key] = sheet.id;
+      rules.seatAuthorizations[key] = { ownerDiscordId: stored?.ownerDiscordId ?? sheet.ownerDiscordId, ...(command.syncCode ? { syncCode: command.syncCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase() } : {}) };
+      const participant = this.roomState.tableParticipants?.[key] ?? this.upsertTableParticipant(attachment.discordUserId, attachment.displayName, attachment.avatarUrl ?? null, true, command.seatId);
+      participant.sheetId = sheet.id;
+      participant.characterName = sheet.name;
+      participant.activeForm = sheet.activeForm;
+      participant.trackers = { ...participant.trackers, rage: sheet.rage.temporary, gnosis: sheet.gnosis.temporary, willpower: sheet.willpower.temporary };
+      for (const instance of sheet.activeRuleEffects ?? []) {
+        if (!rules.effects.some((effect) => effect.instance.id === instance.id)) {
+          rules.effects.push({ instance: { ...instance, clockId: this.roomState.campaignId ?? '' }, sourceId: instance.sourceId.split(':')[0] ?? sheet.id, targetId: sheet.id, casterDiscordId: attachment.discordUserId });
+        }
+      }
+      this.broadcastRuleState(reqId);
+      this.scheduleRulePersistence();
+    } catch (error) {
+      this.sendRejection(ws, reqId, 'VALIDATION_ERROR', error instanceof Error ? error.message : 'Unable to bind this character.');
+    }
+  }
+
+  private resolveRuleActor(attachment: InternalSocketAttachment, seatId?: string, characterId?: string): RuleActor {
+    if (!characterId) return this.requireBoundSheet(attachment, seatId);
+    const actor = this.roomState.characters[characterId];
+    if (!actor) throw new Error('Character not found.');
+    if (actor.ownerDiscordId !== attachment.discordUserId && attachment.role !== 'storyteller') throw new Error('You cannot control this character.');
+    const rules = this.getRuleState();
+    return actorWithEffects(actor, rules.effects, rules.clock);
+  }
+
+  private findRuleTarget(id: string): RuleActor | undefined {
+    const rules = this.getRuleState();
+    const actor = rules.sheets[id]?.sheet ?? this.roomState.characters[id];
+    return actor ? actorWithEffects(actor, rules.effects, rules.clock) : undefined;
+  }
+
+  private broadcastRuleState(reqId?: string): void {
+    const rules = this.getRuleState();
+    for (const record of Object.values(rules.sheets)) {
+      record.sheet = actorWithEffects(record.sheet, rules.effects, rules.clock);
+    }
+    this.commitAndBroadcast([{ event: { type: 'RULE_STATE_UPDATED', state: { sheets: [], effects: [], clock: { ...rules.clock } } } }], reqId);
+    this.sendEphemeralBroadcast({ type: 'PARTICIPANTS_UPDATED', participants: Object.values(this.roomState.tableParticipants ?? {}) }, reqId);
+  }
+
+  private handleRuleCommand(
+    ws: WebSocket,
+    attachment: InternalSocketAttachment,
+    command: Extract<ClientCommand, { type: 'ACTIVATE_RULE' | 'END_RULE_EFFECT' | 'ADVANCE_RULE_CLOCK' }>,
+    reqId: string,
+  ): void {
+    try {
+      if (command.type === 'ACTIVATE_RULE') this.activateRule(ws, attachment, command, reqId);
+      if (command.type === 'END_RULE_EFFECT') this.endRuleEffect(attachment, command, reqId);
+      if (command.type === 'ADVANCE_RULE_CLOCK') {
+        if (this.roomState.storytellerDiscordId && attachment.role !== 'storyteller') throw new Error('Only the Storyteller advances this chronicle’s time.');
+        this.advanceRuleClock(command.unit, command.amount, `${attachment.discordUserId}:${reqId}`);
+        this.broadcastRuleState(reqId);
+      }
+      this.scheduleRulePersistence();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to apply this rule.';
+      this.sendRejection(ws, reqId, classifyCoreErrorCode(message), message);
+    }
+  }
+
+  private activateRule(
+    ws: WebSocket,
+    attachment: InternalSocketAttachment,
+    command: Extract<ClientCommand, { type: 'ACTIVATE_RULE' }>,
+    reqId: string,
+  ): void {
+    const rules = this.getRuleState();
+    const operationId = this.ruleOperationId('activation', attachment.discordUserId, reqId);
+    const previousReceipt = rules.activationReceipts[operationId];
+    if (previousReceipt) {
+      ws.send(JSON.stringify({ seq: this.roomState.seq, replyToReqId: reqId, serverTime: Date.now(), event: previousReceipt }));
+      this.sendRuleStateToSocket(ws, attachment, reqId);
+      return;
+    }
+    const actor = this.resolveRuleActor(attachment, command.seatId, command.characterId);
+    const { source, rule: baseRule } = findActorRule(actor, command.sourceEntryId, command.ruleId);
+    const action = command.actionId ? baseRule.actions?.find((entry) => entry.id === command.actionId) : undefined;
+    if (command.actionId && !action) throw new Error('This source does not provide that action.');
+    const parentEffects = rules.effects.filter((effect) => effect.sourceId === actor.id && effect.instance.sourceId === `${actor.id}:${source.id}` && effect.instance.ruleId === baseRule.id && !(effect.instance.preparationRounds ?? 0) && !(effect.instance.preparationSeconds ?? 0));
+    if (action?.requiresActive && !parentEffects.length) throw new Error('Activate this source before using its action.');
+    if (action?.requiresActiveTarget) {
+      const evaluation = evaluateModifierRules([], { ...actor, activeRuleEffects: parentEffects.map((effect) => effect.instance), ruleTraits: ruleTraits(actor) });
+      const value = applyRuleValue(evaluation, action.requiresActiveTarget, 0);
+      if (!value) throw new Error('The source’s required benefit is not active.');
+    }
+    const rule = action ? { ...baseRule, ...action, id: `${baseRule.id}:${action.id}` } : baseRule;
+    const referencedRoll = command.referenceRollId ? rules.rollRequests[command.referenceRollId] : undefined;
+    if (rule.activation?.correctsPreviousRoll) {
+      if (!referencedRoll || referencedRoll.sheetId !== actor.id || referencedRoll.discordUserId !== attachment.discordUserId || referencedRoll.superseded) throw new Error('Select this character’s original failed or insufficient roll.');
+    } else if (command.referenceRollId) throw new Error('This rule does not modify a previous result.');
+    if (!action && !(isRuleSheet(actor) ? getSheetModifierSources(actor) : getCharacterModifierSources(actor)).some((entry) => entry.id === source.id)) throw new Error('This consumed source can only resolve its remaining documented action.');
+    const choices = { ...source.ruleChoices, ...command.ruleChoices };
+    validateRuleChoices(rule, choices, false);
+    const grantedGift = rule.activation?.grantsGiftChoiceKey ? buildSharedGiftGrant(actor, String(choices[rule.activation.grantsGiftChoiceKey] ?? '')) : undefined;
+    const shared = rule.effects.some((effect) => effect.recipient === 'shared');
+    if (!rule.activation && !shared) throw new Error('This rule applies automatically when its conditions match.');
+    const targets = [...new Set(command.targetIds)].map((id) => {
+      const target = this.findRuleTarget(id);
+      if (!target || ('isNpc' in target && target.isNpc && attachment.role !== 'storyteller')) throw new Error('A selected target is unavailable.');
+      return target;
+    });
+    if (baseRule.id === 'fetish-unbroken-cord') {
+      const pack = isRuleSheet(actor) ? actor.packName.trim().toLowerCase() : actor.packId;
+      if (!targets.length || targets.length > actor.gnosis.temporary || !pack) throw new Error('Choose packmates up to the leader’s current Gnosis.');
+      for (const target of targets) {
+        const targetPack = isRuleSheet(target) ? target.packName.trim().toLowerCase() : target.packId;
+        if (target.id === actor.id || targetPack !== pack) throw new Error('The Unbroken Cord shares a trait with other members of the leader’s pack.');
+      }
+    }
+    if (rule.activation?.requiresTarget && targets.length === 0) throw new Error('Select the target to which this effect is bound.');
+    const targetChoices = Object.fromEntries(targets.map((target) => {
+      const choicesForTarget = { ...choices, ...command.targetChoices?.[target.id] };
+      validateRuleChoices(rule, choicesForTarget, true);
+      return [target.id, choicesForTarget];
+    }));
+    for (const target of targets) {
+      if (rule.effects.some((effect) => effect.target === 'renown:reset_to_rank')) {
+        const rankEffect = rule.effects.find((effect) => effect.target === 'rank');
+        const rank = typeof rankEffect?.value === 'number' ? rankEffect.operation === 'set' ? rankEffect.value : target.rank + rankEffect.value : target.rank;
+        const requirement = getW20RankRenownRequirement(target.auspice, rank);
+        const selected = { glory: Number(targetChoices[target.id]?.renown_glory), honor: Number(targetChoices[target.id]?.renown_honor), wisdom: Number(targetChoices[target.id]?.renown_wisdom) };
+        if (Object.entries(selected).some(([trait, value]) => !Number.isFinite(value) || value < 0 || value > target.renown[trait as keyof typeof selected].permanent)) throw new Error('Choose the target’s reduced permanent Renown.');
+        if (requirement && ('total' in requirement ? selected.glory + selected.honor + selected.wisdom !== requirement.total : selected.glory !== requirement.glory || selected.honor !== requirement.honor || selected.wisdom !== requirement.wisdom)) throw new Error('The selected Renown must match the published requirements for the lower Rank.');
+      }
+      for (const trait of ['glory', 'honor', 'wisdom'] as const) {
+        if (rule.effects.some((effect) => effect.target === 'renown:$choices.renown:permanent') && targetChoices[target.id]?.renown === trait && target.renown[trait].temporary < 10) throw new Error('The target requires ten temporary Renown before gaining a permanent dot.');
+      }
+    }
+    if ((rule.activation?.condition || rule.activation?.preparation) && !command.confirmedConditions) throw new Error('Confirm the documented activation conditions before using this rule.');
+    if (rule.activation?.rollSpec?.opposed && command.opposingSuccesses === undefined) throw new Error('Enter the opposing roll’s successes before resolving this effect.');
+    if (rule.effects.some((effect) => effect.recipient === 'target') && targets.length === 0) throw new Error('Select a target for this effect.');
+    if (rule.activation?.excludeCaster && targets.some((target) => target.id === actor.id)) throw new Error('This rule benefits other characters and excludes its caster.');
+    if (shared && targets.length !== 1) throw new Error('Assign this shared benefit to one pack member.');
+    const packId = isRuleSheet(actor) ? actor.packName.trim().toLowerCase() : actor.packId;
+    if (rule.effects.some((effect) => effect.recipient === 'pack' || effect.recipient === 'shared')) {
+      for (const target of targets) {
+        const targetPack = isRuleSheet(target) ? target.packName.trim().toLowerCase() : target.packId;
+        if (!packId || targetPack !== packId) throw new Error('This benefit requires a member of the same pack.');
+      }
+    }
+    const costs = activationCosts(actor, source, rule, command.spendGnosis, command.variableCosts, choices);
+    const permanentCost = rule.activation?.permanentCost;
+    const permanentSpend = permanentCost ? Number(choices[permanentCost.choiceKey] ?? 0) : 0;
+    if (permanentCost && (!Number.isInteger(permanentSpend) || permanentSpend < 0 || permanentSpend > actor[permanentCost.resource].permanent)) throw new Error('Choose an available permanent resource expenditure.');
+    const sourceTraits: Record<string, number> = { ...captureRuleTraits(actor, costs), gauntlet: this.roomState.localGauntlet };
+    const spends = rules.turnSpends[actor.id];
+    const permitsMixedSpends = rule.activation?.allowRageGnosis || Boolean(applyRuleValue(evaluateModifierRules(isRuleSheet(actor) ? getSheetModifierSources(actor) : getCharacterModifierSources(actor), actor), 'spend:rage-and-gnosis-same-turn', 0));
+    if (!permitsMixedSpends && spends?.turn === rules.clock.turn && ((costs.rage > 0 && spends.gnosis) || (costs.gnosis > 0 && spends.rage))) throw new Error('Rage and Gnosis cannot be spent in the same turn.');
+    const frequency = rule.activation?.frequency;
+    const frequencyKeys = frequency ? (frequency.includes('target') ? targets.map((target) => target.id) : ['self']).map((targetId) => {
+      const scope = frequency.includes('ever') ? 'ever' : frequency.includes('day') ? `day:${Math.floor(rules.clock.seconds / 86400)}` : frequency.includes('scene') ? `scene:${rules.clock.scene}` : frequency.includes('session') ? `session:${rules.clock.session}` : frequency.includes('story') ? `story:${rules.clock.story}` : `turn:${rules.clock.turn}`;
+      return `rule-use:${actor.id}:${rule.id}:${targetId}:${scope === 'ever' ? scope : `${this.roomState.ruleCommitNamespace}:${scope}`}`;
+    }) : [];
+    if (this.sharedRuleStage && isRuleSheet(actor) && actor.id === this.sharedRuleStage.payerSheetId) {
+      this.sharedRuleStage.costs = costs;
+      if (getSheetModifierSources(actor).some((entry) => entry.id === source.id)) this.sharedRuleStage.requiredSourceIds.push(source.id);
+      this.sharedRuleStage.requiredAbsentReceipts.push(...frequencyKeys);
+    }
+    if (frequencyKeys.some((key) => rules.frequencyReceipts.includes(key) || isRuleSheet(actor) && actor.ruleActivationReceipts?.includes(key))) throw new Error('This rule has already been used for its documented limit.');
+    const activationContext = { ...command.context, selectedItemId: source.id, rollKind: 'activation', ruleChoices: choices };
+    const roller = rule.activation?.rollSpec?.actor === 'target' ? targets[0] : actor;
+    if (!roller) throw new Error('Select the character making this action’s roll.');
+    const roll = rollRuleActivation(roller, source, rule, activationContext, command.spendGnosis, rollCsprngD10, { difficulty: command.activationDifficulty, target: targets[0] });
+    const successes = Math.max(0, (roll?.netSuccesses ?? 1) - (command.opposingSuccesses ?? 0));
+    sourceTraits.opposedFailureMargin = Math.max(0, (command.opposingSuccesses ?? 0) - (roll?.netSuccesses ?? 0));
+    const succeeded = rule.activation?.rollSpec?.outcome === 'failure' ? Boolean(roll && successes < (rule.activation.rollSpec.minimumSuccesses ?? 1)) : successes >= (rule.activation?.rollSpec?.minimumSuccesses ?? 1);
+    const limit = allocationLimit(rule, source, successes, choices, sourceTraits);
+    if (limit !== undefined && rule.activation?.allocation) {
+      const allocation = rule.activation.allocation;
+      if (allocation.consumeOnRoll) {
+        choices[allocation.choiceKey] = limit;
+        for (const target of targets) targetChoices[target.id]![allocation.choiceKey] = limit;
+      }
+      else if ((rule.choiceFields ?? []).some((field) => field.key === allocation.choiceKey && field.perTarget)) {
+        const values = targets.map((target) => Number(targetChoices[target.id]?.[allocation.choiceKey] ?? 0));
+        if (values.reduce((sum, value) => sum + value, 0) > limit) throw new Error('The allocated benefit exceeds the available pool.');
+        if (allocation.evenSplit && values.length && Math.max(...values) - Math.min(...values) > 1) throw new Error('Divide this benefit as evenly as possible between recipients.');
+      } else choices[allocation.choiceKey] = Math.min(Number(choices[allocation.choiceKey] ?? command.choiceValue ?? limit), limit);
+    }
+    const consumed = succeeded && rule.activation?.consumable ? [source.id] : [];
+    const granted: ReturnType<typeof createRoomRuleEffect>[] = [];
+    const activationEffects = succeeded ? rule.effects : roll?.isBotch ? rule.activation?.botchEffects ?? rule.activation?.failureEffects ?? [] : rule.activation?.failureEffects ?? [];
+    if (activationEffects.length) {
+      for (const recipient of ['self', 'target', 'pack', 'shared'] as const) {
+        const effects = activationEffects.filter((effect) => !rule.activation?.correctsPreviousRoll && (effect.recipient ?? 'self') === recipient && (effect.duration || rule.activation || recipient === 'shared'));
+        if (!effects.length) continue;
+        const recipients = recipient === 'self' ? [actor] : targets;
+        for (const target of recipients) {
+          const durations = [...new Set(effects.map((effect) => effect.duration ?? rule.activation?.duration ?? 'until-ended'))];
+          for (const duration of durations) {
+            granted.push(createRoomRuleEffect({ id: `${operationId}:${target.id}:${recipient}:${granted.length}`, actor, source, rule,
+              effects: effects.filter((effect) => (effect.duration ?? rule.activation?.duration ?? 'until-ended') === duration),
+              targetId: target.id, recipient, casterDiscordId: attachment.discordUserId, clockId: this.roomState.campaignId ?? '', clock: rules.clock,
+              successes, choiceValue: command.choiceValue, ruleChoices: { ...choices, ...(recipient === 'self' ? {} : targetChoices[target.id]) }, sourceTraits, boundTargetIds: recipient === 'self' && rule.activation?.requiresTarget ? targets.map((entry) => entry.id) : undefined }));
+          }
+        }
+      }
+    }
+    if (grantedGift) for (const effect of granted) effect.instance.grantedGift = grantedGift;
+    const replaced = succeeded ? rules.effects.filter((effect) => effect.sourceId === actor.id && (effect.instance.ruleId === rule.id || action?.endsParent && effect.instance.ruleId === baseRule.id) && (shared || effect.instance.sourceId === `${actor.id}:${source.id}`)) : [];
+    rules.effects = [...rules.effects.filter((effect) => !replaced.includes(effect)), ...granted];
+    rules.turnSpends[actor.id] = { turn: rules.clock.turn, rage: costs.rage > 0 || (spends?.turn === rules.clock.turn && spends.rage) || false, gnosis: costs.gnosis > 0 || (spends?.turn === rules.clock.turn && spends.gnosis) || false };
+    const nextActor = {
+      ...actor,
+      rage: { ...actor.rage, temporary: actor.rage.temporary - costs.rage },
+      gnosis: { ...actor.gnosis, temporary: actor.gnosis.temporary - costs.gnosis },
+      willpower: { ...actor.willpower, temporary: actor.willpower.temporary - costs.willpower },
+      fetishes: actor.fetishes.filter((item) => !consumed.includes(item.id)),
+      equipment: actor.equipment?.filter((item) => !consumed.includes(item.id)),
+    } as RuleActor;
+    if (isRuleSheet(nextActor)) nextActor.combatWeapons = nextActor.combatWeapons.filter((item) => !consumed.includes(item.id));
+    if (permanentCost) {
+      const tracker = nextActor[permanentCost.resource];
+      nextActor[permanentCost.resource] = { permanent: tracker.permanent - permanentSpend, temporary: Math.min(tracker.temporary, tracker.permanent - permanentSpend) };
+    }
+    const healthCost = rule.activation?.healthCost;
+    const healthLevels = healthCost ? healthCost.levels * (healthCost.choiceKey ? Number(choices[healthCost.choiceKey] ?? 0) : 1) : 0;
+    if (healthCost && healthLevels > 0) nextActor.health = applyHealthStateDamage(isRuleSheet(nextActor) ? computeUserSheetStats(nextActor).health : computeEffectiveCharacterStats(nextActor).health, healthLevels, healthCost.type);
+    if (!isRuleSheet(nextActor)) {
+      nextActor.turnLocks = { ...nextActor.turnLocks, hasSpentRageThisTurn: nextActor.turnLocks.hasSpentRageThisTurn || costs.rage > 0, hasSpentGnosisThisTurn: nextActor.turnLocks.hasSpentGnosisThisTurn || costs.gnosis > 0, hasSpentWillpowerThisTurn: nextActor.turnLocks.hasSpentWillpowerThisTurn || costs.willpower > 0 };
+    }
+    this.storeRuleActor(nextActor);
+    this.spendGrantedResources(actor.id, costs);
+    const resourceDeltas = new Map<string, { rage: number; gnosis: number; willpower: number }>([[actor.id, { rage: -costs.rage, gnosis: -costs.gnosis, willpower: -costs.willpower }]]);
+    const transactions = new Map<string, Partial<Pick<RuleSheetMutation, 'renownDelta' | 'experienceDelta' | 'mysticalExperienceDelta' | 'permanentResourceDelta' | 'healthChanges' | 'rank'>>>();
+    if (healthCost && healthLevels > 0) transactions.set(actor.id, { healthChanges: [{ levels: healthLevels, type: healthCost.type, mode: 'damage' }] });
+    if (permanentCost) {
+      transactions.set(actor.id, { ...transactions.get(actor.id), permanentResourceDelta: { [permanentCost.resource]: -permanentSpend } });
+      const delta = resourceDeltas.get(actor.id)!;
+      delta[permanentCost.resource] += nextActor[permanentCost.resource].temporary - (actor[permanentCost.resource].temporary - costs[permanentCost.resource]);
+    }
+    const replacementWithdrawals = new Map<string, NonNullable<RuleSheetMutation['grantWithdrawals']>>();
+    for (const effect of replaced) {
+      const removed = this.removeEffectResourceGrants(effect);
+      const current = resourceDeltas.get(effect.targetId) ?? { rage: 0, gnosis: 0, willpower: 0 };
+      resourceDeltas.set(effect.targetId, { rage: current.rage + removed.rage, gnosis: current.gnosis + removed.gnosis, willpower: current.willpower + removed.willpower });
+      replacementWithdrawals.set(effect.targetId, [...(replacementWithdrawals.get(effect.targetId) ?? []), ...removed.grantWithdrawals]);
+    }
+    for (const effect of granted) {
+      const target = this.findRuleTarget(effect.targetId);
+      if (!target || (effect.instance.preparationRounds ?? 0) > 0 || (effect.instance.preparationSeconds ?? 0) > 0) continue;
+      const changes = this.applyImmediateRuleResources(target, effect, activationContext);
+      const transaction = this.applyImmediateRuleTransactions(this.findRuleTarget(effect.targetId)!, effect, activationContext);
+      const priorTransactions = transactions.get(target.id) ?? {};
+      transactions.set(target.id, { ...priorTransactions, ...transaction, healthChanges: [...(priorTransactions.healthChanges ?? []), ...(transaction.healthChanges ?? [])] });
+      const current = resourceDeltas.get(target.id) ?? { rage: 0, gnosis: 0, willpower: 0 };
+      resourceDeltas.set(target.id, { rage: current.rage + changes.rage, gnosis: current.gnosis + changes.gnosis, willpower: current.willpower + changes.willpower });
+    }
+    rules.effects = rules.effects.filter((effect) => effect.instance.duration !== 'instant' || (effect.instance.preparationRounds ?? 0) > 0 || (effect.instance.preparationSeconds ?? 0) > 0);
+    const affected = new Set([actor.id, ...granted.map((effect) => effect.targetId), ...replaced.map((effect) => effect.targetId)]);
+    for (const targetId of affected) {
+      this.queueRuleSheetMutation(targetId, `${operationId}:${targetId}`, resourceDeltas.get(targetId), targetId === actor.id ? consumed : [], [...replaced.map((effect) => effect.instance.id), ...granted.filter((effect) => effect.instance.duration === 'instant').map((effect) => effect.instance.id)], { ...transactions.get(targetId), grantWithdrawals: replacementWithdrawals.get(targetId) });
+    }
+    rules.frequencyReceipts.push(...frequencyKeys);
+    for (const frequencyKey of frequencyKeys) this.queueRuleSheetMutation(actor.id, frequencyKey);
+    const receipt: Extract<ServerEvent, { type: 'RULE_ACTIVATION_RESOLVED' }> = { type: 'RULE_ACTIVATION_RESOLVED', activationId: operationId, sourceId: actor.id, ruleId: rule.id, roll, succeeded };
+    rules.activationReceipts[operationId] = receipt;
+    this.commitAndBroadcast([{ event: receipt, targetDiscordId: attachment.discordUserId }], reqId);
+    if (referencedRoll && succeeded) this.correctPreviousRuleRoll(referencedRoll, successes, rule.name, reqId);
+    this.broadcastRuleState(reqId);
+  }
+
+  private correctPreviousRuleRoll(original: NonNullable<ReturnType<GameRoomDO['getRuleState']>['rollRequests'][string]>, successes: number, ruleName: string, reqId: string): void {
+    const previous = original.history;
+    const netSuccesses = previous.roll.netSuccesses + successes;
+    const degrees = ['marginal', 'moderate', 'complete', 'exceptional', 'phenomenal'] as const;
+    const roll: W20RollResult = { ...previous.roll, automaticSuccesses: previous.roll.automaticSuccesses + successes, netSuccesses, isBotch: false, outcome: degrees[Math.min(5, Math.max(1, netSuccesses)) - 1]! };
+    const history: RollHistoryEntry = { ...previous, id: `correction-${crypto.randomUUID()}`, timestamp: Date.now(), label: `${previous.label} + ${ruleName}`, roll, correctionOf: previous.id };
+    original.superseded = true;
+    this.roomState.rollHistory = [history, ...(this.roomState.rollHistory ?? [])].slice(0, 50);
+    this.commitAndBroadcast([{ event: { type: 'DICE_ROLLED_3D', rollerDiscordId: history.rollerDiscordId, rollerName: history.rollerName, label: history.label, roll, historyEntry: history, isSecretStRoll: history.isSecretRoll }, targetDiscordId: history.isSecretRoll ? history.rollerDiscordId : null }], reqId);
+  }
+
+  private storeRuleActor(actor: RuleActor): void {
+    const rules = this.getRuleState();
+    const next = actorWithEffects(actor, rules.effects, rules.clock);
+    if (isRuleSheet(next)) {
+      const record = rules.sheets[next.id];
+      if (record) record.sheet = { ...next, updatedAt: Math.max(Date.now(), next.updatedAt + 1) };
+      for (const participant of Object.values(this.roomState.tableParticipants ?? {})) {
+        if (participant.sheetId === next.id) {
+          participant.trackers = { ...participant.trackers, rage: next.rage.temporary, gnosis: next.gnosis.temporary, willpower: next.willpower.temporary };
+          participant.activeForm = next.activeForm;
+        }
+      }
+    } else {
+      this.roomState.characters[next.id] = { ...next, stateVersion: next.stateVersion + 1 };
+      this.pendingRuleCharacterIds.add(next.id);
+      this.pendingRuleTokenUpdate = this.syncTokenForCharacter(next) || this.pendingRuleTokenUpdate;
+      this.scheduleCharacterFlush([this.roomState.characters[next.id]!]);
+    }
+  }
+
+  private applyImmediateRuleResources(actor: RuleActor, effect: import('@w20-vtt/protocol').RoomRuleEffect, context: RuleContext) {
+    const deltas = { rage: 0, gnosis: 0, willpower: 0 };
+    const instant = effect.instance.duration === 'instant';
+    const effects = effect.instance.rule?.effects.filter((entry) => ['resource:rage', 'resource:gnosis', 'resource:willpower'].includes(entry.target) && (instant || entry.operation === 'add' && typeof entry.value === 'number' && entry.value > 0)) ?? [];
+    if (!effects.length) return deltas;
+    const evaluation = evaluateModifierRules([], { ...actor, activeRuleEffects: [{ ...effect.instance, rule: { ...effect.instance.rule!, effects } }] }, context);
+    let next = actor;
+    for (const trait of ['rage', 'gnosis', 'willpower'] as const) {
+      const updated = Math.max(0, applyRuleValue(evaluation, `resource:${trait}`, next[trait].temporary));
+      deltas[trait] = updated - next[trait].temporary;
+      next = { ...next, [trait]: { ...next[trait], temporary: updated } };
+      if (!instant && deltas[trait] > 0) effect.instance.resourceGrants = { ...effect.instance.resourceGrants, [trait]: deltas[trait] };
+    }
+    const appliedTargets = new Set(evaluation.modifiers.map((modifier) => modifier.target));
+    effect.instance.rule = { ...effect.instance.rule!, effects: effect.instance.rule!.effects.filter((entry) => !effects.includes(entry) || !appliedTargets.has(entry.target)) };
+    this.storeRuleActor(next);
+    return deltas;
+  }
+
+  private applyImmediateRuleTransactions(actor: RuleActor, effect: import('@w20-vtt/protocol').RoomRuleEffect, context: RuleContext): Partial<Pick<RuleSheetMutation, 'renownDelta' | 'experienceDelta' | 'mysticalExperienceDelta' | 'healthChanges' | 'rank' | 'activeForm'>> {
+    if (effect.instance.duration !== 'instant') return {};
+    const evaluation = evaluateModifierRules([], { ...actor, activeRuleEffects: [effect.instance] }, context);
+    const renown = { ...actor.renown };
+    const renownDelta: NonNullable<RuleSheetMutation['renownDelta']> = {};
+    for (const trait of ['glory', 'honor', 'wisdom'] as const) {
+      let temporary = applyRuleValue(evaluation, `renown:${trait}`, renown[trait].temporary);
+      let permanent = Math.max(0, Math.min(10, applyRuleValue(evaluation, `renown:${trait}:permanent`, renown[trait].permanent)));
+      while (temporary < 0 && permanent > 0) { temporary += 10; permanent -= 1; }
+      temporary = Math.max(0, temporary);
+      renownDelta[trait] = { temporary: temporary - renown[trait].temporary, permanent: permanent - renown[trait].permanent };
+      renown[trait] = { temporary, permanent };
+    }
+    const levels = Math.max(0, Math.floor(applyRuleValue(evaluation, 'healing:levels', 0)));
+    const healAggravated = Boolean(applyRuleValue(evaluation, 'healing:aggravated', 0));
+    const health = levels ? healHealthStateDamage(isRuleSheet(actor) ? computeUserSheetStats(actor).health : computeEffectiveCharacterStats(actor).health, levels, { healAggravated }) : actor.health;
+    let damagedHealth = health;
+    const healthChanges: NonNullable<RuleSheetMutation['healthChanges']> = levels ? [{ levels, healAggravated, mode: 'heal' }] : [];
+    for (const type of ['bashing', 'lethal', 'aggravated'] as const) {
+      const damage = Math.max(0, Math.floor(applyRuleValue(evaluation, `damage:${type}_levels`, 0)));
+      if (damage) {
+        damagedHealth = applyHealthStateDamage(damagedHealth, damage, type);
+        healthChanges.push({ levels: damage, type, mode: 'damage' });
+      }
+    }
+    const mystical = Math.max(0, Math.floor(applyRuleValue(evaluation, 'experience:mystical', 0)));
+    const experience = Math.max(0, Math.floor(applyRuleValue(evaluation, 'experience:total', 0)));
+    const rank = Math.max(0, Math.min(6, Math.floor(applyRuleValue(evaluation, 'rank', actor.rank))));
+    if (applyRuleValue(evaluation, 'renown:reset_to_rank', 0)) {
+      for (const trait of ['glory', 'honor', 'wisdom'] as const) {
+        const permanent = Number(effect.instance.ruleChoices?.[`renown_${trait}`] ?? renown[trait].permanent);
+        renownDelta[trait] = { temporary: -actor.renown[trait].temporary, permanent: permanent - actor.renown[trait].permanent };
+        renown[trait] = { temporary: 0, permanent };
+      }
+    }
+    const forcedForm = (Object.keys(W20_FORM_MATRIX) as Array<RuleActor['activeForm']>).find((form) => applyRuleValue(evaluation, `form:${form}`, 0));
+    let next: RuleActor = { ...actor, renown, health: damagedHealth, rank, activeForm: forcedForm ?? actor.activeForm };
+    if (isRuleSheet(next)) next = { ...next, experience: { ...next.experience, total: next.experience.total + experience, mystical: (next.experience.mystical ?? 0) + mystical } };
+    else next = { ...next, mysticalExperience: (next.mysticalExperience ?? 0) + mystical };
+    this.storeRuleActor(next);
+    return { renownDelta, experienceDelta: experience, mysticalExperienceDelta: mystical, healthChanges, ...(rank !== actor.rank ? { rank } : {}), ...(forcedForm ? { activeForm: forcedForm } : {}) };
+  }
+
+  private spendGrantedResources(actorId: string, costs: { rage: number; gnosis: number; willpower: number }): void {
+    const effects = this.getRuleState().effects.filter((effect) => effect.targetId === actorId && effect.instance.resourceGrants);
+    for (const trait of ['rage', 'gnosis', 'willpower'] as const) {
+      let remaining = costs[trait];
+      for (const effect of effects) {
+        const available = effect.instance.resourceGrants?.[trait] ?? 0;
+        const used = Math.min(available, remaining);
+        effect.instance.resourceGrants = { ...effect.instance.resourceGrants, [trait]: available - used };
+        remaining -= used;
+      }
+    }
+  }
+
+  private consumeNextRollEffects(actorId: string, modifiers: AppliedRuleModifier[], operationId: string, context: RuleContext = {}): void {
+    const rules = this.getRuleState();
+    const usedSources = new Set(modifiers.map((modifier) => modifier.sourceId));
+    const changed = rules.effects.filter((effect) => effect.targetId === actorId && usedSources.has(effect.instance.sourceId));
+    const removed: string[] = [];
+    for (const effect of changed) {
+      const allocation = effect.instance.rule?.activation?.allocation;
+      if (allocation?.consumeOnRoll) {
+        const available = Number(effect.instance.ruleChoices?.[allocation.choiceKey] ?? effect.instance.successes ?? 0);
+        const spent = Number(context.effectChoices?.[effect.instance.id]?.[allocation.choiceKey] ?? context.ruleChoices?.[allocation.choiceKey] ?? 0);
+        effect.instance.ruleChoices = { ...effect.instance.ruleChoices, [allocation.choiceKey]: Math.max(0, available - spent) };
+        if (available <= spent) removed.push(effect.instance.id);
+      } else if (/next[- ]roll|one (?:\w+ )?roll|one attack|one failed|one insufficient/i.test(effect.instance.duration)) removed.push(effect.instance.id);
+    }
+    if (!changed.length) return;
+    rules.effects = rules.effects.filter((effect) => !removed.includes(effect.instance.id));
+    this.queueRuleSheetMutation(actorId, `${operationId}:consume`, undefined, [], removed);
+  }
+
+  private queueRuleSheetMutation(sheetId: string, operationId: string, resourceDelta: { rage: number; gnosis: number; willpower: number; grantWithdrawals?: RuleSheetMutation['grantWithdrawals'] } = { rage: 0, gnosis: 0, willpower: 0 }, consumedSourceIds: string[] = [], removedEffectIds: string[] = [], details: Partial<Pick<RuleSheetMutation, 'renownDelta' | 'experienceDelta' | 'mysticalExperienceDelta' | 'permanentResourceDelta' | 'healthChanges' | 'rank' | 'activeForm' | 'grantWithdrawals'>> = {}): void {
+    const rules = this.getRuleState();
+    const record = rules.sheets[sheetId];
+    if (!record) {
+      const character = this.roomState.characters[sheetId];
+      if (character) this.storeRuleActor({ ...character, activeRuleEffects: (character.activeRuleEffects ?? []).filter((instance) => !removedEffectIds.includes(instance.id)) });
+      return;
+    }
+    const effects = rules.effects.filter((effect) => effect.targetId === sheetId).map((effect) => effect.instance);
+    record.sheet = { ...record.sheet, activeRuleEffects: [...(record.sheet.activeRuleEffects ?? []).filter((instance) => !removedEffectIds.includes(instance.id) && !effects.some((current) => current.id === instance.id)), ...effects], ruleActivationReceipts: [...new Set([...(record.sheet.ruleActivationReceipts ?? []), operationId, ...consumedSourceIds.map((id) => `consumed:${id}`)])] };
+    const { grantWithdrawals, ...resourceChanges } = resourceDelta;
+    rules.persistenceQueue.push({ sheetId, operationId, resourceDelta: resourceChanges, consumedSourceIds, effects, removedEffectIds, ...details, grantWithdrawals: [...(details.grantWithdrawals ?? []), ...(grantWithdrawals ?? [])] });
+  }
+
+  private endRuleEffect(attachment: InternalSocketAttachment, command: Extract<ClientCommand, { type: 'END_RULE_EFFECT' }>, reqId: string): void {
+    const rules = this.getRuleState();
+    const effect = rules.effects.find((item) => item.instance.id === command.effectId);
+    if (!effect) return;
+    const target = this.findRuleTarget(effect.targetId);
+    const controlsTarget = target && (target.ownerDiscordId === attachment.discordUserId || isRuleSheet(target) && Object.entries(rules.seatBindings).some(([key, id]) => id === target.id && (key === attachment.discordUserId || key.startsWith(`${attachment.discordUserId}::`))));
+    if (effect.casterDiscordId !== attachment.discordUserId && !controlsTarget && attachment.role !== 'storyteller') throw new Error('Only the caster, recipient, or Storyteller may end this effect.');
+    rules.effects = rules.effects.filter((item) => item !== effect);
+    const resourceDelta = this.removeEffectResourceGrants(effect);
+    this.queueRuleSheetMutation(effect.targetId, this.ruleOperationId('end', attachment.discordUserId, reqId), resourceDelta, [], [effect.instance.id]);
+    this.broadcastRuleState(reqId);
+  }
+
+  private advanceRuleClock(unit: 'turn' | 'scene' | 'story' | 'session' | 'seconds', amount: number, operationId: string): void {
+    const rules = this.getRuleState();
+    if (rules.advanceReceipts.includes(operationId)) return;
+    rules.advanceReceipts.push(operationId);
+    const prior = rules.effects;
+    rules.clock[unit] += amount;
+    rules.effects = prior.flatMap((effect) => {
+      if (unit === 'turn' && (effect.instance.preparationRounds ?? 0) > 0) {
+        const required = effect.instance.preparationRounds ?? 0;
+        const prepared = { ...effect, instance: { ...effect.instance, preparationRounds: Math.max(0, required - amount) } };
+        const elapsed = Math.max(0, amount - required);
+        const next = elapsed > 0 ? advanceRuleEffect(prepared, unit, elapsed) : prepared;
+        return next ? [next] : [];
+      }
+      if (unit === 'seconds' && (effect.instance.preparationSeconds ?? 0) > 0) {
+        const required = effect.instance.preparationSeconds ?? 0;
+        const prepared = { ...effect, instance: { ...effect.instance, preparationSeconds: Math.max(0, required - amount) } };
+        const elapsed = Math.max(0, amount - required);
+        const next = elapsed > 0 ? advanceRuleEffect(prepared, unit, elapsed) : prepared;
+        return next ? [next] : [];
+      }
+      const next = advanceRuleEffect(effect, unit, amount);
+      return next ? [next] : [];
+    });
+    const completedResources = new Map<string, { rage: number; gnosis: number; willpower: number }>();
+    const completedTransactions = new Map<string, Partial<Pick<RuleSheetMutation, 'renownDelta' | 'experienceDelta' | 'mysticalExperienceDelta' | 'healthChanges' | 'rank'>>>();
+    for (const effect of rules.effects) {
+      const earlier = prior.find((entry) => entry.instance.id === effect.instance.id);
+      const wasPreparing = (earlier?.instance.preparationRounds ?? 0) > 0 || (earlier?.instance.preparationSeconds ?? 0) > 0;
+      if (!wasPreparing || (effect.instance.preparationRounds ?? 0) > 0 || (effect.instance.preparationSeconds ?? 0) > 0) continue;
+      const target = this.findRuleTarget(effect.targetId);
+      if (!target) continue;
+      const context: RuleContext = { ruleChoices: effect.instance.ruleChoices, rollKind: 'activation' };
+      completedResources.set(target.id, this.applyImmediateRuleResources(target, effect, context));
+      completedTransactions.set(target.id, this.applyImmediateRuleTransactions(this.findRuleTarget(target.id)!, effect, context));
+    }
+    rules.effects = rules.effects.filter((effect) => effect.instance.duration !== 'instant' || (effect.instance.preparationRounds ?? 0) > 0 || (effect.instance.preparationSeconds ?? 0) > 0);
+    for (const targetId of new Set(prior.map((effect) => effect.targetId))) {
+      const resourceDelta = completedResources.get(targetId) ?? { rage: 0, gnosis: 0, willpower: 0 };
+      const grantWithdrawals: NonNullable<RuleSheetMutation['grantWithdrawals']> = [];
+      for (const expired of prior.filter((effect) => effect.targetId === targetId && !rules.effects.some((current) => current.instance.id === effect.instance.id))) {
+        const delta = this.removeEffectResourceGrants(expired);
+        grantWithdrawals.push(...delta.grantWithdrawals);
+        for (const trait of ['rage', 'gnosis', 'willpower'] as const) resourceDelta[trait] += delta[trait];
+      }
+      this.queueRuleSheetMutation(targetId, `${operationId}:${targetId}`, resourceDelta, [], prior.filter((effect) => effect.targetId === targetId).map((effect) => effect.instance.id), { ...completedTransactions.get(targetId), grantWithdrawals });
+    }
+  }
+
+  private removeEffectResourceGrants(effect: import('@w20-vtt/protocol').RoomRuleEffect) {
+    const changes = { rage: 0, gnosis: 0, willpower: 0, grantWithdrawals: [] as NonNullable<RuleSheetMutation['grantWithdrawals']> };
+    const target = this.findRuleTarget(effect.targetId);
+    if (!target || !effect.instance.resourceGrants) return changes;
+    let next = target;
+    for (const trait of ['rage', 'gnosis', 'willpower'] as const) {
+      const removed = Math.min(next[trait].temporary, effect.instance.resourceGrants[trait] ?? 0);
+      changes[trait] = -removed;
+      next = { ...next, [trait]: { ...next[trait], temporary: next[trait].temporary - removed } };
+    }
+    this.storeRuleActor(next);
+    changes.grantWithdrawals.push({ effectId: effect.instance.id, resourceDelta: { rage: changes.rage, gnosis: changes.gnosis, willpower: changes.willpower } });
+    return changes;
+  }
+
+  private scheduleRulePersistence(): void {
+    if (this.sharedRuleStage || this.roomState.sharedRuleIntent) return;
+    if (this.rulePersistencePromise) return;
+    this.rulePersistencePromise = this.flushRulePersistence().finally(() => { this.rulePersistencePromise = null; });
+    this.ctx.waitUntil(this.rulePersistencePromise);
+  }
+
+  private async flushRulePersistence(): Promise<void> {
+    const rules = this.getRuleState();
+    const repository = new UserSheetRepository(this.env);
+    while (rules.persistenceQueue.length) {
+      const mutation = rules.persistenceQueue[0]!;
+      const record = rules.sheets[mutation.sheetId];
+      if (record && isMockDiscordId(record.controlledByDiscordId)) {
+        rules.persistenceQueue.shift();
+        this.persistStateSnapshot();
+        continue;
+      }
+      try {
+        const current = await repository.getById(mutation.sheetId);
+        if (!current) throw new RuleSpendConflictError('NOT_FOUND', 'A queued character is no longer in shared storage.');
+        if (!current.ruleActivationReceipts?.includes(mutation.operationId)) {
+          const saved = mutation.grantWithdrawals?.length
+            ? await repository.mutateRuleState(mutation.sheetId, (sheet) => applyCanonicalGrantCleanup(sheet, mutation))
+            : (await repository.authorizeRuleSpend({
+                sheetId: mutation.sheetId,
+                ownerDiscordId: current.ownerDiscordId,
+                operationId: `outbox:${this.roomState.ruleCommitNamespace}:${mutation.operationId}`,
+                costs: { rage: Math.max(0, -mutation.resourceDelta.rage), gnosis: Math.max(0, -mutation.resourceDelta.gnosis), willpower: Math.max(0, -mutation.resourceDelta.willpower) },
+                resourceDelta: mutation.resourceDelta,
+                permanentResourceDelta: mutation.permanentResourceDelta,
+                consumedSourceIds: mutation.consumedSourceIds,
+                additionalReceipts: [mutation.operationId],
+              }, (sheet) => applyCanonicalGrantCleanup(sheet, { ...mutation, resourceDelta: { rage: 0, gnosis: 0, willpower: 0 }, permanentResourceDelta: undefined }))).sheet;
+          if (saved && rules.sheets[saved.id]) this.replaceCanonicalRuleSheet(saved);
+        }
+        rules.persistenceQueue.shift();
+        this.persistStateSnapshot();
+      } catch {
+        // The durable outbox is retried on the next authenticated interaction or reconnect.
+        return;
+      }
+    }
+  }
+
+  private sendRuleStateToSocket(ws: WebSocket, attachment: InternalSocketAttachment, reqId?: string): void {
+    ws.send(JSON.stringify({ seq: this.roomState.seq, replyToReqId: reqId, serverTime: Date.now(), event: { type: 'RULE_STATE_UPDATED', state: projectRuleState(this.roomState, attachment) } }));
+  }
+
+  private applyRuleEvent(attachment: InternalSocketAttachment, command: Extract<ClientCommand, { type: 'APPLY_RULE_EVENT' }>, reqId: string): void {
+    const rules = this.getRuleState();
+    const actor = this.resolveRuleActor(attachment, command.seatId, command.characterId);
+    if (!isRuleSheet(actor) && command.event === 'experience_award') throw new Error(`General experience awards require Storyteller approval through POST /api/campaigns/${actor.campaignId}/xp-award and the existing XP ledger.`);
+    const operationId = this.ruleOperationId('event', attachment.discordUserId, reqId);
+    if (rules.frequencyReceipts.includes(operationId) || isRuleSheet(actor) && actor.ruleActivationReceipts?.includes(operationId)) return;
+    const allSources = isRuleSheet(actor) ? getSheetModifierSources(actor) : getCharacterModifierSources(actor);
+    const sources = command.sourceEntryId ? allSources.filter((source) => source.id === command.sourceEntryId) : allSources;
+    if (command.sourceEntryId && !sources.length) throw new Error('This rule source is no longer available.');
+    const context: RuleContext = { ...command.context, authoritativeTags: [`event:${command.event}`], tags: (command.context?.tags ?? []).filter((tag) => !tag.startsWith('event:')) };
+    const eventSources = sources.flatMap((source) => {
+      const definition = getSourceModifierRule(source);
+      if (!definition) return [];
+      if (command.ruleId && command.ruleId !== definition.id) return [];
+      const receipt = `event-use:${actor.id}:${source.id}:${command.event}:${command.event === 'totem_acceptance' ? 'ever' : `${this.roomState.ruleCommitNamespace}:${command.event === 'session_start' ? rules.clock.session : rules.clock.story}`}`;
+      if (!command.event.endsWith('_award') && (rules.frequencyReceipts.includes(receipt) || isRuleSheet(actor) && actor.ruleActivationReceipts?.includes(receipt))) return [];
+      const effects = definition.effects.filter((effect) => effect.when?.includes(`event:${command.event}`) || command.event === 'renown_award' && effect.target.endsWith(':award_adjustment'));
+      return effects.length ? [{ source: { ...source, customRule: { ...definition, effects } }, receipt }] : [];
+    });
+    const eventActor = { ...actor, activeRuleEffects: (actor.activeRuleEffects ?? []).map((instance) => ({ ...instance, rule: instance.rule ? { ...instance.rule, effects: instance.rule.effects.filter((effect) => effect.when?.includes(`event:${command.event}`)) } : undefined })) };
+    const evaluation = evaluateModifierRules(eventSources.map((entry) => entry.source), eventActor, context);
+    let next = actor;
+    const deltas = { rage: 0, gnosis: 0, willpower: 0 };
+    for (const trait of ['rage', 'gnosis', 'willpower'] as const) {
+      const temporary = Math.max(0, applyRuleValue(evaluation, `resource:${trait}`, actor[trait].temporary));
+      deltas[trait] = temporary - actor[trait].temporary;
+      next = { ...next, [trait]: { ...next[trait], temporary } };
+    }
+    const renown = { ...actor.renown };
+    const renownDelta: NonNullable<RuleSheetMutation['renownDelta']> = {};
+    for (const trait of ['glory', 'honor', 'wisdom'] as const) {
+      const award = command.event === 'renown_award' && command.trait === trait ? Math.max(0, (command.amount ?? 0) + applyRuleValue(evaluation, `renown:${trait}:award_adjustment`, 0)) : 0;
+      let temporary = applyRuleValue(evaluation, `renown:${trait}`, actor.renown[trait].temporary) + award;
+      let permanent = Math.max(0, Math.min(10, applyRuleValue(evaluation, `renown:${trait}:permanent`, actor.renown[trait].permanent)));
+      while (temporary < 0 && permanent > 0) { temporary += 10; permanent -= 1; }
+      temporary = Math.max(0, temporary);
+      renownDelta[trait] = { temporary: temporary - actor.renown[trait].temporary, permanent: permanent - actor.renown[trait].permanent };
+      renown[trait] = { temporary, permanent };
+    }
+    const mysticalExperienceDelta = Math.max(0, Math.floor(applyRuleValue(evaluation, 'experience:mystical', 0)));
+    const experienceDelta = command.event === 'experience_award' ? command.amount ?? 0 : 0;
+    next = { ...next, renown };
+    if (isRuleSheet(next)) next = { ...next, experience: { ...next.experience, total: next.experience.total + experienceDelta, mystical: (next.experience.mystical ?? 0) + mysticalExperienceDelta } };
+    else next = { ...next, mysticalExperience: (next.mysticalExperience ?? 0) + mysticalExperienceDelta };
+    const packWillpower = Math.max(0, applyRuleValue(evaluation, 'pack:willpower:story', 0));
+    if (packWillpower && command.event === 'story_start') {
+      const pack = isRuleSheet(actor) ? actor.packName.trim().toLowerCase() : actor.packId;
+      const poolReceipt = `pack-pool:${pack}:${rules.clock.story}`;
+      if (!rules.frequencyReceipts.includes(poolReceipt)) {
+        rules.packWillpower = { current: packWillpower, max: packWillpower };
+        if (pack) rules.packPools[pack] = { current: packWillpower, max: packWillpower, name: isRuleSheet(actor) ? actor.packName : this.roomState.packTotem?.name ?? pack };
+        rules.frequencyReceipts.push(poolReceipt);
+      }
+    }
+    this.storeRuleActor(next);
+    rules.frequencyReceipts.push(operationId, ...eventSources.map((entry) => entry.receipt));
+    this.queueRuleSheetMutation(actor.id, operationId, deltas, [], [], { renownDelta, experienceDelta, mysticalExperienceDelta });
+    for (const entry of eventSources) this.queueRuleSheetMutation(actor.id, entry.receipt);
+    this.broadcastRuleState(reqId);
+  }
+
+  private rerollRuleRoll(ws: WebSocket, attachment: InternalSocketAttachment, command: Extract<ClientCommand, { type: 'REROLL_RULE_ROLL' }>, reqId: string): void {
+    const rules = this.getRuleState();
+    const operationId = this.ruleOperationId('reroll', attachment.discordUserId, reqId);
+    const previous = rules.rollReceipts[operationId];
+    if (previous) {
+      ws.send(JSON.stringify({ seq: this.roomState.seq, replyToReqId: reqId, serverTime: Date.now(), event: { type: 'DICE_ROLLED_3D', rollerDiscordId: previous.rollerDiscordId, rollerName: previous.rollerName, label: previous.label, roll: previous.roll, historyEntry: previous, isSecretStRoll: previous.isSecretRoll } }));
+      return;
+    }
+    const actor = this.requireBoundSheet(attachment, command.seatId, command.sheetId);
+    const original = rules.rollRequests[command.rollId];
+    if (!original || original.sheetId !== actor.id || original.discordUserId !== attachment.discordUserId) throw new Error('This result is unavailable for this character.');
+    if (original.rerolled || original.superseded || original.history.rerollOf) throw new Error('This roll has already been rerolled or corrected.');
+    const source = getSheetModifierSources(actor).find((entry) => getSourceModifierRule(entry)?.id === command.ruleId);
+    if (!source) throw new Error('This character no longer has the reroll rule.');
+    const definition = getSourceModifierRule(source)!;
+    const evaluation = evaluateModifierRules([{ ...source, customRule: definition }], actor);
+    const eligibility = getRuleResultTriggers(original.history.roll, evaluation.modifiers);
+    if (!eligibility.canReroll || eligibility.rerollsAvailable < 1) throw new Error('This rule rerolls a failed or botched result.');
+    const budgetKey = `reroll-use:${actor.id}:${definition.id}:${this.roomState.ruleCommitNamespace}:story:${rules.clock.story}`;
+    const priorUsage = Math.max(rules.rerollUsage[budgetKey] ?? 0, (actor.ruleActivationReceipts ?? []).filter((receipt) => receipt.startsWith(`${budgetKey}:`)).length);
+    if (priorUsage >= eligibility.rerollsAvailable) throw new Error('All rerolls for this story have been used.');
+    const roll = resolveW20DicePool(original.request);
+    original.rerolled = true;
+    rules.rerollUsage[budgetKey] = priorUsage + 1;
+    const receipt = `${budgetKey}:${priorUsage + 1}`;
+    if (this.sharedRuleStage) {
+      this.sharedRuleStage.requiredSourceIds.push(source.id);
+      this.sharedRuleStage.requiredAbsentReceipts.push(receipt);
+    }
+    const refund = !original.refundedWillpower && getRuleResultTriggers(roll, original.request.ruleModifiers ?? [], { spentWillpower: original.request.spendWillpower }).refundWillpower;
+    if (refund) {
+      if (original.packKey && rules.packPools[original.packKey]) {
+        const pool = rules.packPools[original.packKey]!;
+        pool.current = Math.min(pool.max, pool.current + 1);
+      } else this.storeRuleActor({ ...actor, willpower: { ...actor.willpower, temporary: actor.willpower.temporary + 1 } });
+      original.refundedWillpower = true;
+    }
+    this.queueRuleSheetMutation(actor.id, operationId, { rage: 0, gnosis: 0, willpower: refund && !original.packKey ? 1 : 0 });
+    this.queueRuleSheetMutation(actor.id, receipt);
+    const history: RollHistoryEntry = { ...original.history, id: `roll-${this.roomState.seq + 1}-${roll.physicsSeed}`, timestamp: Date.now(), label: `${original.history.label} — ${definition.name}`, roll, rerollOf: original.history.id };
+    rules.rollReceipts[operationId] = history;
+    this.roomState.rollHistory = [history, ...(this.roomState.rollHistory ?? [])].slice(0, 50);
+    this.commitAndBroadcast([{ event: { type: 'DICE_ROLLED_3D', rollerDiscordId: attachment.discordUserId, rollerName: history.rollerName, label: history.label, roll, historyEntry: history, isSecretStRoll: history.isSecretRoll }, targetDiscordId: history.isSecretRoll ? attachment.discordUserId : null }], reqId);
+    this.broadcastRuleState(reqId);
+  }
+
+  private resolveTableRuleRoll(sheet: W20UserCharacterSheet, shortcut: import('@w20-vtt/core').SheetShortcut, context: RuleContext = {}, attachment?: InternalSocketAttachment) {
+    for (const instance of sheet.activeRuleEffects ?? []) {
+      const allocation = instance.rule?.activation?.allocation;
+      if (!allocation?.consumeOnRoll) continue;
+      const spent = Number(context.effectChoices?.[instance.id]?.[allocation.choiceKey] ?? context.ruleChoices?.[allocation.choiceKey] ?? 0);
+      const available = Number(instance.ruleChoices?.[allocation.choiceKey] ?? instance.successes ?? 0);
+      if (!Number.isFinite(spent) || spent < 0 || spent > available) throw new Error('Choose a bonus within the effect’s remaining dice.');
+    }
+    const resolved = resolveSheetShortcut(sheet, shortcut, context);
+    const defenses: AppliedRuleModifier[] = [];
+    const targetPending: string[] = [];
+    for (const targetId of [...new Set(context.targetIds ?? [])]) {
+      const target = this.findRuleTarget(targetId);
+      if (!target || 'isNpc' in target && target.isNpc && attachment?.role !== 'storyteller') throw new Error('A selected target is unavailable.');
+      const evaluation = evaluateModifierRules(isRuleSheet(target) ? getSheetModifierSources(target) : getCharacterModifierSources(target), { ...target, ruleTraits: ruleTraits(target) }, { ...resolved.context, authoritativeTags: [...(resolved.context.authoritativeTags ?? []), 'target:source'] });
+      defenses.push(...evaluation.modifiers.filter((modifier) => modifier.target.startsWith('target:')).map((modifier) => ({ ...modifier, target: modifier.target.slice(7) })));
+      targetPending.push(...evaluation.pending.filter((entry) => entry.rule.effects.some((effect) => effect.target.startsWith('target:'))).flatMap((entry) => entry.reasons));
+    }
+    const pool = Math.max(0, Math.min(30, applyRuleValue({ modifiers: defenses }, 'pool', resolved.rawPool)));
+    const difficulty = Math.max(2, Math.min(10, applyRuleValue({ modifiers: defenses }, 'difficulty', resolved.difficulty)));
+    return { pool, effectivePool: Math.max(0, pool + (resolved.applyWoundPenalty ? resolved.woundPenalty : 0)), difficulty,
+      hasSpecialty: resolved.hasSpecialty, applyWoundPenalty: resolved.applyWoundPenalty, woundPenalty: resolved.woundPenalty,
+      modifiers: [...resolved.modifiers, ...defenses], pendingTags: [...resolved.pending.flatMap((pending) => pending.reasons), ...targetPending], bonusAutomaticSuccesses: resolved.bonusAutomaticSuccesses,
+      ...(context.rollKind === 'initiative' ? { initiativeModifier: computeUserSheetStats(sheet, { ...context, rollKind: 'initiative' }).initiativeBonus } : {}) };
+  }
+
   private handleRollTablePool(
+    ws: WebSocket,
     attachment: InternalSocketAttachment,
     command: Extract<ClientCommand, { type: 'ROLL_TABLE_POOL' }>,
     reqId: string,
   ): void {
+    const rules = this.getRuleState();
+    const operationId = this.ruleOperationId('roll', attachment.discordUserId, command.rollClientId ?? reqId);
+    const previous = rules.rollReceipts[operationId];
+    if (previous) {
+      ws.send(
+        JSON.stringify({
+          seq: this.roomState.seq,
+          replyToReqId: reqId,
+          serverTime: Date.now(),
+          event: {
+            type: 'DICE_ROLLED_3D',
+            rollerDiscordId: previous.rollerDiscordId,
+            rollerName: previous.rollerName,
+            label: previous.label,
+            roll: previous.roll,
+            historyEntry: previous,
+            rollClientId: command.rollClientId,
+            isSecretStRoll: previous.isSecretRoll,
+          },
+        })
+      );
+      this.sendRuleStateToSocket(ws, attachment, reqId);
+      return;
+    }
     const participant = this.resolveTargetParticipant(attachment, command.seatId);
     participant.isConnected = true;
 
     const isInitiative = command.rollMode === 'initiative';
-    const woundPenalty = command.applyWoundPenalty ? participant.trackers.woundPenalty : 0;
+    let typed: ReturnType<GameRoomDO['resolveTableRuleRoll']> | undefined;
+    let sheet: W20UserCharacterSheet | undefined;
+    let packKey: string | undefined;
+    try {
+      if (
+        command.shortcut ||
+        command.sheetId ||
+        rules.seatBindings[buildParticipantKey(attachment.discordUserId, command.seatId)]
+      ) {
+        sheet = this.requireBoundSheet(attachment, command.seatId, command.sheetId);
+        if (command.shortcut)
+          typed = this.resolveTableRuleRoll(
+            sheet,
+            command.shortcut,
+            command.ruleContext,
+            attachment
+          );
+      }
+      if (command.spendWillpower && !isInitiative) {
+        if (command.willpowerSource === 'pack') {
+          packKey = sheet?.packName.trim().toLowerCase();
+          if (!packKey || !rules.packPools[packKey] || rules.packPools[packKey]!.current < 1)
+            throw new Error('This character has no available pack Willpower.');
+        } else if ((sheet?.willpower.temporary ?? participant.trackers.willpower) < 1)
+          throw new Error('Insufficient temporary Willpower.');
+      }
+    } catch (error) {
+      this.sendRejection(
+        ws,
+        reqId,
+        'VALIDATION_ERROR',
+        error instanceof Error ? error.message : 'Unable to resolve this roll.'
+      );
+      return;
+    }
+    const applyWounds = typed?.applyWoundPenalty ?? command.applyWoundPenalty;
+    if (this.sharedRuleStage && sheet && command.spendWillpower && !isInitiative && command.willpowerSource !== 'pack') this.sharedRuleStage.costs.willpower = 1;
+    const woundPenalty = applyWounds
+      ? (typed?.woundPenalty ??
+        (sheet ? computeUserSheetStats(sheet).woundPenalty : participant.trackers.woundPenalty))
+      : 0;
+    const stats =
+      sheet && isInitiative
+        ? computeUserSheetStats(sheet, { ...command.ruleContext, rollKind: 'initiative' })
+        : undefined;
+    const resultModifiers =
+      typed?.modifiers ??
+      stats?.modifiers ??
+      (sheet
+        ? computeUserSheetStats(sheet).modifiers.filter(
+            (modifier) =>
+              modifier.target.startsWith('reroll:') ||
+              modifier.target.startsWith('willpower:refund')
+          )
+        : []);
     const cleanLabel = command.label?.trim() || (isInitiative ? 'Initiative' : 'W20 Dice Pool');
     const supplied = command.physicalDiceValues ?? [];
     let idx = 0;
@@ -815,38 +2127,61 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return rollCsprngD10();
     };
 
+    const request = {
+      label: cleanLabel,
+      basePool: typed?.pool ?? command.pool,
+      woundPenalty,
+      applyWoundPenalty: applyWounds,
+      baseDifficulty: typed?.difficulty ?? command.difficulty,
+      hasApplicableSpecialty: typed?.hasSpecialty ?? command.hasSpecialty,
+      spendWillpower: command.spendWillpower,
+      specialtyMode: 'w20_double' as const,
+      ruleModifiers: resultModifiers,
+    };
     const roll = isInitiative
       ? resolveW20InitiativeRoll(
           {
             label: cleanLabel,
             initiativeModifier:
-              command.initiativeModifier !== undefined
+              stats ? stats.initiativeBonus - (applyWounds ? 0 : stats.woundPenalty) + (command.initiativeAdjustment ?? 0) : command.initiativeModifier !== undefined
                 ? command.initiativeModifier
                 : woundPenalty,
           },
           rng,
         )
-      : resolveW20DicePool(
-          {
-            label: cleanLabel,
-            basePool: command.pool,
-            woundPenalty,
-            applyWoundPenalty: command.applyWoundPenalty,
-            baseDifficulty: command.difficulty,
-            hasApplicableSpecialty: command.hasSpecialty,
-            spendWillpower: command.spendWillpower,
-            specialtyMode: 'w20_double',
-          },
-          rng,
-        );
+      : resolveW20DicePool(request, rng);
 
     const rageDiceCount = isInitiative
       ? 0
       : Math.min(roll.effectivePool, Math.max(0, command.rageDiceCount));
     let willpowerSpent = false;
-    if (!isInitiative && command.spendWillpower && participant.trackers.willpower > 0) {
+    const refund =
+      !isInitiative &&
+      getRuleResultTriggers(roll, resultModifiers, { spentWillpower: command.spendWillpower })
+        .refundWillpower;
+    if (!isInitiative && command.spendWillpower && !refund && packKey) {
+      rules.packPools[packKey]!.current -= 1;
+      willpowerSpent = true;
+    } else if (
+      !isInitiative &&
+      command.spendWillpower &&
+      !refund &&
+      participant.trackers.willpower > 0
+    ) {
       participant.trackers.willpower -= 1;
       willpowerSpent = true;
+      if (sheet) {
+        this.storeRuleActor({
+          ...sheet,
+          willpower: { ...sheet.willpower, temporary: sheet.willpower.temporary - 1 },
+        });
+        this.queueRuleSheetMutation(
+          sheet.id,
+          operationId,
+          { rage: 0, gnosis: 0, willpower: -1 }
+        );
+        this.spendGrantedResources(sheet.id, { rage: 0, gnosis: 0, willpower: 1 });
+      }
     }
 
     const rollerName = formatRollerName(
@@ -866,7 +2201,19 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       rageDiceCount,
       isSecretRoll,
       roll,
+      ...(sheet ? { modifiers: resultModifiers } : {}),
+      ...(sheet ? { sheetId: sheet.id } : {}),
     };
+    rules.rollReceipts[operationId] = historyEntry;
+    if (sheet && !isInitiative)
+      rules.rollRequests[historyEntry.id] = {
+        sheetId: sheet.id,
+        discordUserId: attachment.discordUserId,
+        request,
+        history: historyEntry,
+        refundedWillpower: refund,
+        packKey,
+      };
 
     this.roomState.rollHistory = [historyEntry, ...(this.roomState.rollHistory ?? [])].slice(0, 50);
 
@@ -889,6 +2236,12 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           rolledAt: historyEntry.timestamp,
         },
       ];
+    }
+
+    if (sheet) {
+      this.consumeNextRollEffects(sheet.id, resultModifiers, operationId, command.ruleContext);
+      this.broadcastRuleState(reqId);
+      this.scheduleRulePersistence();
     }
 
     this.commitAndBroadcast(
@@ -944,6 +2297,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     replyToReqId?: string,
     excludeWs?: WebSocket,
   ): void {
+    if (this.sharedRuleStage) {
+      this.sharedRuleStage.emissions.push({ kind: 'ephemeral', event: structuredClone(event), replyToReqId });
+      return;
+    }
     const envelope: ServerEnvelope<ServerEvent> = {
       seq: this.roomState.seq,
       ...(replyToReqId ? { replyToReqId } : {}),
@@ -969,6 +2326,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     code: CommandRejectionCode,
     message: string,
   ): void {
+    if (this.sharedRuleStage) throw new StagedRuleRejection(code, message);
     const envelope: ServerEnvelope<ServerEvent> = {
       seq: this.roomState.seq,
       ...(replyToReqId ? { replyToReqId } : {}),
@@ -1114,6 +2472,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   }
 
   private persistStateSnapshot(): void {
+    if (this.sharedRuleStage) return;
     this.ctx.storage.sql.exec(
       'INSERT OR REPLACE INTO room_state (id, state_json, updated_at) VALUES (1, ?, ?)',
       JSON.stringify(this.roomState),
@@ -1126,6 +2485,43 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     replyToReqId?: string,
     directSnapshotSockets?: WebSocket[],
   ): void {
+    if (this.reconcileRuleSources())
+      pending = [
+        ...pending,
+        {
+          event: {
+            type: 'RULE_STATE_UPDATED',
+            state: { sheets: [], effects: [], clock: this.getRuleState().clock },
+          },
+        },
+      ];
+    for (const id of this.pendingRuleCharacterIds) {
+      const character = this.roomState.characters[id];
+      if (character)
+        pending = [
+          ...pending,
+          {
+            event: { type: 'CHARACTER_PATCHED', characterId: id, character },
+            targetRole: character.isNpc ? 'storyteller' : null,
+          },
+        ];
+    }
+    this.pendingRuleCharacterIds.clear();
+    if (this.pendingRuleTokenUpdate)
+      pending = [
+        ...pending,
+        {
+          event: { type: 'TOKENS_UPDATED', tokens: [] },
+          rawTokensSnapshot: this.snapshotRawTokens(),
+        },
+      ];
+    this.pendingRuleTokenUpdate = false;
+    if (this.sharedRuleStage) {
+      this.sharedRuleStage.emissions.push({ kind: 'commit', pending: structuredClone(pending), replyToReqId });
+      this.roomState.seq += pending.length;
+      return;
+    }
+    this.trimRuleReplayCaches();
     const newEntries: BufferedRoomEvent[] = [];
     const now = Date.now();
 
@@ -1330,6 +2726,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           type: 'PARTICIPANTS_UPDATED',
           participants: Object.values(this.roomState.tableParticipants ?? {}),
         });
+        this.sendRuleStateToSocket(ws, attachment, envelope.reqId);
+        this.scheduleRulePersistence();
         return;
       }
     }
@@ -1348,6 +2746,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       },
     };
     ws.send(JSON.stringify(snapshotEnvelope));
+    this.scheduleRulePersistence();
     this.sendEphemeralBroadcast(
       {
         type: 'PARTICIPANTS_UPDATED',
@@ -1377,6 +2776,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   }
 
   private scheduleCharacterFlush(chars: W20CharacterState[]): void {
+    if (this.sharedRuleStage) {
+      this.sharedRuleStage.characterFlushIds.push(...chars.map((character) => character.id));
+      return;
+    }
     const supa = new SupabaseRestClient(this.env);
     if (!supa.isConfigured()) {
       return;
@@ -1392,6 +2795,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   }
 
   private scheduleRollAuditAndWebhook(audit: DeferredRollAudit): void {
+    if (this.sharedRuleStage) {
+      this.sharedRuleStage.audits.push(structuredClone(audit));
+      return;
+    }
     const supa = new SupabaseRestClient(this.env);
     const tasks: Promise<unknown>[] = [];
 
@@ -1483,6 +2890,13 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       case 'SYNC_CLIENT_SEATS':
       case 'ROLL_TABLE_POOL':
       case 'CLEAR_TABLE_INITIATIVE':
+      case 'BIND_TABLE_SHEET':
+      case 'PREVIEW_RULE_ROLL':
+      case 'ACTIVATE_RULE':
+      case 'END_RULE_EFFECT':
+      case 'ADVANCE_RULE_CLOCK':
+      case 'APPLY_RULE_EVENT':
+      case 'REROLL_RULE_ROLL':
         return;
 
       case 'TOKEN_MOVE': {
@@ -1531,9 +2945,22 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           this.sendRejection(ws, reqId, 'VALIDATION_ERROR', `Already in ${command.targetForm} form.`);
           return;
         }
+        const ruleShift = resolveRuleShift(char, {
+          targetForm: command.targetForm,
+          method: command.method,
+        });
+        if (!ruleShift.allowed) {
+          this.sendRejection(
+            ws,
+            reqId,
+            'VALIDATION_ERROR',
+            ruleShift.reason ?? 'An active rule prevents this transformation.'
+          );
+          return;
+        }
 
         // Canonical W20: returning to one's natural breed form is automatic, instant, and free (no roll, no Rage).
-        if (command.targetForm === getBreedNaturalForm(char.breed)) {
+        if (command.targetForm === getBreedNaturalForm(char.breed) || !ruleShift.requiresRoll || ruleShift.automaticSuccesses > 0) {
           const updated: W20CharacterState = {
             ...char,
             activeForm: command.targetForm,
@@ -1559,14 +2986,17 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           return;
         }
 
-        const shiftDiff = W20_FORM_MATRIX[command.targetForm].shiftDifficulty;
+        const shiftDiff = ruleShift.difficulty;
         if (command.method === 'instant_rage_spend') {
-          const check = validateResourceSpend(char.turnLocks, 'rage');
+          const check =
+            ruleShift.rageCost > 0
+              ? validateResourceSpend(char.turnLocks, 'rage')
+              : { allowed: true };
           if (!check.allowed) {
             this.sendRejection(ws, reqId, 'RAGE_GNOSIS_CONFLICT', check.reason ?? 'Rage conflict.');
             return;
           }
-          if (char.rage.temporary < 1) {
+          if (char.rage.temporary < ruleShift.rageCost) {
             this.sendRejection(ws, reqId, 'INSUFFICIENT_RESOURCE', 'Insufficient temporary Rage.');
             return;
           }
@@ -1574,8 +3004,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           const updated: W20CharacterState = {
             ...char,
             activeForm: command.targetForm,
-            rage: { ...char.rage, temporary: char.rage.temporary - 1 },
-            turnLocks: { ...char.turnLocks, hasSpentRageThisTurn: true },
+            rage: { ...char.rage, temporary: char.rage.temporary - ruleShift.rageCost },
+            turnLocks: {
+              ...char.turnLocks,
+              hasSpentRageThisTurn: char.turnLocks.hasSpentRageThisTurn || ruleShift.rageCost > 0,
+            },
             stateVersion: char.stateVersion + 1,
           };
           this.roomState.characters[char.id] = updated;
@@ -1599,14 +3032,14 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         }
 
         // roll_primal_urge: Stamina + Primal-Urge vs target form difficulty
-        const stats = computeEffectiveCharacterStats(char);
-        const pool = stats.effectiveAttributes.stamina + (char.abilities['primal_urge'] ?? 0);
+        const pool = ruleShift.pool;
         const roll = resolveW20DicePool({
           label: `${char.name}: Shift to ${command.targetForm}`,
           basePool: pool,
           baseDifficulty: shiftDiff,
-          woundPenalty: stats.woundPenalty,
+          woundPenalty: ruleShift.woundPenalty,
           specialtyMode: this.roomState.specialtyMode,
+          ruleModifiers: ruleShift.modifiers,
         });
 
         const shifted = roll.netSuccesses >= 1;
@@ -1687,13 +3120,29 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           return;
         }
 
-        const stats = computeEffectiveCharacterStats(char);
+        const context: RuleContext = {
+          attribute: 'gnosis',
+          rollKind: 'gnosis',
+          tags: ['action:step_sideways', 'task:step-sideways', 'task:cross-realms'],
+        };
+        const stats = computeEffectiveCharacterStats(char, context);
+        const crossing = resolveCharacterRuleRoll(char, {
+          ...context,
+          pool: stats.effectiveGnosisPool,
+          difficulty: applyRuleValue(
+            stats.ruleEvaluation,
+            'gauntlet',
+            this.roomState.localGauntlet
+          ),
+          woundPenalty: 0,
+        });
         const roll = resolveW20DicePool({
           label: `${char.name}: Step Sideways -> ${command.targetRealm}`,
-          basePool: stats.effectiveGnosisPool,
-          baseDifficulty: this.roomState.localGauntlet,
+          basePool: crossing.pool,
+          baseDifficulty: crossing.difficulty,
           applyWoundPenalty: false,
           specialtyMode: this.roomState.specialtyMode,
+          ruleModifiers: crossing.modifiers,
         });
 
         const succeeded = roll.netSuccesses >= 1;
@@ -1787,25 +3236,41 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
 
         const stats = computeEffectiveCharacterStats(char);
         const attrVal = stats.effectiveAttributes[command.attributeKey] ?? 0;
-        const abilityVal = command.abilityKey ? char.abilities[command.abilityKey] ?? 0 : 0;
+        const abilityVal = command.abilityKey
+          ? (stats.effectiveAbilities[command.abilityKey] ?? 0)
+          : 0;
+        const context: RuleContext = {
+          ...command.ruleContext,
+          attribute: command.attributeKey,
+          ability: command.abilityKey,
+        };
+        const resolved = resolveCharacterRuleRoll(char, {
+          ...context,
+          pool: attrVal + abilityVal,
+          difficulty: command.difficulty,
+        });
         const hasSpecialty = Boolean(
           command.specialtyId && char.specialties.some((s) => s.id === command.specialtyId),
         );
 
         const roll = resolveW20DicePool({
           label: command.label,
-          basePool: attrVal + abilityVal,
-          baseDifficulty: command.difficulty,
+          basePool: resolved.pool,
+          baseDifficulty: resolved.difficulty,
           hasApplicableSpecialty: hasSpecialty,
           spendWillpower: Boolean(command.spendWillpower),
-          woundPenalty: stats.woundPenalty,
+          woundPenalty: resolved.woundPenalty,
           specialtyMode: this.roomState.specialtyMode,
+          ruleModifiers: resolved.modifiers,
         });
 
         let updatedChar = char;
         const pending: PendingOutboundEvent[] = [];
 
-        if (command.spendWillpower) {
+        if (
+          command.spendWillpower &&
+          !getRuleResultTriggers(roll, resolved.modifiers, { spentWillpower: true }).refundWillpower
+        ) {
           updatedChar = {
             ...char,
             willpower: { ...char.willpower, temporary: char.willpower.temporary - 1 },
@@ -1835,6 +3300,12 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           },
           targetRole: command.isSecretStRoll || updatedChar.isNpc ? 'storyteller' : null,
         });
+        this.consumeNextRollEffects(
+          char.id,
+          resolved.modifiers,
+          `campaign-roll:${attachment.discordUserId}:${reqId}`,
+          context
+        );
 
         if (/\brage\b/i.test(command.label) && roll.netSuccesses >= 4) {
           pending.push({
@@ -2543,13 +4014,18 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           return;
         }
 
-        this.applyCombatTransition(
+        const advanced = this.applyCombatTransition(
           ws,
           attachment,
           reqId,
           `Advancing to combat round ${combat.roundNumber + 1}.`,
           () => advanceEndOfRound(combat, this.roomState.characters),
         );
+        if (advanced) {
+          this.advanceRuleClock('turn', 1, `combat-round:${attachment.discordUserId}:${reqId}`);
+          this.broadcastRuleState(reqId);
+          this.scheduleRulePersistence();
+        }
         return;
       }
 
@@ -2946,7 +4422,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     reqId: string,
     transitionReason: string,
     reducer: () => ReturnType<typeof rollRoundInitiative>,
-  ): void {
+  ): boolean {
     const prevChars = { ...this.roomState.characters };
     let outcome;
     try {
@@ -2954,7 +4430,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Combat state transition failed.';
       this.sendRejection(ws, reqId, classifyCoreErrorCode(msg), msg);
-      return;
+      return false;
     }
 
     this.roomState.combat = outcome.combat;
@@ -3042,5 +4518,6 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     if (changedChars.length > 0) {
       this.scheduleCharacterFlush(changedChars);
     }
+    return true;
   }
 }

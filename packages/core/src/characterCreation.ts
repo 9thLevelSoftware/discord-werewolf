@@ -1,3 +1,4 @@
+import { applyRuleValue, evaluateModifierRules, getSourceModifierRule } from './modifierRules';
 import {
   AttributeKey,
   Auspice,
@@ -228,11 +229,51 @@ function hasUniquePriorities(
   );
 }
 
+export function getCreationAbilityLimits(draft: W20CharacterCreationDraft) {
+  const sources = draft.meritsAndFlaws.map((entry) => ({ ...entry, dots: entry.pointValue }));
+  const evaluation = evaluateModifierRules(sources, {
+    activeForm: getBreedNaturalForm(draft.breed),
+  });
+  const budgets = {} as Record<AbilityCategory, number>;
+  const priorityMax = {} as Record<AbilityCategory, number>;
+  const totalMax = {} as Record<AbilityCategory, number>;
+  const errors: ValidationIssue[] = [];
+  for (const source of sources) {
+    if (
+      getSourceModifierRule(source)?.id === 'flaw-ability-deficit' &&
+      !['talents', 'skills', 'knowledges'].includes(source.ruleChoice ?? '')
+    ) {
+      errors.push({
+        field: 'meritsAndFlaws',
+        message: 'Ability Deficit requires choosing Talents, Skills, or Knowledges.',
+      });
+    }
+  }
+  for (const category of Object.keys(ABILITY_GROUPS) as AbilityCategory[]) {
+    const tier = draft.abilityPriorities[category];
+    budgets[category] = Math.max(
+      0,
+      ABIL_BUDGET[tier] + applyRuleValue(evaluation, `creation:ability_budget:${category}`, 0)
+    );
+    priorityMax[category] = Math.max(
+      0,
+      applyRuleValue(evaluation, `creation:ability_dot_max:${category}`, 3)
+    );
+    totalMax[category] = Math.max(
+      0,
+      applyRuleValue(evaluation, `creation:ability_dot_max:${category}`, 5)
+    );
+  }
+  return { budgets, priorityMax, totalMax, errors };
+}
+
 export function validateW20CharacterCreation(
   draft: W20CharacterCreationDraft
 ): W20CreationValidationSummary {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
+  const abilityLimits = getCreationAbilityLimits(draft);
+  errors.push(...abilityLimits.errors);
 
   // 1. Identity & Breed/Tribe Lore Constraints
   if (!draft.name.trim()) {
@@ -312,7 +353,7 @@ export function validateW20CharacterCreation(
       [AbilityCategory, CanonicalAbilityKey[]]
     >) {
       const tier = draft.abilityPriorities[category];
-      const budget = ABIL_BUDGET[tier];
+      const budget = abilityLimits.budgets[category];
       const spent = keys.reduce((sum, k) => sum + (draft.priorityAbilityDots[k] ?? 0), 0);
 
       if (spent !== budget) {
@@ -341,10 +382,18 @@ export function validateW20CharacterCreation(
         message: `${key} must use non-negative integer dots.`,
       });
     }
-    if (prio > 3) {
+    const category = (Object.keys(ABILITY_GROUPS) as AbilityCategory[]).find((group) =>
+      ABILITY_GROUPS[group].includes(key)
+    )!;
+    const priorityCap = abilityLimits.priorityMax[category];
+    const totalCap = abilityLimits.totalMax[category];
+    if (prio > priorityCap) {
       errors.push({
         field: `abilities.${key}`,
-        message: `${key} cannot exceed 3 dots during priority allocation (${prio}); use Freebie points for dots 4 and 5.`,
+        message:
+          priorityCap < 3
+            ? `${key} cannot exceed ${priorityCap} dots during character creation because of Ability Deficit (${prio} priority dots).`
+            : `${key} cannot exceed 3 dots during priority allocation (${prio}); use Freebie points for dots 4 and 5.`,
       });
     }
     if (draft.breed === 'lupus' && prio > 0 && LUPUS_RESTRICTED_BASE_ABILITIES.has(key)) {
@@ -355,10 +404,10 @@ export function validateW20CharacterCreation(
     }
 
     const total = prio + free;
-    if (total > 5) {
+    if (total > totalCap) {
       errors.push({
         field: `abilities.${key}`,
-        message: `${key} cannot exceed 5 dots at character creation (${total}).`,
+        message: `${key} cannot exceed ${totalCap} dots at character creation, including Freebie purchases (${total}).`,
       });
     }
     if (total > 0) finalAbilities[key] = total;
@@ -691,6 +740,7 @@ export function materializeCharacterFromDraft(
       boxes,
     },
     activeBuffs: [],
+    giftIds: [...new Set(draft.selectedGifts.map((gift) => gift.giftId))],
     macros: [],
     fetishes: [],
     portraitsByForm: meta.portraitsByForm ? { ...meta.portraitsByForm } : {},

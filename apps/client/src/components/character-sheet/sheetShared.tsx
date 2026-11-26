@@ -14,7 +14,30 @@ import {
   W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import { diceSoundEngine } from '../../audio/DiceSoundEngine';
-import type { SheetRollRequest } from '../../store/useCharacterSheetStore';
+import { useCharacterSheetStore, type SheetRollRequest } from '../../store/useCharacterSheetStore';
+import { useVttRoomStore } from '../../store/useVttRoomStore';
+import { useUiPrefsStore } from '../../store/useUiPrefsStore';
+
+export function useRuleTargetOptions() {
+  const participants = useVttRoomStore((s) => s.participants);
+  const characters = useVttRoomStore((s) => s.characters);
+  const role = useVttRoomStore((s) => s.viewerRole);
+  const targets = new Map<string, string>();
+  for (const actor of Object.values(characters))
+    if (!actor.isNpc || role === 'storyteller') targets.set(actor.id, actor.name);
+  for (const seat of participants)
+    if (seat.isConnected && seat.sheetId)
+      targets.set(seat.sheetId, seat.characterName || seat.displayName);
+  return [...targets].map(([id, name]) => ({ id, name }));
+}
+
+export function openSheetRule(sourceId: string) {
+  const prefs = useUiPrefsStore.getState();
+  prefs.setPref('sheetMobileTab', 'rules');
+  prefs.setPref('sheetDesktopPage', 'rules');
+  useCharacterSheetStore.setState({ focusedRuleId: sourceId, sheetModalOpen: true });
+}
+
 
 export const W20_BREEDS: readonly { key: Breed; label: string }[] = [
   { key: 'homid', label: 'Homid' },
@@ -130,8 +153,9 @@ export function shortcutToRollRequest(
 ): SheetRollRequest {
   const resolved = resolveSheetShortcut(sheet, shortcut);
   return {
+    shortcut,
     label: resolved.label,
-    pool: resolved.basePool,
+    pool: Math.max(0, Math.min(30, resolved.rawPool)),
     difficulty: resolved.difficulty,
     hasSpecialty: resolved.hasSpecialty,
     applyWoundPenalty: resolved.applyWoundPenalty,

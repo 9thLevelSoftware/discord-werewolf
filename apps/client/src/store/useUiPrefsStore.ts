@@ -13,7 +13,7 @@ export interface UiPrefs {
   feedOpen: boolean | null;
   /** Modifiers tray in the desktop console. */
   modifiersOpen: boolean;
-  sheetDesktopPage: 'page1' | 'page2';
+  sheetDesktopPage: 'page1' | 'page2' | 'rules';
   sheetMobileTab: string;
   rosterMobileTab: string;
 }

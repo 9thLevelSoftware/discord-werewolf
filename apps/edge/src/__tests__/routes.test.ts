@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   formatSyncCode,
+  materializeCharacterFromDraft,
+  computeEffectiveCharacterStats,
+  W20_GIFT_CATALOG,
   SYNC_CODE_ALPHABET,
   type W20CharacterCreationDraft,
   type W20CharacterState,
@@ -9,7 +12,7 @@ import {
 import { discordIdToUuidV5, mintAuthTokensForIdentity } from '../discordOAuth';
 import type { GameRoomDO } from '../GameRoomDO';
 import worker from '../index';
-import { SupabaseRestClient, type UserCharacterSheetRow } from '../supabaseRest';
+import { SupabaseRestClient, mapCharacterRowToState, mapStateToCharacterInsertRow, type UserCharacterSheetRow } from '../supabaseRest';
 import { createMockEnv } from './shims/cfTestHarness';
 
 const EXECUTION_CTX = {
@@ -73,6 +76,21 @@ afterEach(() => {
 });
 
 describe('Worker REST router, character creation validation, XP economy, and R2 media', () => {
+  it('applies the campaign Gift and pack Totem loaded through catalog links', () => {
+    const char = materializeCharacterFromDraft(makeValidCliathDraft(), {
+      id: 'player', ownerDiscordId: 'owner', campaignId: 'campaign', packId: 'pack',
+    });
+    const gift = W20_GIFT_CATALOG.find((entry) => entry.slug === 'spirit-of-the-fray')!;
+    const loaded = mapCharacterRowToState({
+      ...mapStateToCharacterInsertRow(char),
+      character_gifts: [{ gift_id: gift.id }],
+      packs: { totem_name: 'Bear' },
+    });
+    const stats = computeEffectiveCharacterStats(loaded);
+    expect(stats.initiativeBonus).toBe(loaded.baseAttributes.wits + loaded.baseAttributes.dexterity + 10);
+    expect(stats.effectiveAttributes.strength).toBe(loaded.baseAttributes.strength + 1);
+  });
+
   it('routes campaigns, scrubs NPCs for players on GET characters, validates & creates PCs on POST /api/characters', async () => {
     const applyApprovedXp = vi.fn(async () => ({ ok: true, seq: 2 }));
     const upsertCharacterFromApi = vi.fn(async () => ({ ok: true as const, seq: 3 }));
