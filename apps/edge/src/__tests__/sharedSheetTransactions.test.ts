@@ -8,6 +8,8 @@ import type { ClientCommand, ClientEnvelope, ServerEnvelope, ServerEvent } from 
 import { discordIdToUuidV5, mintAuthTokensForIdentity } from '../discordOAuth';
 import type { WorkerEnv } from '../env';
 import { GameRoomDO } from '../GameRoomDO';
+import { SharedActionReplies } from '../sharedActionReplies';
+import type { PersistedRoomState } from '../roomProjection';
 import worker from '../index';
 import { UserSheetRepository } from '../userSheetStore';
 import type { UserCharacterSheetRow } from '../supabaseRest';
@@ -302,7 +304,7 @@ const activate: ClientCommand = {
   ruleId: 'paid-strength-charm',
   targetIds: [],
 };
-function paidRoll(rollClientId: string): ClientCommand {
+function paidRoll(rollClientId: string): Extract<ClientCommand, { type: 'ROLL_TABLE_POOL' }> {
   return {
     type: 'ROLL_TABLE_POOL',
     sheetId: SHEET_ID,
@@ -757,6 +759,64 @@ describe('Supabase remains authoritative on ordinary provider errors', () => {
   );
 });
 
+describe('shared reply retention', () => {
+  it('replays a retained roll and refuses expired ordinary and paid rolls after restart', async () => {
+    const backend = createBackend('r2');
+    const sheet = sheetWithBalances(1, 2);
+    await backend.repository.create(sheet);
+    const player = await connect(backend.env, 'dice-room-reply-retention', OWNER);
+    await bind(player, sheet);
+
+    const ordinary = { ...paidRoll('ordinary'), spendWillpower: false };
+    const paid = paidRoll('paid');
+    const recent = { ...paidRoll('recent'), spendWillpower: false };
+    await command(player, ordinary, 'ordinary');
+    await command(player, paid, 'paid');
+    await command(player, recent, 'recent');
+    await settle(player);
+    const originals = rolls(player.ws.drainJson<Envelope>());
+    expect(originals).toHaveLength(3);
+
+    // Age the commands using the real SQLite reply store without broadcasting 999 filler rolls.
+    const replies = new SharedActionReplies(player.state.storage);
+    for (let i = 0; i < 999; i++) replies.put(`filler-${i}`, { fingerprint: 'filler' });
+    const [row] = player.state.sql
+      .exec<{ count: number }>('SELECT COUNT(*) AS count FROM shared_action_replies')
+      .toArray();
+    expect(row?.count).toBe(1000);
+
+    const restarted = await connect(backend.env, player.roomId, OWNER, player.state);
+    await command(restarted, recent, 'retry-recent');
+    expect(rolls(restarted.ws.drainJson<Envelope>())).toEqual([originals[2]]);
+
+    for (const retry of [ordinary, paid, { ...paid, difficulty: 7 }]) {
+      await command(restarted, retry, `retry-${retry.rollClientId}`);
+      const events = restarted.ws.drainJson<Envelope>();
+      expect(rolls(events)).toEqual([]);
+      expect(events.map(({ event }) => event)).toContainEqual(
+        expect.objectContaining({ type: 'COMMAND_REJECTED', message: expect.stringContaining('expired') })
+      );
+    }
+    expect((await backend.repository.getById(SHEET_ID))?.willpower.temporary).toBe(1);
+  });
+
+  it('retains the IDs of pruned legacy replies', () => {
+    const state = new MockDurableObjectState();
+    state.sql.exec(`
+      CREATE TABLE shared_action_replies (action_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+      WITH RECURSIVE sequence(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 1001
+      )
+      INSERT INTO shared_action_replies SELECT 'legacy-' || n, '{"fingerprint":"legacy"}' FROM sequence;
+    `);
+    const replies = new SharedActionReplies(state.storage);
+    expect(replies.get('legacy-1')).toBe('expired');
+    expect(replies.get('legacy-2')).toEqual({ fingerprint: 'legacy' });
+    replies.put('legacy-1', { fingerprint: 'replacement' });
+    expect(replies.get('legacy-1')).toBe('expired');
+  });
+});
+
 describe('several players at one table', () => {
   const GUEST = '345678901234567890';
   const LOCAL_ID = '88888888-8888-4888-8888-888888888888';
@@ -847,5 +907,51 @@ describe('several players at one table', () => {
 
     expect(activations(owner.ws.drainJson<Envelope>())).toHaveLength(1);
     expect((await backend.repository.getById(GUEST_ID))?.activeRuleEffects).toHaveLength(1);
+  });
+
+  it('keeps dependent updates queued when a previously saved recipient goes missing', async () => {
+    const backend = createBackend('r2');
+    const caster = sheetWithBalances(2);
+    caster.otherTraits[0]!.customRule!.effects = [
+      {
+        target: 'attribute:strength',
+        operation: 'add',
+        value: 2,
+        duration: 'scene',
+        recipient: 'target',
+      },
+    ];
+    const guest = createBlankUserCharacterSheet({
+      id: GUEST_ID,
+      ownerDiscordId: GUEST,
+      name: 'Deleted Packmate',
+      now: 100,
+    });
+    await backend.repository.create(caster);
+    await backend.repository.create(guest);
+
+    const owner = await connect(backend.env, 'dice-room-outbox-conflict', OWNER);
+    await bind(owner, caster);
+    const saved = await join(backend.env, owner, GUEST);
+    await bind(saved, guest);
+
+    await backend.repository.delete(GUEST_ID);
+    await command(owner, { ...activate, targetIds: [GUEST_ID] }, 'bless-deleted');
+    await settle(owner);
+    expect(activations(owner.ws.drainJson<Envelope>())).toHaveLength(1);
+
+    await command(owner, { type: 'ADVANCE_RULE_CLOCK', unit: 'scene', amount: 1 }, 'next-scene');
+    await settle(owner);
+
+    const [record] = owner.state.sql
+      .exec<{ state_json: string }>('SELECT state_json FROM room_state WHERE id = 1')
+      .toArray();
+    const room = JSON.parse(record!.state_json) as PersistedRoomState;
+    const updates = room.ruleState?.persistenceQueue.filter(({ sheetId }) => sheetId === GUEST_ID);
+    expect(updates).toHaveLength(2);
+    const effectId = updates?.[0]?.effects[0]?.id;
+    expect(effectId).toBeTruthy();
+    expect(updates?.[1]?.removedEffectIds).toContain(effectId);
+    expect(await backend.repository.getById(GUEST_ID)).toBeNull();
   });
 });

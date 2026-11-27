@@ -1068,6 +1068,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const actionKey = `${command.type}:${attachment.discordUserId}:${actionHash}`;
     const fingerprint = JSON.stringify(command);
     const previous = this.sharedActionReplies.get(actionKey);
+    if (previous === 'expired') {
+      this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'This action ID was already used and its reply has expired.');
+      return;
+    }
     if (previous) {
       if (previous.fingerprint !== fingerprint) this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'This action ID was already used with different parameters.');
       else if (previous.rejection) this.sendRejection(ws, reqId, previous.rejection.code, previous.rejection.message);
@@ -2071,10 +2075,9 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         rules.persistenceQueue.shift();
         this.persistStateSnapshot();
       } catch (error) {
-        if (error instanceof RuleSpendConflictError && error.code !== 'STALE') {
-          // This update can never be saved, so it must not hold back the updates queued behind it.
+        if (error instanceof RuleSpendConflictError && error.code === 'NOT_FOUND' && record?.canonicalKnown === false) {
+          // A local-only recipient has no shared row. Keep its in-room updates without blocking saved sheets.
           rules.persistenceQueue.shift();
-          if (error.latestSheet && rules.sheets[error.latestSheet.id]) this.replaceCanonicalRuleSheet(error.latestSheet);
           this.persistStateSnapshot();
           continue;
         }
