@@ -1800,7 +1800,15 @@ export const SheetPageTwoTactical: React.FC<SheetPageTwoTacticalProps> = ({
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
-                      {getSourceModifierRule({...r,kind:"rite"})?.activation && <button className="rounded border border-amber-800 px-2 py-1 text-amber-100" onClick={()=>openSheetRule(r.id)}>Perform rite</button>}
+                      {getSourceModifierRule({ ...r, kind: 'rite' })?.activation && (
+                        <button
+                          type="button"
+                          onClick={() => openSheetRule(r.id)}
+                          className="mt-1.5 rounded-lg border border-gold-500/45 bg-obsidian-900 px-2 py-1 text-caption font-semibold text-gold-200 transition hover:border-gold-300 hover:bg-obsidian-800"
+                        >
+                          Perform rite
+                        </button>
+                      )}
                       {r.summary && <p className="mt-1 text-caption text-stone-400">{r.summary}</p>}
                     </div>
                   ))}

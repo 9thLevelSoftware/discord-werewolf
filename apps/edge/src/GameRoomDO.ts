@@ -1068,6 +1068,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const actionKey = `${command.type}:${attachment.discordUserId}:${actionHash}`;
     const fingerprint = JSON.stringify(command);
     const previous = this.sharedActionReplies.get(actionKey);
+    if (previous === 'expired') {
+      this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'This action ID was already used and its reply has expired.');
+      return;
+    }
     if (previous) {
       if (previous.fingerprint !== fingerprint) this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'This action ID was already used with different parameters.');
       else if (previous.rejection) this.sendRejection(ws, reqId, previous.rejection.code, previous.rejection.message);
@@ -1348,6 +1352,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         throw new Error('Only the owner may bind a local character sheet.');
       }
       const existing = rules.sheets[submitted.id];
+      // A sheet outside shared storage is vouched for only by the room record its owner bound.
+      if (!stored && existing && existing.sheet.ownerDiscordId !== attachment.discordUserId) {
+        throw new Error('Only the owner may bind a local character sheet.');
+      }
       let sheet = structuredClone(submitted);
       const pendingLocalReceipts = existing && stored && hasUnacknowledgedRuleReceipts(existing.sheet.ruleActivationReceipts, stored.ruleActivationReceipts);
       const base = pendingLocalReceipts ? existing!.sheet : stored && (!existing || stored.updatedAt > existing.sheet.updatedAt) ? stored : existing?.sheet ?? stored;
@@ -2066,7 +2074,13 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         }
         rules.persistenceQueue.shift();
         this.persistStateSnapshot();
-      } catch {
+      } catch (error) {
+        if (error instanceof RuleSpendConflictError && error.code === 'NOT_FOUND' && record?.canonicalKnown === false) {
+          // A local-only recipient has no shared row. Keep its in-room updates without blocking saved sheets.
+          rules.persistenceQueue.shift();
+          this.persistStateSnapshot();
+          continue;
+        }
         // The durable outbox is retried on the next authenticated interaction or reconnect.
         return;
       }
@@ -2081,6 +2095,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const rules = this.getRuleState();
     const actor = this.resolveRuleActor(attachment, command.seatId, command.characterId);
     if (!isRuleSheet(actor) && command.event === 'experience_award') throw new Error(`General experience awards require Storyteller approval through POST /api/campaigns/${actor.campaignId}/xp-award and the existing XP ledger.`);
+    if (!isRuleSheet(actor) && command.event === 'renown_award' && this.roomState.storytellerDiscordId && attachment.role !== 'storyteller') throw new Error('Only the Storyteller awards Renown to a chronicle character.');
     const operationId = this.ruleOperationId('event', attachment.discordUserId, reqId);
     if (rules.frequencyReceipts.includes(operationId) || isRuleSheet(actor) && actor.ruleActivationReceipts?.includes(operationId)) return;
     const allSources = isRuleSheet(actor) ? getSheetModifierSources(actor) : getCharacterModifierSources(actor);

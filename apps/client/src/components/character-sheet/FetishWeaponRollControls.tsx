@@ -7,6 +7,7 @@ import {
   type W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import type { SheetRollRequest } from '../../store/useCharacterSheetStore';
+import { Button } from '../ui';
 import { shortcutToRollRequest } from './sheetShared';
 
 export const FetishWeaponRollControls: React.FC<{
@@ -53,18 +54,19 @@ export const FetishWeaponRollControls: React.FC<{
       {[attack, damage].map((shortcut) => {
         const resolved = resolveSheetShortcut(sheet, shortcut);
         return (
-          <button
+          <Button
             key={shortcut.id}
-            type="button"
+            size="sm"
             disabled={fetish.carried === false}
             onClick={() => onRoll(shortcutToRollRequest(sheet, shortcut))}
             aria-label={`Roll ${shortcut.name}`}
             title={resolved.formulaSummary}
-            className="rounded border border-stone-600 bg-zinc-950 px-2 py-1 font-semibold text-amber-100 disabled:opacity-40"
           >
-            {shortcut === attack ? 'Attack' : 'Damage'} · {resolved.rawPool}d10 · Diff{' '}
-            {resolved.difficulty}
-          </button>
+            {shortcut === attack ? 'Attack' : 'Damage'}
+            <span className="font-normal text-stone-400">
+              {resolved.rawPool}d10 · Diff {resolved.difficulty}
+            </span>
+          </Button>
         );
       })}
     </div>

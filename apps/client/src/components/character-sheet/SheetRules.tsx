@@ -25,8 +25,18 @@ import {
 import { useCharacterSheetStore } from '../../store/useCharacterSheetStore';
 import { useVttRoomStore } from '../../store/useVttRoomStore';
 import { RollReplacementActions } from '../dice-table/RollReplacementActions';
+import { Button, ConfirmButton, cx } from '../ui';
 import { useRuleTargetOptions } from './sheetShared';
-import { effectText, factLabel, ruleButton, ruleField, RuleEditor } from './RuleEditor';
+import {
+  effectText,
+  factLabel,
+  ruleButton,
+  ruleField,
+  ruleInset,
+  rulePanel,
+  rulePanelTitle,
+  RuleEditor,
+} from './RuleEditor';
 
 type UpdateSheet = (updater: (prev: W20UserCharacterSheet) => W20UserCharacterSheet) => void;
 const collections = [
@@ -110,12 +120,14 @@ function EquipmentPicker({
     setSelected('');
   };
   return (
-    <details className="rounded border border-stone-700 p-3">
-      <summary className="cursor-pointer font-semibold text-amber-200">Add equipment</summary>
-      <div className="mt-3 flex flex-wrap gap-2">
+    <details className={rulePanel}>
+      <summary>
+        <span className={rulePanelTitle}>Add equipment</span>
+      </summary>
+      <div className="flex gap-2">
         <select
           aria-label="Rulebook equipment"
-          className={ruleField}
+          className={ruleField + ' flex-1'}
           value={selected}
           onChange={(e) => setSelected(e.target.value)}
         >
@@ -168,7 +180,7 @@ function EquipmentPicker({
         <input
           aria-label="Custom equipment name"
           placeholder="Custom equipment name"
-          className={ruleField}
+          className={ruleField + ' flex-1'}
           maxLength={120}
           value={gear}
           onChange={(e) => setGear(e.target.value)}
@@ -183,6 +195,47 @@ function EquipmentPicker({
     </details>
   );
 }
+
+const ACTIVATION_CHIP =
+  'rounded-md border border-stone-700 bg-obsidian-900 px-1.5 py-0.5 text-xs font-semibold text-stone-300';
+const COST_CHIP_TONE: Record<string, string> = {
+  rage: 'border-red-500/40 text-red-300',
+  gnosis: 'border-cyan-500/40 text-cyan-300',
+  willpower: 'border-indigo-400/40 text-indigo-300',
+};
+
+/** Order and headings for the trait list on the Rules & Equipment page. */
+const SOURCE_GROUPS: ReadonlyArray<readonly [kind: string, label: string]> = [
+  ['gift', 'Gifts'],
+  ['rite', 'Rites'],
+  ['fetish', 'Fetishes'],
+  ['weapon', 'Weapons'],
+  ['armor', 'Armor'],
+  ['equipment', 'Equipment'],
+  ['background', 'Backgrounds'],
+  ['merit', 'Merits'],
+  ['flaw', 'Flaws'],
+  ['totem', 'Pack totem'],
+  ['active-effect', 'Active effects'],
+  ['other', 'Other traits'],
+];
+
+function groupSources(sources: RuleSource[]) {
+  const known = new Set(SOURCE_GROUPS.map(([kind]) => kind));
+  return SOURCE_GROUPS.map(([kind, label]) => ({
+    label,
+    items: sources.filter((source) =>
+      kind === 'other' ? !known.has(source.kind ?? 'other') || source.kind === 'other' : source.kind === kind
+    ),
+  })).filter((group) => group.items.length > 0);
+}
+
+const StatTile: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+  <div className="rounded-lg border border-stone-800 bg-obsidian-950/60 px-2 py-1.5 text-center">
+    <p className="text-xs font-semibold tracking-wide text-stone-400 uppercase">{label}</p>
+    <p className="font-display text-base font-bold text-parchment">{value}</p>
+  </div>
+);
 
 type ChoiceField = NonNullable<ModifierRule['choiceFields']>[number];
 function ChoiceInput({
@@ -496,31 +549,38 @@ function RuleEntry({
         </label>
       )}
       {giftReference && (
-        <p>
-          {giftReference.note} · {giftReference.source.book} p. {giftReference.source.page}
+        <p className="text-sm text-stone-300">
+          {giftReference.note}{' '}
+          <span className="text-xs text-stone-400">
+            {giftReference.source.book} p. {giftReference.source.page}
+          </span>
         </p>
       )}
       {rule && (
         <div>
-          <p className="font-semibold text-amber-100">
-            {rule.name}{' '}
-            <small className="text-stone-400">
+          <p className="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold text-parchment">
+            {rule.name !== entry.name && rule.name}
+            <small className="text-xs font-normal text-stone-400">
               {rule.source.book}
               {rule.source.page ? ' p. ' + rule.source.page : ''}
             </small>
           </p>
-          <ul className="mt-2 space-y-1 text-sm">
-            {rule.effects.map((effect, index) => (
-              <li key={index}>
-                {effectText(effect)}
-                {effect.when?.length ? ' when ' + effect.when.map(factLabel).join(' and ') : ''}
-                {effect.unless?.length
-                  ? ' unless ' + effect.unless.map(factLabel).join(' or ')
-                  : ''}
-                {effect.duration ? ' · ' + factLabel(effect.duration) : ''}
-              </li>
-            ))}
-          </ul>
+          {rule.effects.length > 0 && (
+            <ul className="mt-2 divide-y divide-stone-800 rounded-lg border border-stone-800 text-sm">
+              {rule.effects.map((effect, index) => (
+                <li key={index} className="px-3 py-1.5">
+                  <span className="text-parchment">{effectText(effect)}</span>
+                  <span className="text-stone-400">
+                    {effect.when?.length ? ' when ' + effect.when.map(factLabel).join(' and ') : ''}
+                    {effect.unless?.length
+                      ? ' unless ' + effect.unless.map(factLabel).join(' or ')
+                      : ''}
+                    {effect.duration ? ' · ' + factLabel(effect.duration) : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
           {rule.note && <p className="mt-2 text-xs text-stone-400">{rule.note}</p>}
         </div>
       )}
@@ -579,45 +639,49 @@ function RuleEntry({
             onChange={(value) => setChoice(f.key, value)}
           />
         ))}
-      {carriedItem && (
-        <label className="mr-3">
-          <input
-            type="checkbox"
-            checked={carriedItem.carried !== false}
-            onChange={(e) => patch({ carried: e.target.checked })}
-          />{' '}
-          Carried
-        </label>
-      )}
-      {carriedItem && (
-        <label className="mr-3">
-          <input
-            type="checkbox"
-            checked={Boolean(carriedItem.isSilver)}
-            onChange={(e) => patch({ isSilver: e.target.checked })}
-          />{' '}
-          Silver
-        </label>
-      )}
-      {(gear || entry.id === 'armor') && (
-        <label className="mr-3">
-          <input
-            type="checkbox"
-            checked={entry.id === 'armor' ? sheet.armor.worn !== false : Boolean(gear?.worn)}
-            onChange={(e) => patch({ worn: e.target.checked })}
-          />{' '}
-          Worn
-        </label>
-      )}
-      {fetish && fetish.level > 0 && (
-        <label>
-          <input
-            type="checkbox"
-            checked={fetish.isAttuned !== false}
-            onChange={(e) => patch({ isAttuned: e.target.checked })}
-          />{' '}
-          Attuned
-        </label>
+      {(carriedItem || entry.id === 'armor') && (
+        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+          {carriedItem && (
+            <label>
+              <input
+                type="checkbox"
+                checked={carriedItem.carried !== false}
+                onChange={(e) => patch({ carried: e.target.checked })}
+              />{' '}
+              Carried
+            </label>
+          )}
+          {carriedItem && (
+            <label>
+              <input
+                type="checkbox"
+                checked={Boolean(carriedItem.isSilver)}
+                onChange={(e) => patch({ isSilver: e.target.checked })}
+              />{' '}
+              Silver
+            </label>
+          )}
+          {(gear || entry.id === 'armor') && (
+            <label>
+              <input
+                type="checkbox"
+                checked={entry.id === 'armor' ? sheet.armor.worn !== false : Boolean(gear?.worn)}
+                onChange={(e) => patch({ worn: e.target.checked })}
+              />{' '}
+              Worn
+            </label>
+          )}
+          {fetish && fetish.level > 0 && (
+            <label>
+              <input
+                type="checkbox"
+                checked={fetish.isAttuned !== false}
+                onChange={(e) => patch({ isAttuned: e.target.checked })}
+              />{' '}
+              Attuned
+            </label>
+          )}
+        </div>
       )}
       {rule?.effects.some((e) => e.when?.includes('event:totem_acceptance')) && (
         <button
@@ -640,8 +704,11 @@ function RuleEntry({
         <div className="space-y-2">
           {fairOptions.length === 0 && <p className="text-sm text-stone-400">No eligible failed roll for Fair Fortune.</p>}
           {fairOptions.map((option) => (
-            <div key={option.rollId} className="flex flex-wrap items-center gap-2">
-              <span>{rollHistory.find((roll) => roll.id === option.rollId)?.label ??
+            <div
+              key={option.rollId}
+              className={ruleInset + ' flex flex-wrap items-center justify-between gap-2 py-2'}
+            >
+              <span className="text-sm text-parchment">{rollHistory.find((roll) => roll.id === option.rollId)?.label ??
                 roomRules?.pendingActivations?.find((pending) => pending.rollId === option.rollId)?.label ?? 'Failed roll'}</span>
               <RollReplacementActions options={[option]} disabled={!connected} onChoose={() =>
                 send({ type: 'REROLL_RULE_ROLL', seatId, sheetId: sheet.id, rollId: option.rollId, ruleId: option.ruleId })} />
@@ -650,14 +717,19 @@ function RuleEntry({
         </div>
       )}
       {active && rule && !isFairFortune && (
-        <div className="space-y-2 rounded border border-stone-700 p-3">
-          <p className="text-sm">
+        <div className={ruleInset + ' space-y-2.5 [&>p]:text-xs [&>p]:text-stone-400'}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={rulePanelTitle + ' mr-1'}>Activation</span>
             {Object.entries(active.cost ?? {})
               .filter(([, v]) => v)
-              .map(([k, v]) => v + ' ' + k)
-              .join(' · ')}
-            {active.roll ? ' · Activation roll' : ''} · {factLabel(active.duration)}
-          </p>
+              .map(([k, v]) => (
+                <span key={k} className={ACTIVATION_CHIP + ' ' + (COST_CHIP_TONE[k] ?? '')}>
+                  {v} {factLabel(k)}
+                </span>
+              ))}
+            {active.roll && <span className={ACTIVATION_CHIP}>Activation roll</span>}
+            <span className={ACTIVATION_CHIP}>{factLabel(active.duration)}</span>
+          </div>
           {(active.preparation || active.condition) && (
             <label className="block">
               <input
@@ -735,10 +807,13 @@ function RuleEntry({
             </label>
           )}
           {targetable && (
-            <fieldset>
+            <fieldset className="flex flex-wrap gap-x-5 gap-y-1.5">
               <legend>{active.requiresTarget ? 'Affected opponent' : 'Recipients'}</legend>
+              {targetsAtTable.length === 0 && (
+                <p className="text-xs text-stone-400">No other characters are seated at this table.</p>
+              )}
               {targetsAtTable.map((p) => (
-                <label key={p.id} className="mr-3">
+                <label key={p.id}>
                   <input
                     type="checkbox"
                     checked={targets.includes(p.id)}
@@ -853,8 +928,8 @@ function RuleEntry({
           )}
           {active.frequency && <p>{factLabel(active.frequency)}</p>}
           <details>
-            <summary className="cursor-pointer">Activation options</summary>
-            <label className="block">
+            <summary>Activation options</summary>
+            <label>
               <input
                 type="checkbox"
                 checked={secret}
@@ -864,15 +939,18 @@ function RuleEntry({
             </label>
             {/spen[dt]|cost|sacrifice/i.test(active.condition ?? '') && (
               <>
-                <p className="text-xs text-stone-400">Total resources paid for this activation</p>
+                <p className="mt-2 mb-1.5 text-xs text-stone-400">
+                  Total resources paid for this activation
+                </p>
+                <div className="grid grid-cols-3 gap-2">
                 {(['rage', 'gnosis', 'willpower'] as const).map((key) => (
-                  <label className="mr-2" key={key}>
+                  <label key={key}>
                     {key}{' '}
                     <input
                       type="number"
                       min={0}
                       max={10}
-                      className={ruleField + ' w-16'}
+                      className={ruleField}
                       value={extraCosts[key] ?? active.cost?.[key] ?? 0}
                       onChange={(e) =>
                         setExtraCosts({ ...extraCosts, [key]: Number(e.target.value) })
@@ -880,11 +958,12 @@ function RuleEntry({
                     />
                   </label>
                 ))}
+                </div>
               </>
             )}
           </details>
-          <button
-            className={ruleButton}
+          <Button
+            variant="primary"
             disabled={
               !connected ||
               !!pendingRequest ||
@@ -929,17 +1008,16 @@ function RuleEntry({
             }
           >
             {pendingRequest ? 'Activating…' : 'Activate ' + rule.name}
-          </button>
+          </Button>
         </div>
       )}
       {!rule && (
-        <details>
-          <summary className="cursor-pointer text-sm text-amber-200">
-            Link a documented rule
-          </summary>
+        <details className={ruleInset}>
+          <summary>Link a documented rule</summary>
+          <div className="flex gap-2">
           <select
             aria-label="Catalog rule"
-            className={ruleField}
+            className={ruleField + ' flex-1'}
             value={link}
             onChange={(e) => setLink(e.target.value)}
           >
@@ -953,6 +1031,7 @@ function RuleEntry({
           <button className={ruleButton} disabled={!link} onClick={() => patch({ ruleId: link })}>
             Link rule
           </button>
+          </div>
         </details>
       )}
       {entry.grantInstanceId && (
@@ -967,14 +1046,15 @@ function RuleEntry({
         />
       )}
       {gear && (
-        <button
-          className="text-sm text-red-300"
-          onClick={() =>
+        <ConfirmButton
+          prompt={'Remove ' + entry.name + '?'}
+          confirmLabel="Remove"
+          onConfirm={() =>
             onUpdate((s) => ({ ...s, equipment: s.equipment?.filter((i) => i.id !== entry.id) }))
           }
         >
           Remove equipment
-        </button>
+        </ConfirmButton>
       )}
     </div>
   );
@@ -1012,55 +1092,59 @@ function RuleEventControls({
     ),
   ];
   return (
-    <details>
-      <summary className="cursor-pointer text-amber-200">Story events and awards</summary>
-      <div className="mt-2 space-y-2">
-        <label>
-          Event{' '}
-          <select
-            className={ruleField}
-            value={event}
-            onChange={(e) => {
-              setEvent(e.target.value as typeof event);
-              setTags([]);
-            }}
-          >
-            {['story_start', 'story_end', 'session_start', 'renown_award', 'experience_award'].map(
-              (key) => (
-                <option key={key} value={key}>
-                  {factLabel(key)}
-                </option>
-              )
-            )}
-          </select>
-        </label>
-        {event === 'renown_award' && (
-          <label>
-            Renown{' '}
+    <details className={rulePanel}>
+      <summary>
+        <span className={rulePanelTitle}>Story events and awards</span>
+      </summary>
+      <div className="space-y-2.5">
+        <div className="grid grid-cols-2 gap-2">
+          <label className={event === 'renown_award' ? '' : 'col-span-2'}>
+            Event{' '}
             <select
               className={ruleField}
-              value={trait}
-              onChange={(e) => setTrait(e.target.value as typeof trait)}
+              value={event}
+              onChange={(e) => {
+                setEvent(e.target.value as typeof event);
+                setTags([]);
+              }}
             >
-              {['honor', 'glory', 'wisdom'].map((key) => (
-                <option key={key}>{key}</option>
-              ))}
+              {['story_start', 'story_end', 'session_start', 'renown_award', 'experience_award'].map(
+                (key) => (
+                  <option key={key} value={key}>
+                    {factLabel(key)}
+                  </option>
+                )
+              )}
             </select>
           </label>
-        )}
-        {event.endsWith('_award') && (
-          <label>
-            Base award{' '}
-            <input
-              type="number"
-              className={ruleField + ' w-16'}
-              value={amount}
-              min={0}
-              max={100}
-              onChange={(e) => setAmount(Number(e.target.value))}
-            />
-          </label>
-        )}
+          {event === 'renown_award' && (
+            <label>
+              Renown{' '}
+              <select
+                className={ruleField}
+                value={trait}
+                onChange={(e) => setTrait(e.target.value as typeof trait)}
+              >
+                {['honor', 'glory', 'wisdom'].map((key) => (
+                  <option key={key}>{key}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {event.endsWith('_award') && (
+            <label className="col-span-2">
+              Base award{' '}
+              <input
+                type="number"
+                className={ruleField}
+                value={amount}
+                min={0}
+                max={100}
+                onChange={(e) => setAmount(Number(e.target.value))}
+              />
+            </label>
+          )}
+        </div>
         {factOptions.map((t) => (
           <label key={t}>
             <input
@@ -1074,7 +1158,7 @@ function RuleEventControls({
           </label>
         ))}
         <button
-          className={ruleButton}
+          className={ruleButton + ' w-full'}
           disabled={!connected}
           onClick={() =>
             send({
@@ -1132,7 +1216,9 @@ export function SheetRules({
   const stats = computeUserSheetStats(sheet);
   const selected = useCharacterSheetStore((s) => s.focusedRuleId);
   const setSelected = (focusedRuleId: string) => useCharacterSheetStore.setState({ focusedRuleId });
-  const entry = sources.find((item) => item.id === selected) ?? sources[0];
+  const sourceGroups = groupSources(sources);
+  // With nothing chosen yet, open the first trait shown in the list.
+  const entry = sources.find((item) => item.id === selected) ?? sourceGroups[0]?.items[0];
   const send = useVttRoomStore((s) => s.sendCommand);
   const connected = useVttRoomStore((s) => s.connectionStatus === 'authenticated');
   const [unit, setUnit] = useState<'turn' | 'scene' | 'story' | 'session' | 'seconds'>('turn');
@@ -1155,144 +1241,229 @@ export function SheetRules({
     ),
   ];
   const pack = state?.packPools?.[sheet.packName.trim().toLowerCase()];
+  // An effect that is still being prepared is tracked by the table before it reaches the sheet.
+  const listedEffects = [
+    ...(sheet.activeRuleEffects ?? []),
+    ...(state?.effects ?? [])
+      .filter(
+        (item) =>
+          item.targetId === sheet.id &&
+          !sheet.activeRuleEffects?.some((own) => own.id === item.instance.id)
+      )
+      .map((item) => item.instance),
+  ].map((effect) => ({
+    effect,
+    preparing: (effect.preparationRounds ?? 0) > 0 || (effect.preparationSeconds ?? 0) > 0,
+  }));
   return (
-    <section className="mx-auto max-w-3xl space-y-4 text-sm">
-      {!!stats.modifiers.length && (
-        <details className="rounded border border-stone-700 p-3">
-          <summary className="cursor-pointer font-semibold text-amber-200">
-            Current stat modifiers
-          </summary>
-          <ul className="mt-2 space-y-1">
-            {stats.modifiers.map((m, index) => (
-              <li key={m.sourceId + m.target + index}>
-                {m.name} · {factLabel(m.target)} {m.operation} {m.value} · {m.source.book}{' '}
-                {m.source.page}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-      <div className="rounded border border-stone-700 p-3">
-        <h3 className="font-semibold text-amber-200">Movement · yards per turn</h3>
-        {movementFacts.length > 0 && (
-          <details>
-            <summary>Movement circumstances</summary>
-            {movementFacts.map((t) => (
-              <label className="block" key={t}>
-                <input
-                  type="checkbox"
-                  checked={movementTags.includes(t)}
-                  onChange={(e) =>
-                    setMovementTags(
-                      e.target.checked
-                        ? [...movementTags, t]
-                        : movementTags.filter((tag) => tag !== t)
-                    )
-                  }
-                />{' '}
-                {factLabel(t)}
-              </label>
-            ))}
-          </details>
-        )}
-        <p>
-          Walk {movement.walk} · Jog {movement.jog} · Run {movement.run}
-        </p>
-        {movement.special.map((item) => (
-          <p key={item.label}>
-            {item.label} · {item.value} {item.unit}
-          </p>
-        ))}
-        {sheet.activeForm === 'crinos' && (
-          <label>
-            <input
-              type="checkbox"
-              checked={allFours}
-              onChange={(e) => setAllFours(e.target.checked)}
-            />{' '}
-            On all fours
-          </label>
-        )}
-      </div>
-      <EquipmentPicker sheet={sheet} onUpdate={onUpdate} />
-      <div className="space-y-3 rounded border border-stone-700 p-4">
-        <label className="block font-semibold text-amber-200">
-          Trait or item{' '}
-          <select
-            className={ruleField}
-            value={entry?.id ?? ''}
-            onChange={(e) => setSelected(e.target.value)}
+    <section className="w20-rules grid items-start gap-3 text-sm lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+      <div className={rulePanel + ' min-w-0'}>
+        <div className="mb-2.5 flex items-center justify-between gap-2 border-b border-stone-800 pb-2">
+          <h3 className={rulePanelTitle}>Traits and items</h3>
+          <span className="text-xs text-stone-400">{sources.length} on this sheet</span>
+        </div>
+        <div className="grid items-start gap-3 md:grid-cols-[13rem_minmax(0,1fr)]">
+          <nav
+            aria-label="Trait or item"
+            className="w20-thin-scrollbar max-h-48 space-y-2 overflow-y-auto pr-1 md:max-h-[30rem]"
           >
-            {sources.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
+            {sourceGroups.map((group) => (
+              <div key={group.label}>
+                <p className="px-2 pb-0.5 text-xs font-semibold tracking-wide text-stone-500 uppercase">
+                  {group.label}
+                </p>
+                <ul>
+                  {group.items.map((source) => {
+                    const sourceRule = source.customRule ?? resolveModifierRule(source.ruleId ?? '');
+                    const isSelected = source.id === entry?.id;
+                    return (
+                      <li key={source.id}>
+                        <button
+                          type="button"
+                          aria-current={isSelected ? 'true' : undefined}
+                          onClick={() => setSelected(source.id)}
+                          className={cx(
+                            'flex w-full items-center justify-between gap-2 rounded-lg border px-2 py-1.5 text-left text-sm transition',
+                            isSelected
+                              ? 'border-gold-500/50 bg-obsidian-800 font-semibold text-gold-200'
+                              : 'border-transparent text-stone-300 hover:bg-obsidian-800 hover:text-parchment'
+                          )}
+                        >
+                          <span className="min-w-0 truncate">{source.name}</span>
+                          {sourceRule?.activation ? (
+                            <span className="shrink-0 rounded border border-gold-500/40 px-1 text-xs font-semibold text-gold-300">
+                              Use
+                            </span>
+                          ) : sourceRule ? (
+                            <span
+                              aria-hidden="true"
+                              title="Has a linked rule"
+                              className="h-1.5 w-1.5 shrink-0 rounded-full bg-gold-500/70"
+                            />
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             ))}
-          </select>
-        </label>
-        {entry && (
-          <RuleEntry
-            key={entry.id + ':' + entry.kind}
-            entry={entry}
-            sheet={sheet}
-            seatId={seatId}
-            onUpdate={onUpdate}
-          />
-        )}
-      </div>
-      <div className="space-y-2 rounded border border-stone-700 p-4">
-        <h3 className="font-semibold text-amber-200">Active effects</h3>
-        {!sheet.activeRuleEffects?.length && (
-          <p className="text-stone-400">No active effects on this character.</p>
-        )}
-        {sheet.activeRuleEffects?.map((effect) => (
-          <div key={effect.id} className="flex flex-wrap items-center gap-2">
-            <span>
-              {effect.rule?.name ??
-                resolveModifierRule(effect.ruleId)?.name ??
-                effect.sourceName ??
-                effect.ruleId}{' '}
-              · {factLabel(effect.duration)}
-            </span>
-            <small>
-              {[
-                [effect.preparationRounds, 'turns to prepare'],
-                [effect.preparationSeconds, 'seconds to prepare'],
-                [effect.remainingRounds, 'turns left'],
-                [effect.remainingScenes, 'scenes left'],
-                [effect.remainingSeconds, 'seconds left'],
-                [effect.remainingSessions, 'sessions left'],
-                [effect.remainingStories, 'stories left'],
-              ]
-                .filter(([v]) => typeof v === 'number' && v > 0)
-                .map(([v, unit]) => v + ' ' + unit)
-                .join(' · ')}
-            </small>
-            <button
-              disabled={!connected}
-              className={ruleButton}
-              onClick={() => send({ type: 'END_RULE_EFFECT', seatId, effectId: effect.id })}
-            >
-              End effect
-            </button>
+          </nav>
+          <div className="min-w-0 space-y-3">
+            {entry && (
+              <>
+                <h4 className="font-display text-sm font-bold tracking-wide text-parchment">
+                  {entry.name}
+                </h4>
+                <RuleEntry
+                  key={entry.id + ':' + entry.kind}
+                  entry={entry}
+                  sheet={sheet}
+                  seatId={seatId}
+                  onUpdate={onUpdate}
+                />
+              </>
+            )}
           </div>
-        ))}
-        {pack && (
-          <p>
-            Pack Willpower · {pack.current} / {pack.max}
-          </p>
-        )}
+        </div>
+      </div>
+      <div className="min-w-0 space-y-3">
+        <div className={rulePanel}>
+          <h3 className={rulePanelTitle + ' mb-2.5 border-b border-stone-800 pb-2'}>
+            Movement <span className="font-sans font-normal tracking-normal text-stone-400 normal-case">· yards per turn</span>
+          </h3>
+          <div className="grid grid-cols-3 gap-2">
+            <StatTile label="Walk" value={movement.walk} />
+            <StatTile label="Jog" value={movement.jog} />
+            <StatTile label="Run" value={movement.run} />
+          </div>
+          {movement.special.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs text-stone-300">
+              {movement.special.map((item) => (
+                <li key={item.label}>
+                  {item.label} · {item.value} {item.unit}
+                </li>
+              ))}
+            </ul>
+          )}
+          {(sheet.activeForm === 'crinos' || movementFacts.length > 0) && (
+            <div className="mt-2.5 space-y-1.5">
+              {sheet.activeForm === 'crinos' && (
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={allFours}
+                    onChange={(e) => setAllFours(e.target.checked)}
+                  />{' '}
+                  On all fours
+                </label>
+              )}
+              {movementFacts.length > 0 && (
+                <fieldset className="space-y-1.5">
+                  <legend>Movement circumstances</legend>
+                  {movementFacts.map((t) => (
+                    <label key={t}>
+                      <input
+                        type="checkbox"
+                        checked={movementTags.includes(t)}
+                        onChange={(e) =>
+                          setMovementTags(
+                            e.target.checked
+                              ? [...movementTags, t]
+                              : movementTags.filter((tag) => tag !== t)
+                          )
+                        }
+                      />{' '}
+                      {factLabel(t)}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+            </div>
+          )}
+        </div>
+        <EquipmentPicker sheet={sheet} onUpdate={onUpdate} />
+        <div className={rulePanel}>
+          <h3 className={rulePanelTitle + ' mb-2.5 border-b border-stone-800 pb-2'}>
+            Active effects
+          </h3>
+          {!listedEffects.length && (
+            <p className="text-xs text-stone-400">No active effects on this character.</p>
+          )}
+          <ul className="space-y-1.5">
+            {listedEffects.map(({ effect, preparing }) => {
+              const remaining = (
+                [
+                  [effect.preparationRounds, 'turn', 'turns', 'to prepare'],
+                  [effect.preparationSeconds, 'second', 'seconds', 'to prepare'],
+                  [effect.remainingRounds, 'turn', 'turns', 'left'],
+                  [effect.remainingScenes, 'scene', 'scenes', 'left'],
+                  [effect.remainingSeconds, 'second', 'seconds', 'left'],
+                  [effect.remainingSessions, 'session', 'sessions', 'left'],
+                  [effect.remainingStories, 'story', 'stories', 'left'],
+                ] as const
+              )
+                .filter(([v]) => typeof v === 'number' && v > 0)
+                .map(([v, one, many, suffix]) => `${v} ${v === 1 ? one : many} ${suffix}`)
+                .join(' · ');
+              return (
+                <li
+                  key={effect.id}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-stone-800 bg-obsidian-950/60 py-1.5 pr-1.5 pl-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-parchment">
+                      {effect.rule?.name ??
+                        resolveModifierRule(effect.ruleId)?.name ??
+                        effect.sourceName ??
+                        effect.ruleId}
+                    </p>
+                    <p className="text-xs text-stone-400">
+                      {preparing && (
+                        <span className="mr-1.5 rounded border border-amber-500/40 px-1 font-semibold text-amber-200">
+                          Preparing
+                        </span>
+                      )}
+                      {factLabel(effect.duration)}
+                      {remaining && ' · ' + remaining}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={!connected}
+                    onClick={() => send({ type: 'END_RULE_EFFECT', seatId, effectId: effect.id })}
+                  >
+                    End effect
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+          {pack && (
+            <p className="mt-2.5 flex items-center justify-between rounded-lg border border-indigo-400/30 bg-indigo-950/30 px-3 py-1.5 text-xs font-semibold text-indigo-200">
+              Pack Willpower
+              <span className="font-display text-sm">
+                {pack.current} / {pack.max}
+              </span>
+            </p>
+          )}
+        </div>
         <RuleEventControls seatId={seatId} sheet={sheet} connected={connected} />
-        <details>
-          <summary className="cursor-pointer text-amber-200">Table time</summary>
-          <p className="my-2">
-            Turn {state?.clock.turn ?? 0} · Scene {state?.clock.scene ?? 0} · Session{' '}
-            {state?.clock.session ?? 0} · Story {state?.clock.story ?? 0}
-          </p>
-          <div className="flex flex-wrap gap-2">
+        <details className={rulePanel}>
+          <summary>
+            <span className={rulePanelTitle}>Table time</span>
+          </summary>
+          <div className="grid grid-cols-4 gap-2">
+            <StatTile label="Turn" value={state?.clock.turn ?? 0} />
+            <StatTile label="Scene" value={state?.clock.scene ?? 0} />
+            <StatTile label="Session" value={state?.clock.session ?? 0} />
+            <StatTile label="Story" value={state?.clock.story ?? 0} />
+          </div>
+          <div className="mt-2.5 flex flex-wrap gap-2">
             <select
               aria-label="Time boundary"
-              className={ruleField}
+              className={ruleField + ' flex-1'}
               value={unit}
               onChange={(e) => setUnit(e.target.value as typeof unit)}
             >
@@ -1305,7 +1476,7 @@ export function SheetRules({
                 type="number"
                 min={1}
                 max={31536000}
-                className={ruleField}
+                className={ruleField + ' w-24'}
                 aria-label="Elapsed fictional seconds"
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
@@ -1322,6 +1493,26 @@ export function SheetRules({
             </button>
           </div>
         </details>
+        {!!stats.modifiers.length && (
+          <details className={rulePanel}>
+            <summary>
+              <span className={rulePanelTitle}>Current stat modifiers</span>
+            </summary>
+            <ul className="divide-y divide-stone-800 rounded-lg border border-stone-800 text-xs">
+              {stats.modifiers.map((m, index) => (
+                <li key={m.sourceId + m.target + index} className="px-3 py-1.5">
+                  <span className="font-semibold text-parchment">{m.name}</span>{' '}
+                  <span className="text-stone-300">
+                    {factLabel(m.target)} {m.operation} {m.value}
+                  </span>{' '}
+                  <span className="text-stone-500">
+                    {m.source.book} {m.source.page}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
     </section>
   );
