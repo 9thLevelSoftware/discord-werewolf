@@ -21,6 +21,7 @@ import {
   resolveFrenzyCheck,
   resolveW20DicePool,
   resolveW20InitiativeRoll,
+  resolveW20Specialty,
   rollCsprngD10,
   rollRoundInitiative,
   submitReverseDeclaration,
@@ -36,12 +37,14 @@ import {
   getCharacterModifierSources,
   getSourceModifierRule,
   applyRuleValue,
+  hasUnacknowledgedRuleReceipts,
   ruleTraits,
   type AppliedRuleModifier,
   type W20UserCharacterSheet,
   type RuleContext,
   type W20CharacterState,
   type W20RollResult,
+  type W20RollRequest,
 } from '@w20-vtt/core';
 import {
   parseClientEnvelope,
@@ -71,10 +74,13 @@ import {
   type PersistedRoomState,
   type StoredMapToken,
   type RuleSheetMutation,
+  type PendingRuleActivation,
 } from './roomProjection';
 import { SupabaseRestClient } from './supabaseRest';
 import { UserSheetRepository, RuleSpendConflictError, type RuleSpendInput } from './userSheetStore';
 import { applyRuleSheetMutation, applyCanonicalGrantCleanup, StagedRuleRejection, type SharedRuleCommand, type SharedRuleEmission, type SharedRuleIntent } from './sharedRuleCommit';
+import { canCorrectRuleRoll, FAIR_FORTUNE_RULE_ID, getRerollOptions } from './ruleRerolls';
+import { reserveRuleSourceReceipt } from './userSheetTransactions';
 import { SharedActionReplies } from './sharedActionReplies';
 import { isMockDiscordId } from './devMockAuth';
 import {
@@ -468,7 +474,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
 
     if (
       envelope.command.type === 'APPLY_RULE_EVENT' ||
-      envelope.command.type === 'REROLL_RULE_ROLL'
+      envelope.command.type === 'REROLL_RULE_ROLL' ||
+      envelope.command.type === 'KEEP_ACTIVATION_RESULT'
     ) {
       await this.pendingRuleBindings.get(
         buildParticipantKey(attachment.discordUserId, envelope.command.seatId)
@@ -477,7 +484,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         const command = envelope.command;
         const perform = () => {
           if (command.type === 'APPLY_RULE_EVENT') this.applyRuleEvent(attachment, command, envelope.reqId);
-          else this.rerollRuleRoll(ws, attachment, command, envelope.reqId);
+          else if (command.type === 'REROLL_RULE_ROLL') this.rerollRuleRoll(ws, attachment, command, envelope.reqId);
+          else this.keepActivationRoll(attachment, command, envelope.reqId);
         };
         if ('characterId' in command && command.characterId) perform();
         else await this.executeSharedRuleCommand(ws, attachment, command, envelope.reqId, perform);
@@ -1129,7 +1137,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       const requiresAuthorization = command.type !== 'ROLL_TABLE_POOL' || command.spendWillpower || (canonical.activeRuleEffects?.length ?? 0) > 0 || !this.isOrdinaryLocalRoll(command, { ...canonical, ruleActivationReceipts: [] }) || mutations.some((mutation) => mutation.resourceDelta.rage || mutation.resourceDelta.gnosis || mutation.resourceDelta.willpower || mutation.permanentResourceDelta || mutation.consumedSourceIds.length || mutation.healthChanges?.length || mutation.rank !== undefined || mutation.activeForm !== undefined) || JSON.stringify(payerAfter.activeRuleEffects ?? []) !== JSON.stringify(canonical.activeRuleEffects ?? []);
       const intent: SharedRuleIntent = {
         id: `shared:${before.ruleCommitNamespace}:${actionKey}:${payerId}`, actionKey, operationSeed: stage.operationSeed, fingerprint, reqId, requesterDiscordId: attachment.discordUserId, attachment: structuredClone(attachment), command: structuredClone(command),
-        authorization: { sheetId: payerId, ownerDiscordId: canonical.ownerDiscordId, expectedUpdatedAt: canonical.updatedAt, operationId: `shared:${before.ruleCommitNamespace}:${actionKey}:${payerId}`, costs: stage.costs, resourceDelta, permanentResourceDelta, consumedSourceIds: [...new Set(mutations.flatMap((mutation) => mutation.consumedSourceIds))], requiredSourceIds: [...new Set(stage.requiredSourceIds)], requiredAbsentReceipts: [...new Set([...stage.requiredAbsentReceipts, ...newReceipts.filter((receipt) => /^(rule-use:|event-use:|reroll-use:)/.test(receipt))])], additionalReceipts: [...new Set([...newReceipts, ...mutations.map((mutation) => mutation.operationId), ...mutations.flatMap((mutation) => (mutation.grantWithdrawals ?? []).map((withdrawal) => `grant-ended:${withdrawal.effectId}`))])] },
+        authorization: { sheetId: payerId, ownerDiscordId: canonical.ownerDiscordId, expectedUpdatedAt: canonical.updatedAt, operationId: `shared:${before.ruleCommitNamespace}:${actionKey}:${payerId}`, costs: stage.costs, resourceDelta, permanentResourceDelta, consumedSourceIds: [...new Set(mutations.flatMap((mutation) => mutation.consumedSourceIds))], requiredSourceIds: [...new Set(stage.requiredSourceIds)], sourceReservationSettlements: mutations.flatMap((mutation) => mutation.sourceReservation ? [mutation.sourceReservation] : []), requiredAbsentReceipts: [...new Set([...stage.requiredAbsentReceipts, ...newReceipts.filter((receipt) => /^(rule-use:|event-use:|reroll-use:)/.test(receipt))])], additionalReceipts: [...new Set([...newReceipts, ...mutations.map((mutation) => mutation.operationId), ...mutations.flatMap((mutation) => (mutation.grantWithdrawals ?? []).map((withdrawal) => `grant-ended:${withdrawal.effectId}`))])] },
         mutations, requiresAuthorization, stagedState: staged, emissions: stage.emissions, characterFlushIds: [...new Set(stage.characterFlushIds)], audits: stage.audits,
       };
       this.roomState.sharedRuleIntent = intent;
@@ -1184,6 +1192,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   private performSharedRuleCommand(ws: WebSocket, attachment: InternalSocketAttachment, command: SharedRuleCommand, reqId: string): void {
     if (command.type === 'ROLL_TABLE_POOL') this.handleRollTablePool(ws, attachment, command, reqId);
     else if (command.type === 'REROLL_RULE_ROLL') this.rerollRuleRoll(ws, attachment, command, reqId);
+    else if (command.type === 'KEEP_ACTIVATION_RESULT') this.keepActivationRoll(attachment, command, reqId);
     else if (command.type === 'APPLY_RULE_EVENT') this.applyRuleEvent(attachment, command, reqId);
     else this.handleRuleCommand(ws, attachment, command, reqId);
   }
@@ -1217,8 +1226,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       } else outgoing.push({ envelope: { seq: next.seq, replyToReqId: emission.replyToReqId, serverTime: Date.now(), event: emission.event.type === 'PARTICIPANTS_UPDATED' ? { type: 'PARTICIPANTS_UPDATED', participants: Object.values(next.tableParticipants ?? {}) } : emission.event } });
     }
     // Activation retries acknowledge the outcome without animating a secondary roll again.
-    const replyType = intent.command.type === 'ACTIVATE_RULE' ? 'RULE_ACTIVATION_RESOLVED' : 'DICE_ROLLED_3D';
-    const replay = records.map((entry) => entry.envelope.event).filter((event) => event.type === replyType);
+    const replyType = intent.command.type === 'ACTIVATE_RULE' || intent.command.type === 'KEEP_ACTIVATION_RESULT' ? 'RULE_ACTIVATION_RESOLVED' : 'DICE_ROLLED_3D';
+    const replay = records.filter((entry) => !entry.targetDiscordId || entry.targetDiscordId === intent.requesterDiscordId).map((entry) => entry.envelope.event).filter((event) => event.type === replyType);
     delete this.getRuleState().sharedActionRecords;
     this.trimRuleReplayCaches();
     this.eventRing = [...oldRing, ...records].slice(-EVENT_RING_CAPACITY);
@@ -1253,6 +1262,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     rules.rollReceipts = Object.fromEntries(Object.entries(rules.rollReceipts).slice(-EVENT_RING_CAPACITY));
     rules.activationReceipts = Object.fromEntries(Object.entries(rules.activationReceipts).slice(-EVENT_RING_CAPACITY));
     const current = new Set((this.roomState.rollHistory ?? []).flatMap((entry) => [entry.id, ...(entry.rerollOf ? [entry.rerollOf] : []), ...(entry.correctionOf ? [entry.correctionOf] : [])]));
+    for (const [id, pending] of Object.entries(rules.pendingActivations ?? {})) {
+      current.add(id);
+      if (pending.referenceRollId) current.add(pending.referenceRollId);
+    }
     rules.rollRequests = Object.fromEntries(Object.entries(rules.rollRequests).filter(([id]) => current.has(id)));
   }
 
@@ -1336,7 +1349,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       }
       const existing = rules.sheets[submitted.id];
       let sheet = structuredClone(submitted);
-      const pendingLocalReceipts = existing && stored && (existing.sheet.ruleActivationReceipts ?? []).some((receipt) => !(stored.ruleActivationReceipts ?? []).includes(receipt));
+      const pendingLocalReceipts = existing && stored && hasUnacknowledgedRuleReceipts(existing.sheet.ruleActivationReceipts, stored.ruleActivationReceipts);
       const base = pendingLocalReceipts ? existing!.sheet : stored && (!existing || stored.updatedAt > existing.sheet.updatedAt) ? stored : existing?.sheet ?? stored;
       const hasUnacknowledgedChanges = base?.ruleActivationReceipts?.some((receipt) => !(submitted.ruleActivationReceipts ?? []).includes(receipt));
       if (base && (hasUnacknowledgedChanges || (existing && submitted.updatedAt <= existing.sheet.updatedAt))) {
@@ -1440,8 +1453,13 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       this.sendRuleStateToSocket(ws, attachment, reqId);
       return;
     }
+    if (Object.values(rules.pendingActivations ?? {}).some((pending) => pending.operationId === operationId)) {
+      this.sendRuleStateToSocket(ws, attachment, reqId);
+      return;
+    }
     const actor = this.resolveRuleActor(attachment, command.seatId, command.characterId);
     const { source, rule: baseRule } = findActorRule(actor, command.sourceEntryId, command.ruleId);
+    if (isRuleSheet(actor) && baseRule.id === FAIR_FORTUNE_RULE_ID) throw new Error('Choose Fair Fortune on a failed or botched result.');
     const action = command.actionId ? baseRule.actions?.find((entry) => entry.id === command.actionId) : undefined;
     if (command.actionId && !action) throw new Error('This source does not provide that action.');
     const parentEffects = rules.effects.filter((effect) => effect.sourceId === actor.id && effect.instance.sourceId === `${actor.id}:${source.id}` && effect.instance.ruleId === baseRule.id && !(effect.instance.preparationRounds ?? 0) && !(effect.instance.preparationSeconds ?? 0));
@@ -1454,8 +1472,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const rule = action ? { ...baseRule, ...action, id: `${baseRule.id}:${action.id}` } : baseRule;
     const referencedRoll = command.referenceRollId ? rules.rollRequests[command.referenceRollId] : undefined;
     if (rule.activation?.correctsPreviousRoll) {
-      if (!referencedRoll || referencedRoll.sheetId !== actor.id || referencedRoll.discordUserId !== attachment.discordUserId || referencedRoll.superseded) throw new Error('Select this character’s original failed or insufficient roll.');
+      if (!referencedRoll || referencedRoll.sheetId !== actor.id || referencedRoll.discordUserId !== attachment.discordUserId || !canCorrectRuleRoll(rules, referencedRoll)) throw new Error('Select this character’s original failed or insufficient roll.');
     } else if (command.referenceRollId) throw new Error('This rule does not modify a previous result.');
+    if (Object.values(rules.pendingActivations ?? {}).some((pending) => pending.actorId === actor.id &&
+      pending.source.id === source.id && (pending.rule.activation?.consumable || pending.parentEffectIds?.length)
+    )) throw new Error('Resolve the pending use of this source first.');
     if (!action && !(isRuleSheet(actor) ? getSheetModifierSources(actor) : getCharacterModifierSources(actor)).some((entry) => entry.id === source.id)) throw new Error('This consumed source can only resolve its remaining documented action.');
     const choices = { ...source.ruleChoices, ...command.ruleChoices };
     validateRuleChoices(rule, choices, false);
@@ -1528,45 +1549,115 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const activationContext = { ...command.context, selectedItemId: source.id, rollKind: 'activation', ruleChoices: choices };
     const roller = rule.activation?.rollSpec?.actor === 'target' ? targets[0] : actor;
     if (!roller) throw new Error('Select the character making this action’s roll.');
-    const roll = rollRuleActivation(roller, source, rule, activationContext, command.spendGnosis, rollCsprngD10, { difficulty: command.activationDifficulty, target: targets[0] });
-    const successes = Math.max(0, (roll?.netSuccesses ?? 1) - (command.opposingSuccesses ?? 0));
-    sourceTraits.opposedFailureMargin = Math.max(0, (command.opposingSuccesses ?? 0) - (roll?.netSuccesses ?? 0));
-    const succeeded = rule.activation?.rollSpec?.outcome === 'failure' ? Boolean(roll && successes < (rule.activation.rollSpec.minimumSuccesses ?? 1)) : successes >= (rule.activation?.rollSpec?.minimumSuccesses ?? 1);
-    const limit = allocationLimit(rule, source, successes, choices, sourceTraits);
-    if (limit !== undefined && rule.activation?.allocation) {
-      const allocation = rule.activation.allocation;
-      if (allocation.consumeOnRoll) {
-        choices[allocation.choiceKey] = limit;
-        for (const target of targets) targetChoices[target.id]![allocation.choiceKey] = limit;
-      }
-      else if ((rule.choiceFields ?? []).some((field) => field.key === allocation.choiceKey && field.perTarget)) {
-        const values = targets.map((target) => Number(targetChoices[target.id]?.[allocation.choiceKey] ?? 0));
-        if (values.reduce((sum, value) => sum + value, 0) > limit) throw new Error('The allocated benefit exceeds the available pool.');
-        if (allocation.evenSplit && values.length && Math.max(...values) - Math.min(...values) > 1) throw new Error('Divide this benefit as evenly as possible between recipients.');
-      } else choices[allocation.choiceKey] = Math.min(Number(choices[allocation.choiceKey] ?? command.choiceValue ?? limit), limit);
-    }
-    const consumed = succeeded && rule.activation?.consumable ? [source.id] : [];
-    const granted: ReturnType<typeof createRoomRuleEffect>[] = [];
-    const activationEffects = succeeded ? rule.effects : roll?.isBotch ? rule.activation?.botchEffects ?? rule.activation?.failureEffects ?? [] : rule.activation?.failureEffects ?? [];
-    if (activationEffects.length) {
-      for (const recipient of ['self', 'target', 'pack', 'shared'] as const) {
-        const effects = activationEffects.filter((effect) => !rule.activation?.correctsPreviousRoll && (effect.recipient ?? 'self') === recipient && (effect.duration || rule.activation || recipient === 'shared'));
-        if (!effects.length) continue;
-        const recipients = recipient === 'self' ? [actor] : targets;
-        for (const target of recipients) {
-          const durations = [...new Set(effects.map((effect) => effect.duration ?? rule.activation?.duration ?? 'until-ended'))];
-          for (const duration of durations) {
-            granted.push(createRoomRuleEffect({ id: `${operationId}:${target.id}:${recipient}:${granted.length}`, actor, source, rule,
-              effects: effects.filter((effect) => (effect.duration ?? rule.activation?.duration ?? 'until-ended') === duration),
-              targetId: target.id, recipient, casterDiscordId: attachment.discordUserId, clockId: this.roomState.campaignId ?? '', clock: rules.clock,
-              successes, choiceValue: command.choiceValue, ruleChoices: { ...choices, ...(recipient === 'self' ? {} : targetChoices[target.id]) }, sourceTraits, boundTargetIds: recipient === 'self' && rule.activation?.requiresTarget ? targets.map((entry) => entry.id) : undefined }));
+    let request: W20RollRequest | undefined;
+    const roll = rollRuleActivation(roller, source, rule, activationContext, command.spendGnosis, rollCsprngD10, {
+      difficulty: command.activationDifficulty,
+      target: targets[0],
+      itemOwner: actor,
+      specialtyMode: this.roomState.specialtyMode,
+      captureRequest: (value) => { request = value; },
+    });
+    const rollerController = this.getActivationRollerController(roller, attachment.discordUserId);
+    const isSecretRoll = command.isSecretRoll ?? true;
+    const history: RollHistoryEntry | undefined = roll ? {
+      id: 'activation-' + crypto.randomUUID(),
+      timestamp: Date.now(),
+      rollerDiscordId: rollerController ?? attachment.discordUserId,
+      rollerName: roller.name,
+      rollerAvatarUrl: rollerController === attachment.discordUserId ? attachment.avatarUrl ?? null : null,
+      label: rule.name,
+      rageDiceCount: 0,
+      isSecretRoll,
+      roll,
+      ...(isRuleSheet(roller) ? { sheetId: roller.id } : {}),
+    } : undefined;
+    const continuation = {
+      operationId, casterDiscordId: attachment.discordUserId, actorId: actor.id, source, rule,
+      targetIds: targets.map((target) => target.id),
+      parentEffectIds: action?.requiresActive || action?.endsParent ? parentEffects.map((effect) => effect.instance.id) : undefined,
+      endsParent: action?.endsParent,
+      endParentOnEitherResult: baseRule.id === 'talen-moon-sign' && action?.id === 'resist',
+      grantedGift, choices, targetChoices, context: activationContext, sourceTraits,
+      choiceValue: command.choiceValue, opposingSuccesses: command.opposingSuccesses ?? 0,
+      referenceRollId: command.referenceRollId,
+      privateRollerDiscordId: isSecretRoll ? history?.rollerDiscordId : undefined,
+    };
+    const charge = { costs, permanentSpend, frequencyKeys };
+    if (isRuleSheet(actor) && isRuleSheet(roller) && rollerController && request && history && roll) {
+      const original = {
+        sheetId: roller.id, discordUserId: rollerController, request, history,
+        minimumSuccesses: (rule.activation?.rollSpec?.minimumSuccesses ?? 1) + continuation.opposingSuccesses,
+      };
+      if (getRerollOptions(this.roomState, roller, original).length) {
+        // The available resource and same-turn lock must reflect the payment for the original action.
+        const payment = this.applyActivationCharge(actor, rule, choices, charge, []);
+        this.queueRuleSheetMutation(actor.id, operationId + ':payment', payment.delta, [], [], payment.transactions);
+        this.reserveActivationFrequency(actor.id, frequencyKeys);
+        const currentRoller = rules.sheets[roller.id]!.sheet;
+        if (getRerollOptions(this.roomState, currentRoller, original).length) {
+          rules.rollRequests[history.id] = original;
+          const sourceReservation = rule.activation?.consumable
+            ? { sourceId: source.id, token: operationId }
+            : undefined;
+          if (sourceReservation && this.sharedRuleStage) {
+            this.queueRuleSheetMutation(actor.id, reserveRuleSourceReceipt(source.id, operationId));
           }
+          (rules.pendingActivations ??= {})[history.id] = { ...continuation, roll,
+            sourceReservation: this.sharedRuleStage ? sourceReservation : undefined };
+          this.publishActivationRoll(history, reqId);
+          this.broadcastRuleState(reqId);
+          return;
         }
+        this.completeRuleActivation(continuation, roll, reqId);
+        this.publishActivationRoll(history, reqId);
+        return;
       }
     }
-    if (grantedGift) for (const effect of granted) effect.instance.grantedGift = grantedGift;
-    const replaced = succeeded ? rules.effects.filter((effect) => effect.sourceId === actor.id && (effect.instance.ruleId === rule.id || action?.endsParent && effect.instance.ruleId === baseRule.id) && (shared || effect.instance.sourceId === `${actor.id}:${source.id}`)) : [];
-    rules.effects = [...rules.effects.filter((effect) => !replaced.includes(effect)), ...granted];
+    this.completeRuleActivation(continuation, roll, reqId, charge);
+    if (history) this.publishActivationRoll(history, reqId);
+  }
+
+  private getActivationRollerController(roller: RuleActor, requester: string): string | undefined {
+    if (!isRuleSheet(roller)) return roller.ownerDiscordId ?? undefined;
+    const seatControllers = Object.entries(this.getRuleState().seatBindings)
+      .filter(([, id]) => id === roller.id)
+      .map(([key]) => key.split('::')[0]!);
+    if (seatControllers.includes(requester)) return requester;
+    if (seatControllers.includes(roller.ownerDiscordId)) return roller.ownerDiscordId;
+    return seatControllers[0];
+  }
+
+  private publishActivationRoll(history: RollHistoryEntry, reqId: string): void {
+    this.roomState.rollHistory = [history, ...(this.roomState.rollHistory ?? [])].slice(0, 50);
+    this.commitAndBroadcast([{ event: {
+      type: 'DICE_ROLLED_3D',
+      rollerDiscordId: history.rollerDiscordId,
+      rollerName: history.rollerName,
+      rollerAvatarUrl: history.rollerAvatarUrl,
+      label: history.label,
+      roll: history.roll,
+      historyEntry: history,
+      isSecretStRoll: history.isSecretRoll,
+    }, targetDiscordId: history.isSecretRoll ? history.rollerDiscordId : null }], reqId);
+  }
+
+  private reserveActivationFrequency(actorId: string, frequencyKeys: string[]): void {
+    this.getRuleState().frequencyReceipts.push(...frequencyKeys);
+    for (const key of frequencyKeys) this.queueRuleSheetMutation(actorId, key);
+  }
+
+  private applyActivationCharge(
+    actor: RuleActor,
+    rule: PendingRuleActivation['rule'],
+    choices: PendingRuleActivation['choices'],
+    charge: { costs: { rage: number; gnosis: number; willpower: number }; permanentSpend: number },
+    consumed: string[],
+  ) {
+    const rules = this.getRuleState();
+    const spends = rules.turnSpends[actor.id];
+    const { costs, permanentSpend } = charge;
+    const permanentCost = rule.activation?.permanentCost;
+    const transactions: Pick<RuleSheetMutation, 'permanentResourceDelta' | 'healthChanges'> = {};
     rules.turnSpends[actor.id] = { turn: rules.clock.turn, rage: costs.rage > 0 || (spends?.turn === rules.clock.turn && spends.rage) || false, gnosis: costs.gnosis > 0 || (spends?.turn === rules.clock.turn && spends.gnosis) || false };
     const nextActor = {
       ...actor,
@@ -1589,13 +1680,89 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     }
     this.storeRuleActor(nextActor);
     this.spendGrantedResources(actor.id, costs);
-    const resourceDeltas = new Map<string, { rage: number; gnosis: number; willpower: number }>([[actor.id, { rage: -costs.rage, gnosis: -costs.gnosis, willpower: -costs.willpower }]]);
-    const transactions = new Map<string, Partial<Pick<RuleSheetMutation, 'renownDelta' | 'experienceDelta' | 'mysticalExperienceDelta' | 'permanentResourceDelta' | 'healthChanges' | 'rank'>>>();
-    if (healthCost && healthLevels > 0) transactions.set(actor.id, { healthChanges: [{ levels: healthLevels, type: healthCost.type, mode: 'damage' }] });
+    const delta = { rage: -costs.rage, gnosis: -costs.gnosis, willpower: -costs.willpower };
+    if (healthCost && healthLevels > 0) transactions.healthChanges = [{ levels: healthLevels, type: healthCost.type, mode: 'damage' }];
     if (permanentCost) {
-      transactions.set(actor.id, { ...transactions.get(actor.id), permanentResourceDelta: { [permanentCost.resource]: -permanentSpend } });
-      const delta = resourceDeltas.get(actor.id)!;
+      transactions.permanentResourceDelta = { [permanentCost.resource]: -permanentSpend };
       delta[permanentCost.resource] += nextActor[permanentCost.resource].temporary - (actor[permanentCost.resource].temporary - costs[permanentCost.resource]);
+    }
+    return { nextActor, delta, transactions };
+  }
+
+  private completeRuleActivation(
+    pending: Omit<PendingRuleActivation, 'roll'>,
+    roll: W20RollResult | null,
+    reqId: string | undefined,
+    charge?: { costs: { rage: number; gnosis: number; willpower: number }; permanentSpend: number; frequencyKeys: string[] },
+  ): void {
+    const rules = this.getRuleState();
+    const { actorId, rule, source, operationId, casterDiscordId, grantedGift, parentEffectIds, endsParent, endParentOnEitherResult, choiceValue, opposingSuccesses, referenceRollId } = pending;
+    const { choices, targetChoices, context: activationContext, sourceTraits } = structuredClone(pending);
+    const actor = this.findRuleTarget(actorId);
+    if (!actor) throw new Error('The activation’s source character is no longer available.');
+    const targets = pending.targetIds.flatMap((id) => {
+      const target = this.findRuleTarget(id);
+      return target ? [target] : [];
+    });
+    const referencedRoll = referenceRollId ? rules.rollRequests[referenceRollId] : undefined;
+    const shared = rule.effects.some((effect) => effect.recipient === 'shared');
+    const successes = Math.max(0, (roll?.netSuccesses ?? 1) - opposingSuccesses);
+    sourceTraits.opposedFailureMargin = Math.max(0, opposingSuccesses - (roll?.netSuccesses ?? 0));
+    const minimum = rule.activation?.rollSpec?.minimumSuccesses ?? 1;
+    const succeeded = rule.activation?.rollSpec?.outcome === 'failure' ? Boolean(roll && successes < minimum) : successes >= minimum;
+    const limit = succeeded ? allocationLimit(rule, source, successes, choices, sourceTraits) : undefined;
+    if (limit !== undefined && rule.activation?.allocation) {
+      const allocation = rule.activation.allocation;
+      if (allocation.consumeOnRoll) {
+        choices[allocation.choiceKey] = limit;
+        for (const target of targets) targetChoices[target.id]![allocation.choiceKey] = limit;
+      }
+      else if ((rule.choiceFields ?? []).some((field) => field.key === allocation.choiceKey && field.perTarget)) {
+        const values = targets.map((target) => Number(targetChoices[target.id]?.[allocation.choiceKey] ?? 0));
+        if (values.reduce((sum, value) => sum + value, 0) > limit) throw new Error('The allocated benefit exceeds the available pool.');
+        if (allocation.evenSplit && values.length && Math.max(...values) - Math.min(...values) > 1) throw new Error('Divide this benefit as evenly as possible between recipients.');
+      } else choices[allocation.choiceKey] = Math.min(Number(choices[allocation.choiceKey] ?? choiceValue ?? limit), limit);
+    }
+    const consumed = succeeded && rule.activation?.consumable ? [source.id] : [];
+    const granted: ReturnType<typeof createRoomRuleEffect>[] = [];
+    const activationEffects = succeeded ? rule.effects : roll?.isBotch ? rule.activation?.botchEffects ?? rule.activation?.failureEffects ?? [] : rule.activation?.failureEffects ?? [];
+    if (activationEffects.length) {
+      for (const recipient of ['self', 'target', 'pack', 'shared'] as const) {
+        const effects = activationEffects.filter((effect) => !rule.activation?.correctsPreviousRoll && (effect.recipient ?? 'self') === recipient && (effect.duration || rule.activation || recipient === 'shared'));
+        if (!effects.length) continue;
+        const recipients = recipient === 'self' ? [actor] : targets;
+        for (const target of recipients) {
+          const durations = [...new Set(effects.map((effect) => effect.duration ?? rule.activation?.duration ?? 'until-ended'))];
+          for (const duration of durations) {
+            granted.push(createRoomRuleEffect({ id: `${operationId}:${target.id}:${recipient}:${granted.length}`, actor, source, rule,
+              effects: effects.filter((effect) => (effect.duration ?? rule.activation?.duration ?? 'until-ended') === duration),
+              targetId: target.id, recipient, casterDiscordId, clockId: this.roomState.campaignId ?? '', clock: rules.clock,
+              successes, choiceValue, ruleChoices: { ...choices, ...(recipient === 'self' ? {} : targetChoices[target.id]) }, sourceTraits, boundTargetIds: recipient === 'self' && rule.activation?.requiresTarget ? targets.map((entry) => entry.id) : undefined }));
+          }
+        }
+      }
+    }
+    if (grantedGift) for (const effect of granted) effect.instance.grantedGift = grantedGift;
+    const replaced = rules.effects.filter((effect) => {
+      if (effect.sourceId !== actor.id) return false;
+      if (endsParent && (succeeded || endParentOnEitherResult) && parentEffectIds?.includes(effect.instance.id)) return true;
+      return succeeded && effect.instance.ruleId === rule.id && (shared || effect.instance.sourceId === actor.id + ':' + source.id);
+    });
+    rules.effects = [...rules.effects.filter((effect) => !replaced.includes(effect)), ...granted];
+    const resourceDeltas = new Map<string, { rage: number; gnosis: number; willpower: number }>();
+    const transactions = new Map<string, Partial<Pick<RuleSheetMutation, 'renownDelta' | 'experienceDelta' | 'mysticalExperienceDelta' | 'permanentResourceDelta' | 'healthChanges' | 'rank'>>>();
+    if (charge) {
+      const payment = this.applyActivationCharge(actor, rule, choices, charge, consumed);
+      resourceDeltas.set(actor.id, payment.delta);
+      transactions.set(actor.id, payment.transactions);
+    } else if (consumed.length) {
+      const nextActor = structuredClone(actor);
+      if (isRuleSheet(nextActor)) {
+        nextActor.fetishes = nextActor.fetishes.filter((item) => !consumed.includes(item.id));
+        nextActor.combatWeapons = nextActor.combatWeapons.filter((item) => !consumed.includes(item.id));
+      } else nextActor.fetishes = nextActor.fetishes.filter((item) => !consumed.includes(item.id));
+      nextActor.equipment = nextActor.equipment?.filter((item) => !consumed.includes(item.id));
+      this.storeRuleActor(nextActor);
     }
     const replacementWithdrawals = new Map<string, NonNullable<RuleSheetMutation['grantWithdrawals']>>();
     for (const effect of replaced) {
@@ -1617,18 +1784,25 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     rules.effects = rules.effects.filter((effect) => effect.instance.duration !== 'instant' || (effect.instance.preparationRounds ?? 0) > 0 || (effect.instance.preparationSeconds ?? 0) > 0);
     const affected = new Set([actor.id, ...granted.map((effect) => effect.targetId), ...replaced.map((effect) => effect.targetId)]);
     for (const targetId of affected) {
-      this.queueRuleSheetMutation(targetId, `${operationId}:${targetId}`, resourceDeltas.get(targetId), targetId === actor.id ? consumed : [], [...replaced.map((effect) => effect.instance.id), ...granted.filter((effect) => effect.instance.duration === 'instant').map((effect) => effect.instance.id)], { ...transactions.get(targetId), grantWithdrawals: replacementWithdrawals.get(targetId) });
+      this.queueRuleSheetMutation(targetId, `${operationId}:${targetId}`, resourceDeltas.get(targetId), targetId === actor.id ? consumed : [], [...replaced.map((effect) => effect.instance.id), ...granted.filter((effect) => effect.instance.duration === 'instant').map((effect) => effect.instance.id)], { ...transactions.get(targetId), grantWithdrawals: replacementWithdrawals.get(targetId),
+        sourceReservation: targetId === actor.id ? pending.sourceReservation : undefined });
     }
-    rules.frequencyReceipts.push(...frequencyKeys);
-    for (const frequencyKey of frequencyKeys) this.queueRuleSheetMutation(actor.id, frequencyKey);
-    const receipt: Extract<ServerEvent, { type: 'RULE_ACTIVATION_RESOLVED' }> = { type: 'RULE_ACTIVATION_RESOLVED', activationId: operationId, sourceId: actor.id, ruleId: rule.id, roll, succeeded };
+    if (charge) this.reserveActivationFrequency(actor.id, charge.frequencyKeys);
+    const receipt: Extract<ServerEvent, { type: 'RULE_ACTIVATION_RESOLVED' }> = {
+      type: 'RULE_ACTIVATION_RESOLVED',
+      activationId: operationId,
+      sourceId: actor.id,
+      ruleId: rule.id,
+      roll: pending.privateRollerDiscordId && pending.privateRollerDiscordId !== casterDiscordId ? null : roll,
+      succeeded,
+    };
     rules.activationReceipts[operationId] = receipt;
-    this.commitAndBroadcast([{ event: receipt, targetDiscordId: attachment.discordUserId }], reqId);
-    if (referencedRoll && succeeded) this.correctPreviousRuleRoll(referencedRoll, successes, rule.name, reqId);
+    this.commitAndBroadcast([{ event: receipt, targetDiscordId: casterDiscordId }], reqId);
+    if (referencedRoll && !referencedRoll.rerolled && !referencedRoll.superseded && succeeded) this.correctPreviousRuleRoll(referencedRoll, successes, rule.name, reqId);
     this.broadcastRuleState(reqId);
   }
 
-  private correctPreviousRuleRoll(original: NonNullable<ReturnType<GameRoomDO['getRuleState']>['rollRequests'][string]>, successes: number, ruleName: string, reqId: string): void {
+  private correctPreviousRuleRoll(original: NonNullable<ReturnType<GameRoomDO['getRuleState']>['rollRequests'][string]>, successes: number, ruleName: string, reqId?: string): void {
     const previous = original.history;
     const netSuccesses = previous.roll.netSuccesses + successes;
     const degrees = ['marginal', 'moderate', 'complete', 'exceptional', 'phenomenal'] as const;
@@ -1737,7 +1911,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   private consumeNextRollEffects(actorId: string, modifiers: AppliedRuleModifier[], operationId: string, context: RuleContext = {}): void {
     const rules = this.getRuleState();
     const usedSources = new Set(modifiers.map((modifier) => modifier.sourceId));
-    const changed = rules.effects.filter((effect) => effect.targetId === actorId && usedSources.has(effect.instance.sourceId));
+    const reserved = new Set(Object.values(rules.pendingActivations ?? {}).flatMap((pending) => pending.parentEffectIds ?? []));
+    const changed = rules.effects.filter((effect) =>
+      effect.targetId === actorId && effect.instance.ruleId !== FAIR_FORTUNE_RULE_ID &&
+      usedSources.has(effect.instance.sourceId) && !reserved.has(effect.instance.id)
+    );
     const removed: string[] = [];
     for (const effect of changed) {
       const allocation = effect.instance.rule?.activation?.allocation;
@@ -1753,7 +1931,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     this.queueRuleSheetMutation(actorId, `${operationId}:consume`, undefined, [], removed);
   }
 
-  private queueRuleSheetMutation(sheetId: string, operationId: string, resourceDelta: { rage: number; gnosis: number; willpower: number; grantWithdrawals?: RuleSheetMutation['grantWithdrawals'] } = { rage: 0, gnosis: 0, willpower: 0 }, consumedSourceIds: string[] = [], removedEffectIds: string[] = [], details: Partial<Pick<RuleSheetMutation, 'renownDelta' | 'experienceDelta' | 'mysticalExperienceDelta' | 'permanentResourceDelta' | 'healthChanges' | 'rank' | 'activeForm' | 'grantWithdrawals'>> = {}): void {
+  private queueRuleSheetMutation(sheetId: string, operationId: string, resourceDelta: { rage: number; gnosis: number; willpower: number; grantWithdrawals?: RuleSheetMutation['grantWithdrawals'] } = { rage: 0, gnosis: 0, willpower: 0 }, consumedSourceIds: string[] = [], removedEffectIds: string[] = [], details: Partial<Pick<RuleSheetMutation, 'renownDelta' | 'experienceDelta' | 'mysticalExperienceDelta' | 'permanentResourceDelta' | 'healthChanges' | 'rank' | 'activeForm' | 'grantWithdrawals' | 'sourceReservation'>> = {}): void {
     const rules = this.getRuleState();
     const record = rules.sheets[sheetId];
     if (!record) {
@@ -1771,6 +1949,9 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const rules = this.getRuleState();
     const effect = rules.effects.find((item) => item.instance.id === command.effectId);
     if (!effect) return;
+    if (Object.values(rules.pendingActivations ?? {}).some((pending) => pending.parentEffectIds?.includes(effect.instance.id))) {
+      throw new Error('Resolve the pending use of this effect first.');
+    }
     const target = this.findRuleTarget(effect.targetId);
     const controlsTarget = target && (target.ownerDiscordId === attachment.discordUserId || isRuleSheet(target) && Object.entries(rules.seatBindings).some(([key, id]) => id === target.id && (key === attachment.discordUserId || key.startsWith(`${attachment.discordUserId}::`))));
     if (effect.casterDiscordId !== attachment.discordUserId && !controlsTarget && attachment.role !== 'storyteller') throw new Error('Only the caster, recipient, or Storyteller may end this effect.');
@@ -1783,10 +1964,12 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   private advanceRuleClock(unit: 'turn' | 'scene' | 'story' | 'session' | 'seconds', amount: number, operationId: string): void {
     const rules = this.getRuleState();
     if (rules.advanceReceipts.includes(operationId)) return;
+    for (const rollId of Object.keys(rules.pendingActivations ?? {})) this.finishPendingActivation(rollId);
     rules.advanceReceipts.push(operationId);
     const prior = rules.effects;
     rules.clock[unit] += amount;
     rules.effects = prior.flatMap((effect) => {
+      if (unit === 'scene' && effect.instance.ruleId === FAIR_FORTUNE_RULE_ID && effect.instance.duration === 'next-roll') return [];
       if (unit === 'turn' && (effect.instance.preparationRounds ?? 0) > 0) {
         const required = effect.instance.preparationRounds ?? 0;
         const prepared = { ...effect, instance: { ...effect.instance, preparationRounds: Math.max(0, required - amount) } };
@@ -1866,7 +2049,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         const current = await repository.getById(mutation.sheetId);
         if (!current) throw new RuleSpendConflictError('NOT_FOUND', 'A queued character is no longer in shared storage.');
         if (!current.ruleActivationReceipts?.includes(mutation.operationId)) {
-          const saved = mutation.grantWithdrawals?.length
+          const saved = mutation.grantWithdrawals?.length && !mutation.sourceReservation
             ? await repository.mutateRuleState(mutation.sheetId, (sheet) => applyCanonicalGrantCleanup(sheet, mutation))
             : (await repository.authorizeRuleSpend({
                 sheetId: mutation.sheetId,
@@ -1876,6 +2059,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
                 resourceDelta: mutation.resourceDelta,
                 permanentResourceDelta: mutation.permanentResourceDelta,
                 consumedSourceIds: mutation.consumedSourceIds,
+                sourceReservationSettlements: mutation.sourceReservation ? [mutation.sourceReservation] : [],
                 additionalReceipts: [mutation.operationId],
               }, (sheet) => applyCanonicalGrantCleanup(sheet, { ...mutation, resourceDelta: { rage: 0, gnosis: 0, willpower: 0 }, permanentResourceDelta: undefined }))).sheet;
           if (saved && rules.sheets[saved.id]) this.replaceCanonicalRuleSheet(saved);
@@ -1965,39 +2149,73 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const actor = this.requireBoundSheet(attachment, command.seatId, command.sheetId);
     const original = rules.rollRequests[command.rollId];
     if (!original || original.sheetId !== actor.id || original.discordUserId !== attachment.discordUserId) throw new Error('This result is unavailable for this character.');
-    if (original.rerolled || original.superseded || original.history.rerollOf) throw new Error('This roll has already been rerolled or corrected.');
-    const source = getSheetModifierSources(actor).find((entry) => getSourceModifierRule(entry)?.id === command.ruleId);
-    if (!source) throw new Error('This character no longer has the reroll rule.');
-    const definition = getSourceModifierRule(source)!;
-    const evaluation = evaluateModifierRules([{ ...source, customRule: definition }], actor);
-    const eligibility = getRuleResultTriggers(original.history.roll, evaluation.modifiers);
-    if (!eligibility.canReroll || eligibility.rerollsAvailable < 1) throw new Error('This rule rerolls a failed or botched result.');
-    const budgetKey = `reroll-use:${actor.id}:${definition.id}:${this.roomState.ruleCommitNamespace}:story:${rules.clock.story}`;
-    const priorUsage = Math.max(rules.rerollUsage[budgetKey] ?? 0, (actor.ruleActivationReceipts ?? []).filter((receipt) => receipt.startsWith(`${budgetKey}:`)).length);
-    if (priorUsage >= eligibility.rerollsAvailable) throw new Error('All rerolls for this story have been used.');
+    const option = getRerollOptions(this.roomState, actor, original).find((entry) => entry.ruleId === command.ruleId);
+    if (!option) throw new Error('This reroll is unavailable for the original result or this character.');
     const roll = resolveW20DicePool(original.request);
-    original.rerolled = true;
-    rules.rerollUsage[budgetKey] = priorUsage + 1;
-    const receipt = `${budgetKey}:${priorUsage + 1}`;
     if (this.sharedRuleStage) {
-      this.sharedRuleStage.requiredSourceIds.push(source.id);
-      this.sharedRuleStage.requiredAbsentReceipts.push(receipt);
+      this.sharedRuleStage.costs.gnosis = option.gnosisCost;
+      this.sharedRuleStage.requiredSourceIds.push(option.sourceId);
+      this.sharedRuleStage.requiredAbsentReceipts.push(option.useReceipt);
     }
+    original.rerolled = true;
+    rules.rerollUsage[option.budgetKey] = option.previousUsage + 1;
+    if (option.gnosisCost) {
+      const previousSpend = rules.turnSpends[actor.id];
+      rules.turnSpends[actor.id] = {
+        turn: rules.clock.turn, gnosis: true, rage: previousSpend?.turn === rules.clock.turn && previousSpend.rage,
+      };
+      this.storeRuleActor({ ...actor, gnosis: { ...actor.gnosis, temporary: actor.gnosis.temporary - option.gnosisCost } });
+      this.spendGrantedResources(actor.id, { rage: 0, gnosis: option.gnosisCost, willpower: 0 });
+    }
+    if (option.prepaid) rules.effects = rules.effects.filter((effect) => effect.instance.id !== option.prepaid?.instance.id);
     const refund = !original.refundedWillpower && getRuleResultTriggers(roll, original.request.ruleModifiers ?? [], { spentWillpower: original.request.spendWillpower }).refundWillpower;
     if (refund) {
       if (original.packKey && rules.packPools[original.packKey]) {
         const pool = rules.packPools[original.packKey]!;
         pool.current = Math.min(pool.max, pool.current + 1);
-      } else this.storeRuleActor({ ...actor, willpower: { ...actor.willpower, temporary: actor.willpower.temporary + 1 } });
+      } else {
+        const current = rules.sheets[actor.id]!.sheet;
+        this.storeRuleActor({ ...current, willpower: { ...current.willpower, temporary: current.willpower.temporary + 1 } });
+      }
       original.refundedWillpower = true;
     }
-    this.queueRuleSheetMutation(actor.id, operationId, { rage: 0, gnosis: 0, willpower: refund && !original.packKey ? 1 : 0 });
-    this.queueRuleSheetMutation(actor.id, receipt);
-    const history: RollHistoryEntry = { ...original.history, id: `roll-${this.roomState.seq + 1}-${roll.physicsSeed}`, timestamp: Date.now(), label: `${original.history.label} — ${definition.name}`, roll, rerollOf: original.history.id };
+    this.queueRuleSheetMutation(actor.id, operationId,
+      { rage: 0, gnosis: -option.gnosisCost, willpower: refund && !original.packKey ? 1 : 0 }, [],
+      option.prepaid ? [option.prepaid.instance.id] : []);
+    this.queueRuleSheetMutation(actor.id, option.useReceipt);
+    const history: RollHistoryEntry = { ...original.history, id: `roll-${this.roomState.seq + 1}-${roll.physicsSeed}`, timestamp: Date.now(), label: `${original.history.label} — ${option.name}`, roll, rerollOf: original.history.id };
     rules.rollReceipts[operationId] = history;
     this.roomState.rollHistory = [history, ...(this.roomState.rollHistory ?? [])].slice(0, 50);
     this.commitAndBroadcast([{ event: { type: 'DICE_ROLLED_3D', rollerDiscordId: attachment.discordUserId, rollerName: history.rollerName, label: history.label, roll, historyEntry: history, isSecretStRoll: history.isSecretRoll }, targetDiscordId: history.isSecretRoll ? attachment.discordUserId : null }], reqId);
-    this.broadcastRuleState(reqId);
+    if (rules.pendingActivations?.[command.rollId]) this.finishPendingActivation(command.rollId, reqId, roll);
+    else this.broadcastRuleState(reqId);
+  }
+
+  private keepActivationRoll(
+    attachment: InternalSocketAttachment,
+    command: Extract<ClientCommand, { type: 'KEEP_ACTIVATION_RESULT' }>,
+    reqId: string,
+  ): void {
+    const actor = this.requireBoundSheet(attachment, command.seatId, command.sheetId);
+    const original = this.getRuleState().rollRequests[command.rollId];
+    if (!original || original.sheetId !== actor.id || original.discordUserId !== attachment.discordUserId) {
+      throw new Error('This activation result is unavailable for this character.');
+    }
+    if (original.activationClosed) {
+      this.broadcastRuleState(reqId);
+      return;
+    }
+    this.finishPendingActivation(command.rollId, reqId);
+  }
+
+  private finishPendingActivation(rollId: string, reqId?: string, replacement?: W20RollResult): void {
+    const rules = this.getRuleState();
+    const pending = rules.pendingActivations?.[rollId];
+    const original = rules.rollRequests[rollId];
+    if (!pending || !original) throw new Error('This activation is no longer awaiting a result.');
+    delete rules.pendingActivations![rollId];
+    original.activationClosed = true;
+    this.completeRuleActivation(pending, replacement ?? pending.roll, reqId);
   }
 
   private resolveTableRuleRoll(sheet: W20UserCharacterSheet, shortcut: import('@w20-vtt/core').SheetShortcut, context: RuleContext = {}, attachment?: InternalSocketAttachment) {
@@ -2008,7 +2226,22 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       const available = Number(instance.ruleChoices?.[allocation.choiceKey] ?? instance.successes ?? 0);
       if (!Number.isFinite(spent) || spent < 0 || spent > available) throw new Error('Choose a bonus within the effect’s remaining dice.');
     }
-    const resolved = resolveSheetShortcut(sheet, shortcut, context);
+    const shortcutSourceKey = (source: typeof shortcut.source) =>
+      JSON.stringify(Object.entries(source).sort());
+    const unverifiedSpecialty =
+      shortcut.forceSpecialty === true &&
+      shortcut.source.kind !== 'static' &&
+      !sheet.shortcuts.some(
+        (saved) =>
+          saved.id === shortcut.id &&
+          saved.forceSpecialty === true &&
+          shortcutSourceKey(saved.source) === shortcutSourceKey(shortcut.source)
+      );
+    const resolved = resolveSheetShortcut(
+      sheet,
+      unverifiedSpecialty ? { ...shortcut, forceSpecialty: false } : shortcut,
+      context
+    );
     const defenses: AppliedRuleModifier[] = [];
     const targetPending: string[] = [];
     for (const targetId of [...new Set(context.targetIds ?? [])]) {
@@ -2020,9 +2253,14 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     }
     const pool = Math.max(0, Math.min(30, applyRuleValue({ modifiers: defenses }, 'pool', resolved.rawPool)));
     const difficulty = Math.max(2, Math.min(10, applyRuleValue({ modifiers: defenses }, 'difficulty', resolved.difficulty)));
+    const modifiers = [...resolved.modifiers, ...defenses];
+    const specialty = resolveW20Specialty({
+      hasApplicableSpecialty: resolved.declaredSpecialty,
+      ruleModifiers: modifiers,
+    });
     return { pool, effectivePool: Math.max(0, pool + (resolved.applyWoundPenalty ? resolved.woundPenalty : 0)), difficulty,
-      hasSpecialty: resolved.hasSpecialty, applyWoundPenalty: resolved.applyWoundPenalty, woundPenalty: resolved.woundPenalty,
-      modifiers: [...resolved.modifiers, ...defenses], pendingTags: [...resolved.pending.flatMap((pending) => pending.reasons), ...targetPending], bonusAutomaticSuccesses: resolved.bonusAutomaticSuccesses,
+      declaredSpecialty: resolved.declaredSpecialty, hasSpecialty: specialty.hasApplicableSpecialty, applyWoundPenalty: resolved.applyWoundPenalty, woundPenalty: resolved.woundPenalty,
+      modifiers, pendingTags: [...resolved.pending.flatMap((pending) => pending.reasons), ...targetPending], bonusAutomaticSuccesses: resolved.bonusAutomaticSuccesses,
       ...(context.rollKind === 'initiative' ? { initiativeModifier: computeUserSheetStats(sheet, { ...context, rollKind: 'initiative' }).initiativeBonus } : {}) };
   }
 
@@ -2116,26 +2354,15 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           )
         : []);
     const cleanLabel = command.label?.trim() || (isInitiative ? 'Initiative' : 'W20 Dice Pool');
-    const supplied = command.physicalDiceValues ?? [];
-    let idx = 0;
-    const rng = () => {
-      if (idx < supplied.length) {
-        const val = supplied[idx]!;
-        idx += 1;
-        return val;
-      }
-      return rollCsprngD10();
-    };
-
     const request = {
       label: cleanLabel,
       basePool: typed?.pool ?? command.pool,
       woundPenalty,
       applyWoundPenalty: applyWounds,
       baseDifficulty: typed?.difficulty ?? command.difficulty,
-      hasApplicableSpecialty: typed?.hasSpecialty ?? command.hasSpecialty,
+      hasApplicableSpecialty: typed?.declaredSpecialty ?? command.hasSpecialty,
       spendWillpower: command.spendWillpower,
-      specialtyMode: 'w20_double' as const,
+      specialtyMode: this.roomState.specialtyMode ?? 'w20_double',
       ruleModifiers: resultModifiers,
     };
     const roll = isInitiative
@@ -2147,9 +2374,12 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
                 ? command.initiativeModifier
                 : woundPenalty,
           },
-          rng,
+          () => command.physicalDiceValues?.[0] ?? rollCsprngD10(),
         )
-      : resolveW20DicePool(request, rng);
+      : resolveW20DicePool(request, rollCsprngD10, {
+          base: command.physicalDiceValues,
+          bonusWaves: command.physicalBonusWaves,
+        });
 
     const rageDiceCount = isInitiative
       ? 0
@@ -2285,7 +2515,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         rollerName: historyEntry.rollerName,
         label: cleanLabel,
         roll,
-        hasSpecialty: command.hasSpecialty,
+        hasSpecialty: roll.hasApplicableSpecialty,
         spentWillpower: command.spendWillpower,
         isSecretStRoll: isSecretRoll,
       });
@@ -2897,6 +3127,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       case 'ADVANCE_RULE_CLOCK':
       case 'APPLY_RULE_EVENT':
       case 'REROLL_RULE_ROLL':
+      case 'KEEP_ACTIVATION_RESULT':
         return;
 
       case 'TOKEN_MOVE': {
@@ -4068,6 +4299,24 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         return;
       }
 
+      case 'SET_TABLE_SPECIALTY_MODE': {
+        const seated = Object.values(this.roomState.tableParticipants ?? {}).some(
+          (seat) => seat.discordUserId === attachment.discordUserId && seat.isConnected
+        );
+        if (!this.roomState.campaignId?.startsWith('dice-room-') || !seated) {
+          this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'Join a voice table to change its specialty rule.');
+          return;
+        }
+        this.roomState.specialtyMode = command.specialtyMode;
+        this.commitAndBroadcast([{ event: {
+          type: 'WORLD_ENV_UPDATED',
+          specialtyMode: command.specialtyMode,
+          moonPhase: this.roomState.moonPhase,
+          localGauntlet: this.roomState.localGauntlet,
+          mapAssetUrl: this.roomState.mapAssetUrl,
+        } }], reqId);
+        return;
+      }
       case 'ST_SET_WORLD_ENV': {
         if (!this.requireStoryteller(ws, attachment, reqId)) return;
         this.roomState.localGauntlet = command.localGauntlet;

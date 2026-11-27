@@ -4,11 +4,13 @@ import { Check, EyeOff, Skull, X, Zap } from 'lucide-react';
 import type { Queued3DRoll } from '../../store/useVttRoomStore';
 
 export interface DecoratedDie {
+  sourceIndex: number;
+  chainRootIndex: number;
   value: number;
   contributedSuccesses: number;
   isOne: boolean;
   isBonusExplosionDie: boolean;
-  isCanceled: boolean;
+  canceledSuccesses: number;
   isRageDie: boolean;
 }
 
@@ -17,34 +19,31 @@ export function buildDecoratedFaces(roll: W20RollResult, rageDiceCount: number):
   const obsidianCount = Math.max(0, roll.effectivePool - clampedRage);
 
   let nonBonusIdx = 0;
-  const withRageFlag = roll.dice.map((die) => {
-    let isRageDie = false;
-    if (!die.isBonusExplosionDie) {
-      isRageDie = nonBonusIdx >= obsidianCount;
-      nonBonusIdx += 1;
-    }
-    return { ...die, isRageDie };
-  });
+  const faces: DecoratedDie[] = [];
+  for (const [sourceIndex, die] of roll.dice.entries()) {
+    const parent = die.isBonusExplosionDie
+      ? faces[die.parentIndex ?? sourceIndex - 1]
+      : undefined;
+    const isRageDie = !die.isBonusExplosionDie && nonBonusIdx >= obsidianCount;
+    if (!die.isBonusExplosionDie) nonBonusIdx += 1;
+    faces.push({
+      ...die,
+      sourceIndex,
+      chainRootIndex: parent?.chainRootIndex ?? sourceIndex,
+      isRageDie,
+      canceledSuccesses: 0,
+    });
+  }
 
-  const sorted = [...withRageFlag].sort((a, b) => b.value - a.value);
+  const sorted = [...faces].sort((a, b) => b.value - a.value);
   let remainingCancels = roll.onesRolled;
+  for (const die of sorted) {
+    die.canceledSuccesses = Math.min(die.contributedSuccesses, remainingCancels);
+    remainingCancels -= die.canceledSuccesses;
+  }
 
-  return sorted.map((die) => {
-    const isSuccess = die.contributedSuccesses > 0;
-    let isCanceled = false;
-    if (isSuccess && remainingCancels > 0) {
-      isCanceled = true;
-      remainingCancels -= 1;
-    }
-    return {
-      value: die.value,
-      contributedSuccesses: die.contributedSuccesses,
-      isOne: die.isOne,
-      isBonusExplosionDie: die.isBonusExplosionDie,
-      isCanceled,
-      isRageDie: die.isRageDie,
-    };
-  });
+  if (!faces.some((die) => die.isBonusExplosionDie)) return sorted;
+  return faces.sort((a, b) => a.chainRootIndex - b.chainRootIndex || a.sourceIndex - b.sourceIndex);
 }
 
 export function getInitials(name: string): string {
@@ -100,10 +99,15 @@ export const AuthoritativeDieChips: React.FC<{
   const faces = useMemo(() => buildDecoratedFaces(roll, rageDiceCount), [roll, rageDiceCount]);
   const chipSize = compact ? 'h-7 w-7 text-xs' : 'h-10 w-10 text-sm';
 
+  if (faces.length === 0) {
+    return <p className="text-xs text-stone-400">No dice rolled</p>;
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {faces.map((die, idx) => {
         const isSuccess = die.contributedSuccesses > 0;
+        const isCanceled = isSuccess && die.contributedSuccesses === die.canceledSuccesses;
         let style =
           'border-stone-700/75 bg-gradient-to-b from-zinc-800/90 to-zinc-950 text-stone-400';
         if (isInitiative) {
@@ -112,7 +116,7 @@ export const AuthoritativeDieChips: React.FC<{
         } else if (die.isOne) {
           style =
             'border-red-500/85 bg-gradient-to-b from-red-950 to-zinc-950 text-red-300 shadow-[0_0_8px_rgba(220,38,38,0.4)]';
-        } else if (die.isCanceled) {
+        } else if (isCanceled) {
           style =
             'border-stone-700/50 bg-zinc-900/60 text-stone-400 line-through decoration-red-400/80 decoration-2';
         } else if (isSuccess) {
@@ -124,39 +128,57 @@ export const AuthoritativeDieChips: React.FC<{
           !isInitiative && die.isRageDie
             ? 'ring-1 ring-red-500/80 ring-offset-1 ring-offset-zinc-950'
             : '';
+        const followsParent =
+          die.isBonusExplosionDie && faces[idx - 1]?.chainRootIndex === die.chainRootIndex;
+        const faceDescription = isInitiative
+          ? `Initiative die, ${die.value}`
+          : [
+              die.isBonusExplosionDie
+                ? 'Specialty bonus die'
+                : die.isRageDie ? 'Rage die' : 'Obsidian die',
+              String(die.value),
+              followsParent ? 'Continues previous die' : '',
+              die.isOne
+                ? 'Counts toward success cancellation and botch'
+                : die.isBonusExplosionDie && die.value === 1
+                  ? 'No cancellation'
+                  : die.contributedSuccesses === 2
+                    ? '2 successes'
+                    : die.contributedSuccesses === 1
+                      ? '1 success'
+                      : '',
+              die.canceledSuccesses > 0 ? `${die.canceledSuccesses} canceled` : '',
+            ].filter(Boolean).join(', ');
 
         return (
-          <div
-            key={idx}
-            className={`font-display relative flex ${chipSize} items-center justify-center rounded-lg border font-bold shadow ${style} ${rageRing}`}
-            title={
-              isInitiative
-                ? `Initiative 1d10: ${die.value}`
-                : [
-                    die.isRageDie ? 'Rage Die' : 'Obsidian Die',
-                    die.isOne
-                      ? 'Rolled 1 (Cancels a success)'
-                      : die.isCanceled
-                        ? 'Success canceled by a 1'
-                        : die.contributedSuccesses === 2
-                          ? 'Specialty 10 (2 Successes)'
-                          : die.isBonusExplosionDie
-                            ? 'Specialty Bonus Explosion'
-                            : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' • ')
-            }
-          >
-            {die.value}
-            {!isInitiative && die.contributedSuccesses === 2 && !die.isCanceled && (
-              <span className="absolute -top-1.5 -right-1.5 rounded border border-amber-300/80 bg-gradient-to-b from-amber-300 to-amber-600 px-1 font-sans text-xs font-black text-zinc-950 shadow">
-                x2
-              </span>
-            )}
-            {!isInitiative && die.isRageDie && (
-              <span className="absolute -bottom-0.5 left-1/2 h-1 w-3 -translate-x-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]" />
-            )}
+          <div key={die.sourceIndex} className="inline-flex items-center gap-1.5">
+            {followsParent && <span aria-hidden="true" className="text-xs text-cyan-300">→</span>}
+            <div
+              role="img"
+              aria-label={faceDescription}
+              title={faceDescription}
+              className={`font-display relative flex ${chipSize} items-center justify-center rounded-lg border font-bold shadow ${style} ${rageRing}`}
+            >
+              {die.value}
+              {!isInitiative && die.contributedSuccesses === 2 && (
+                <span className="absolute -top-1.5 -right-1.5 rounded border border-amber-300/80 bg-gradient-to-b from-amber-300 to-amber-600 px-1 font-sans text-xs font-black text-zinc-950 shadow">
+                  x2
+                </span>
+              )}
+              {die.canceledSuccesses > 0 && die.contributedSuccesses === 2 && (
+                <span className="absolute -bottom-1.5 -right-1.5 rounded bg-red-800 px-1 text-xs text-red-100">
+                  −{die.canceledSuccesses}
+                </span>
+              )}
+              {die.isBonusExplosionDie && (
+                <span className="absolute -bottom-1.5 -right-1.5 rounded bg-cyan-500 px-1 text-xs text-zinc-950">
+                  +
+                </span>
+              )}
+              {!isInitiative && die.isRageDie && (
+                <span className="absolute -bottom-0.5 left-1/2 h-1 w-3 -translate-x-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]" />
+              )}
+            </div>
           </div>
         );
       })}
@@ -353,15 +375,13 @@ export const RollResultPlaque: React.FC<RollResultPlaqueProps> = ({
         </button>
       </div>
 
-      {banner.roll.dice.length > 0 && (
-        <div className={compact ? 'mt-2' : 'mt-3'}>
-          <AuthoritativeDieChips
-            roll={banner.roll}
-            rageDiceCount={banner.rageDiceCount ?? 0}
-            compact={compact}
-          />
-        </div>
-      )}
+      <div className={compact ? 'mt-2' : 'mt-3'}>
+        <AuthoritativeDieChips
+          roll={banner.roll}
+          rageDiceCount={banner.rageDiceCount ?? 0}
+          compact={compact}
+        />
+      </div>
 
       {queuedCount > 0 && (
         <div

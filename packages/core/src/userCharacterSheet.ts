@@ -161,7 +161,9 @@ export interface ResolvedSheetShortcut {
   rawPool: number;
   effectivePool: number;
   difficulty: number;
+  declaredSpecialty: boolean;
   hasSpecialty: boolean;
+  hasEligibleNamedSpecialty?: boolean;
   specialtyReason?: string;
   rageDiceCount: number;
   applyWoundPenalty: boolean;
@@ -602,15 +604,35 @@ export function computeUserSheetStats(sheet: W20UserCharacterSheet, context: Rul
   };
 }
 
-function resolveTraitComboSpecialty(
+const CANONICAL_ABILITIES = new Set<string>(Object.values(ABILITY_GROUPS).flat());
+// W20 pp. 127–135 allows specialties in these abilities before four dots.
+const EARLY_SPECIALTY_ABILITIES = new Set([
+  'expression',
+  'crafts',
+  'performance',
+  'academics',
+  'science',
+  'technology',
+]);
+
+export function minimumW20AbilitySpecialtyDots(ability: string): number {
+  return EARLY_SPECIALTY_ABILITIES.has(normalizeKey(ability)) ? 1 : 4;
+}
+
+export function getSheetNamedSpecialty(
   sheet: W20UserCharacterSheet,
   attribute: AttributeKey | 'rage' | 'gnosis' | 'willpower' | null | undefined,
-  ability: string | null | undefined,
-  forceSpecialty: boolean | undefined
-): { hasSpecialty: boolean; specialtyReason?: string } {
+  ability: string | null | undefined
+): string | undefined {
   const reasons: string[] = [];
 
-  if (attribute) {
+  if (
+    attribute &&
+    attribute !== 'rage' &&
+    attribute !== 'gnosis' &&
+    attribute !== 'willpower' &&
+    sheet.baseAttributes[attribute] >= 4
+  ) {
     const attrSpec = lookupSpecialtyForTrait(sheet, attribute);
     if (attrSpec) {
       reasons.push(`${formatTraitLabel(attribute)}: ${attrSpec}`);
@@ -618,24 +640,26 @@ function resolveTraitComboSpecialty(
   }
 
   if (ability) {
-    const custom = findCustomAbility(sheet, ability);
-    const abilSpec = lookupSpecialtyForTrait(sheet, ability);
-    if (abilSpec) {
-      reasons.push(`${custom ? custom.name : formatTraitLabel(ability)}: ${abilSpec}`);
-    } else if (custom?.specialty?.trim()) {
-      reasons.push(`${custom.name}: ${custom.specialty.trim()}`);
+    const key = normalizeKey(ability);
+    if (CANONICAL_ABILITIES.has(key)) {
+      const name = lookupSpecialtyForTrait(sheet, ability);
+      if (name && lookupSheetAbilityDots(sheet, key) >= minimumW20AbilitySpecialtyDots(key)) {
+        reasons.push(`${formatTraitLabel(key)}: ${name}`);
+      }
+    } else {
+      const custom = findCustomAbility(sheet, ability);
+      if (custom && Number.isFinite(custom.dots) && custom.dots >= 4) {
+        const name =
+          lookupSpecialtyForTrait(sheet, ability) ??
+          lookupSpecialtyForTrait(sheet, custom.id) ??
+          lookupSpecialtyForTrait(sheet, custom.name) ??
+          custom.specialty?.trim();
+        if (name) reasons.push(`${custom.name}: ${name}`);
+      }
     }
   }
 
-  if (reasons.length > 0) {
-    return { hasSpecialty: true, specialtyReason: reasons.join('; ') };
-  }
-
-  if (forceSpecialty) {
-    return { hasSpecialty: true, specialtyReason: 'Forced on shortcut' };
-  }
-
-  return { hasSpecialty: false };
+  return reasons.length ? reasons.join('; ') : undefined;
 }
 
 /**
@@ -696,10 +720,7 @@ export function resolveSheetShortcut(
   let rawPool = 0;
   let rawDiff = shortcut.difficulty;
   let applyWoundPenalty = shortcut.applyWoundPenalty;
-  let hasSpecialty = Boolean(shortcut.forceSpecialty);
-  let specialtyReason: string | undefined = shortcut.forceSpecialty
-    ? 'Forced on shortcut'
-    : undefined;
+  let namedSpecialty: string | undefined;
   let formulaSummary = '';
 
   switch (source.kind) {
@@ -755,14 +776,7 @@ export function resolveSheetShortcut(
         applyWoundPenalty = false;
       }
 
-      const specResult = resolveTraitComboSpecialty(
-        sheet,
-        source.attribute,
-        source.ability,
-        shortcut.forceSpecialty
-      );
-      hasSpecialty = specResult.hasSpecialty;
-      specialtyReason = specResult.specialtyReason;
+      namedSpecialty = getSheetNamedSpecialty(sheet, source.attribute, source.ability);
       formulaSummary = parts.length > 0 ? parts.join(' + ').replace(' + -', ' - ') : '0 dice';
       break;
     }
@@ -829,14 +843,11 @@ export function resolveSheetShortcut(
         rawDiff =
           weapon.difficulty +
           (weapon.rollAttribute === 'perception' ? stats.perceptionDifficultyMod : 0);
-        const specResult = resolveTraitComboSpecialty(
+        namedSpecialty = getSheetNamedSpecialty(
           sheet,
           weapon.rollAttribute,
-          weapon.rollAbility,
-          shortcut.forceSpecialty
+          weapon.rollAbility
         );
-        hasSpecialty = specResult.hasSpecialty;
-        specialtyReason = specResult.specialtyReason;
         formulaSummary = `${formatTraitLabel(weapon.rollAttribute)} (${attrDots}) + ${
           custom ? custom.name : formatTraitLabel(weapon.rollAbility)
         } (${abilDots})`;
@@ -952,7 +963,14 @@ export function resolveSheetShortcut(
     !rules.modifiers.some((mod) => mod.sourceId === 'armor' && mod.target === 'difficulty')
   )
     rawDiff += sheet.armor.dexterityDifficultyPenalty ?? 0;
-  if (rollContext.specialtyOverride !== undefined) hasSpecialty = rollContext.specialtyOverride;
+  const declaredSpecialty =
+    (rollContext.specialtyOverride ?? shortcut.forceSpecialty ?? false) &&
+    (Boolean(namedSpecialty) || shortcut.forceSpecialty === true);
+  const hasSpecialty = Boolean(applyRuleValue(rules, 'specialty', Number(declaredSpecialty)));
+  const specialtyReason = namedSpecialty ??
+    (shortcut.forceSpecialty && rollContext.specialtyOverride === undefined
+      ? 'Forced on shortcut'
+      : undefined);
   if (rollContext.woundOverride !== undefined) applyWoundPenalty = rollContext.woundOverride;
   const woundPenalty = stats.woundPenalty;
   const explanations = rules.modifiers
@@ -976,7 +994,9 @@ export function resolveSheetShortcut(
     rawPool,
     effectivePool,
     difficulty,
+    declaredSpecialty,
     hasSpecialty,
+    hasEligibleNamedSpecialty: Boolean(namedSpecialty),
     ...(specialtyReason ? { specialtyReason } : {}),
     rageDiceCount: Math.max(0, shortcut.rageDiceCount),
     applyWoundPenalty,

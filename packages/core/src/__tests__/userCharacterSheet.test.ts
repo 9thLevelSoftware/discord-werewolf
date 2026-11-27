@@ -346,6 +346,50 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
     expect(lupus.soakCapabilities.canSoakSilver).toBe(false);
   });
 
+  it('offers early specialties at one base dot and ignores unsupported specialty traits', () => {
+    const sheet = {
+      ...createBlankUserCharacterSheet({
+        id: 'sheet-specialty',
+        ownerDiscordId: 'user-9',
+        breed: 'homid',
+        auspice: 'galliard',
+        tribe: 'fianna',
+      }),
+      abilities: { performance: 1, brawl: 3, science: 0, unknown_ability: 5 },
+      specialties: {
+        performance: 'Singing',
+        brawl: 'Grappling',
+        science: 'Physics',
+        rage: 'Wrath',
+        unknown_ability: 'Unrecognized',
+      },
+      rage: { permanent: 5, temporary: 5 },
+    };
+    const shortcut: SheetShortcut = {
+      id: 's-specialty',
+      name: 'Specialty',
+      source: { kind: 'trait_combo', attribute: 'rage', ability: 'performance' },
+      difficulty: 6,
+      rageDiceCount: 0,
+      applyWoundPenalty: false,
+      isSecretRoll: false,
+    };
+
+    expect(resolveSheetShortcut(sheet, shortcut)).toMatchObject({
+      hasSpecialty: false,
+      hasEligibleNamedSpecialty: true,
+      specialtyReason: 'Performance: Singing',
+    });
+    for (const ability of ['brawl', 'science', 'unknown_ability']) {
+      const resolved = resolveSheetShortcut(sheet, {
+        ...shortcut,
+        source: { kind: 'trait_combo', attribute: 'rage', ability },
+      });
+      expect(resolved.hasEligibleNamedSpecialty).toBe(false);
+      expect(resolved.specialtyReason).toBeUndefined();
+    }
+  });
+
   it('resolves custom abilities, form difficulty/stats, wound penalties, claw adaptation, and specialties', () => {
     const sheet: W20UserCharacterSheet = {
       ...createBlankUserCharacterSheet({
@@ -440,7 +484,7 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
     expect(lookupSheetAbilityDots(sheet, 'Primal-Urge')).toBe(2);
     expect(lookupSheetAbilityDots(sheet, 'missing_skill')).toBe(0);
 
-    // 1. Perception + Primal-Urge in Lupus applies -2 perception diff AND -2 wound penalty AND auto-detects specialty
+    // 1. Perception + Primal-Urge in Lupus applies form difficulty and wounds and offers the named specialty.
     const percShortcut: SheetShortcut = {
       id: 's-track',
       name: 'Track Quarry',
@@ -460,8 +504,13 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
     expect(resolvedPerc.basePool).toBe(6);
     expect(resolvedPerc.effectivePool).toBe(4); // 6 - 2 Wounded
     expect(resolvedPerc.difficulty).toBe(4); // 6 - 2 Lupus perception mod
-    expect(resolvedPerc.hasSpecialty).toBe(true);
+    expect(resolvedPerc.hasSpecialty).toBe(false);
+    expect(resolvedPerc.hasEligibleNamedSpecialty).toBe(true);
     expect(resolvedPerc.specialtyReason).toContain('Scent Tracking');
+    expect(resolveSheetShortcut(sheet, percShortcut, { specialtyOverride: true })).toMatchObject({
+      declaredSpecialty: true,
+      hasSpecialty: true,
+    });
     expect(resolvedPerc.applyWoundPenalty).toBe(true);
 
     // applyPerceptionFormDiff: false skips form diff mod; difficulty still clamped [2..10]
@@ -489,11 +538,12 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
     });
     expect(baseDexBrawl.rawPool).toBe(7); // Base Dex 3 + Brawl 4 (instead of Lupus Dex 5 + 4 = 9)
     expect(baseDexBrawl.effectivePool).toBe(5); // 7 - 2 Wounded
-    expect(baseDexBrawl.hasSpecialty).toBe(true);
+    expect(baseDexBrawl.hasSpecialty).toBe(false);
+    expect(baseDexBrawl.hasEligibleNamedSpecialty).toBe(true);
     expect(baseDexBrawl.specialtyReason).toContain('Fangs & Claws');
 
-    // 3. Custom ability specialty auto-detection + forceSpecialty
-    const customSpec = resolveSheetShortcut(sheet, {
+    // 3. Custom ability specialties use base dots and require an explicit declaration.
+    const customShortcut: SheetShortcut = {
       id: 's-lore',
       name: 'Spirit Lore Check',
       source: { kind: 'trait_combo', attribute: 'intelligence', ability: 'ca-spirit-lore' },
@@ -501,12 +551,23 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
       rageDiceCount: 0,
       applyWoundPenalty: true,
       isSecretRoll: false,
-    });
+    };
+    const customSpec = resolveSheetShortcut(sheet, customShortcut);
     expect(customSpec.rawPool).toBe(6); // Int 3 + Spirit Lore 3
-    expect(customSpec.hasSpecialty).toBe(true);
-    expect(customSpec.specialtyReason).toContain('Umbral Courts');
+    expect(customSpec.hasSpecialty).toBe(false);
+    expect(customSpec.hasEligibleNamedSpecialty).toBe(false);
+    expect(customSpec.specialtyReason).toBeUndefined();
+    const customFourDots = {
+      ...sheet,
+      customAbilities: [{ ...sheet.customAbilities[0], dots: 4 }],
+    };
+    expect(resolveSheetShortcut(customFourDots, customShortcut)).toMatchObject({
+      hasSpecialty: false,
+      hasEligibleNamedSpecialty: true,
+      specialtyReason: 'Spirit Lore: Umbral Courts',
+    });
 
-    const forcedSpec = resolveSheetShortcut(sheet, {
+    const forcedShortcut: SheetShortcut = {
       id: 's-stealth',
       name: 'Forced Stealth',
       source: { kind: 'trait_combo', attribute: 'wits', ability: 'stealth' },
@@ -515,8 +576,15 @@ describe('W20 User Character Sheet (Pages 1 & 2)', () => {
       applyWoundPenalty: true,
       forceSpecialty: true,
       isSecretRoll: false,
+    };
+    expect(resolveSheetShortcut(sheet, forcedShortcut)).toMatchObject({
+      declaredSpecialty: true,
+      hasSpecialty: true,
     });
-    expect(forcedSpec.hasSpecialty).toBe(true);
+    expect(resolveSheetShortcut(sheet, forcedShortcut, { specialtyOverride: false })).toMatchObject({
+      declaredSpecialty: false,
+      hasSpecialty: false,
+    });
 
     // 4. Wound penalty rules: FALSE on Damage, Soak, Gnosis, Willpower (even if shortcut sets true!)
     const soakRes = resolveSheetShortcut(sheet, {

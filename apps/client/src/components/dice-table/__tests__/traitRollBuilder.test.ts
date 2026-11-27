@@ -90,9 +90,8 @@ describe('TraitRollBuilder', () => {
     expect(result.autoLabel).toBe('Dexterity + Firearms');
     expect(result.formulaSummary).toBe('Dexterity (4) + Firearms (3)');
     expect(result.compactFormula).toBe('4 + 3 - 1 Wnd');
-    expect(result.autoSpecialty).toBe(true);
-    expect(result.effectiveHasSpecialty).toBe(true);
-    expect(result.specialtyReason).toContain('Firearms: Rifles');
+    expect(result.effectiveHasSpecialty).toBe(false);
+    expect(result.specialtyReason).toBeUndefined();
   });
 
   it('updates effective dots live across Garou form shifts and surfaces Perception diff mod without mutating difficulty', () => {
@@ -146,8 +145,11 @@ describe('TraitRollBuilder', () => {
     expect(lupusPerception.perceptionFormMod).toBe(-2); // Lupus -2 Perception Diff mod surfaced separately
   });
 
-  it('auto-detects specialties on attribute, canonical ability, and custom ability with clean manual overrides', () => {
+  it('names eligible specialties and activates them only when declared', () => {
     const sheet = makeTestSheet();
+    sheet.baseAttributes.strength = 4;
+    sheet.abilities.firearms = 4;
+    sheet.customAbilities[0].dots = 4;
 
     const withAttrSpec = resolveTraitRollSelection({
       sheet,
@@ -158,8 +160,7 @@ describe('TraitRollBuilder', () => {
       specialtyOverride: null,
       woundOverride: null,
     });
-    expect(withAttrSpec.autoSpecialty).toBe(true);
-    expect(withAttrSpec.effectiveHasSpecialty).toBe(true);
+    expect(withAttrSpec.effectiveHasSpecialty).toBe(false);
     expect(withAttrSpec.specialtyReason).toContain('Strength: Crushing Grip');
 
     const withCustomAbilSpec = resolveTraitRollSelection({
@@ -171,8 +172,7 @@ describe('TraitRollBuilder', () => {
       specialtyOverride: null,
       woundOverride: null,
     });
-    expect(withCustomAbilSpec.autoSpecialty).toBe(true);
-    expect(withCustomAbilSpec.effectiveHasSpecialty).toBe(true);
+    expect(withCustomAbilSpec.effectiveHasSpecialty).toBe(false);
     expect(withCustomAbilSpec.specialtyReason).toContain('Demolitions: C4');
 
     const overriddenOff = resolveTraitRollSelection({
@@ -184,19 +184,19 @@ describe('TraitRollBuilder', () => {
       specialtyOverride: false,
       woundOverride: null,
     });
-    expect(overriddenOff.autoSpecialty).toBe(true);
+    expect(overriddenOff.specialtyReason).toContain('Firearms: Rifles');
     expect(overriddenOff.effectiveHasSpecialty).toBe(false);
 
     const overriddenOn = resolveTraitRollSelection({
       sheet,
-      attribute: 'wits',
-      ability: 'alertness',
+      attribute: 'dexterity',
+      ability: 'firearms',
       bonusDice: 0,
       difficulty: 6,
       specialtyOverride: true,
       woundOverride: null,
     });
-    expect(overriddenOn.autoSpecialty).toBe(false);
+    expect(overriddenOn.specialtyReason).toContain('Firearms: Rifles');
     expect(overriddenOn.effectiveHasSpecialty).toBe(true);
   });
 

@@ -7,15 +7,11 @@ import {
   Hash,
   HeartPulse,
   Minus,
-  Monitor,
   Plus,
   ScrollText,
   SlidersHorizontal,
-  Smartphone,
   Sparkles,
   Users,
-  Volume2,
-  VolumeX,
   Zap,
 } from 'lucide-react';
 import { formatFormName, W20_FORMS } from '../character-sheet/sheetShared';
@@ -36,8 +32,10 @@ import {
   RageDiceStepper,
   RollModifierToggles,
   SavePinButton,
+  SpecialtyDeclaration,
   useSavedFlash,
 } from './console/consoleShared';
+import { TableSettingsMenu } from './console/TableSettingsMenu';
 import { InitiativeOrderPanel } from './InitiativeOrderPanel';
 import { MobileTraitPickerContent } from './TraitRollBuilder';
 import { PersonalTrackersPanel } from './W20DotTracker';
@@ -120,7 +118,10 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
   rageDiceCount,
   difficulty,
   hasSpecialty,
-  isAutoSpecialty,
+  specialtyDeclared,
+  specialtyMode,
+  canChangeSpecialtyMode,
+  specialtyReason,
   hasTraitSelection,
   traitSelection,
   spendWillpower,
@@ -142,6 +143,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
   onClearTable,
   onDismissBanner,
   onToggleMuteSfx,
+  onSfxVolumeChange,
   onUpdateTrackers,
   onSelectSeat,
   onAddSeatAndOpenRoster,
@@ -157,6 +159,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
   onSetRageDiceCount,
   onSetDifficulty,
   onToggleSpecialty,
+  onSetSpecialtyMode,
   onToggleSpendWillpower,
   onToggleApplyWoundPenalty,
   onToggleSecretRoll,
@@ -223,13 +226,6 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
       ? `${activeSeat.playerName || 'Seat'} • Seats`
       : 'Choose a character';
 
-  const layoutTitle =
-    layoutMode === 'auto'
-      ? 'Layout: Auto. Tap to switch to Mobile'
-      : layoutMode === 'mobile'
-        ? 'Layout: Mobile. Tap to switch to PC'
-        : 'Layout: PC. Tap to switch to Auto';
-
   const rollCtaText = getRollCtaText({
     blockReason: getRollBlockReason({
       connectionStatus,
@@ -294,20 +290,6 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
 
             <button
               type="button"
-              onClick={onToggleMuteSfx}
-              aria-label={sfxPrefs.muted ? 'Unmute dice sound effects' : 'Mute dice sound effects'}
-              title={sfxPrefs.muted ? 'Unmute dice SFX' : 'Mute dice SFX'}
-              className="w20-obsidian-panel flex h-8 w-8 items-center justify-center rounded-full transition active:scale-95"
-            >
-              {sfxPrefs.muted ? (
-                <VolumeX className="h-3.5 w-3.5 text-red-400" />
-              ) : (
-                <Volume2 className="h-3.5 w-3.5 text-amber-300" />
-              )}
-            </button>
-
-            <button
-              type="button"
               onClick={handleFeedClick}
               aria-label={`Roll Log (${rollHistoryCount})`}
               title="Roll Log"
@@ -323,19 +305,17 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={onCycleLayoutMode}
-              aria-label={layoutTitle}
-              title={layoutTitle}
-              className="w20-obsidian-panel flex h-8 w-8 items-center justify-center rounded-full text-amber-300 transition active:scale-95"
-            >
-              {layoutMode === 'mobile' ? (
-                <Smartphone className="h-3.5 w-3.5" />
-              ) : (
-                <Monitor className="h-3.5 w-3.5" />
-              )}
-            </button>
+            <TableSettingsMenu
+              muted={sfxPrefs.muted}
+              volume={sfxPrefs.volume}
+              layoutMode={layoutMode}
+              specialtyMode={specialtyMode}
+              canChangeSpecialtyMode={canChangeSpecialtyMode}
+              onToggleMute={onToggleMuteSfx}
+              onVolumeChange={onSfxVolumeChange}
+              onCycleLayoutMode={onCycleLayoutMode}
+              onSetSpecialtyMode={onSetSpecialtyMode}
+            />
           </div>
         </div>
       </header>
@@ -364,6 +344,14 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
       {/* Thumb-Zone Mobile Bottom Dock */}
       <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-hud pb-safe">
         <div className="w20-obsidian-panel pointer-events-auto mx-2 mb-2 space-y-1.5 rounded-2xl px-2.5 py-2">
+          {specialtyReason && activeMobileSheet !== 'tune' && (
+            <SpecialtyDeclaration
+              declared={specialtyDeclared}
+              reason={specialtyReason}
+              touch
+              onToggle={onToggleSpecialty}
+            />
+          )}
           {/* Row 1: Form Pill (if bound) + Swipeable QuickRollBar */}
           <div className="flex min-w-0 items-center gap-1.5">
             {activeSheet && (
@@ -1115,8 +1103,9 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
             {/* Shared 2x2 Modifier Tiles */}
             <RollModifierToggles
               layout="grid"
-              hasSpecialty={hasSpecialty}
-              specialtyFromSheet={isSheetTraitsMode && isAutoSpecialty}
+              showSpecialty={!isSheetTraitsMode || Boolean(specialtyReason)}
+              specialtyDeclared={specialtyDeclared}
+              specialtyReason={specialtyReason}
               spendWillpower={spendWillpower}
               applyWoundPenalty={applyWoundPenalty}
               isSecretRoll={isSecretRoll}

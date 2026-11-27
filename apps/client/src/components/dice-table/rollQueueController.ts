@@ -1,4 +1,5 @@
-import type { W20RollResult, SheetShortcut, RuleContext } from '@w20-vtt/core';
+import type { W20RollResult, SheetShortcut, RuleContext, SpecialtyMode } from '@w20-vtt/core';
+import { MAX_PHYSICAL_BONUS_WAVES, MAX_PHYSICAL_DICE_PER_WAVE } from '@w20-vtt/protocol';
 import type { Queued3DRoll } from '../../store/useVttRoomStore';
 
 /**
@@ -33,6 +34,7 @@ export interface DiceBoxRollOptions {
 
 export interface DiceBoxLike {
   roll: (groups: DiceBoxGroup[], opts?: DiceBoxRollOptions) => Promise<unknown>;
+  add?: (groups: DiceBoxGroup[], opts?: DiceBoxRollOptions) => Promise<unknown>;
   clear: () => unknown;
 }
 
@@ -47,6 +49,7 @@ export interface LocalQueuedRollSpec {
   rageDiceCount: number;
   difficulty: number;
   hasSpecialty: boolean;
+  specialtyMode?: SpecialtyMode;
   spendWillpower: boolean;
   applyWoundPenalty: boolean;
   rollMode: 'pool' | 'initiative';
@@ -81,7 +84,8 @@ export interface RollStageCoordinatorOptions {
   consumeRemoteRollByClientId: (rollClientId: string) => Queued3DRoll | null;
   onSendRollCommand: (
     spec: LocalQueuedRollSpec,
-    physicalDiceValues: number[] | undefined
+    physicalDiceValues: number[] | undefined,
+    physicalBonusWaves?: number[][]
   ) => void;
   onSetBanner: (banner: Queued3DRoll | null) => void;
   onSetHasDiceOnTable: (hasDice: boolean) => void;
@@ -105,38 +109,56 @@ export function extractSettledDiceValues(
   raw: unknown,
   expectedCount: number
 ): number[] | undefined {
-  if (!Array.isArray(raw) || expectedCount <= 0) {
+  if (!Array.isArray(raw) || expectedCount <= 0 || raw.length !== expectedCount) {
     return undefined;
   }
   const values: number[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object' || !('value' in item)) {
-      continue;
+      return undefined;
     }
-    const rawVal = Number((item as { value?: unknown }).value);
-    if (!Number.isFinite(rawVal)) {
-      continue;
+    const rawVal: unknown = item.value;
+    if (typeof rawVal !== 'number' || !Number.isInteger(rawVal) || rawVal < 0 || rawVal > 10) {
+      return undefined;
     }
-    const normalized = rawVal === 0 ? 10 : Math.max(1, Math.min(10, Math.round(rawVal)));
-    values.push(normalized);
+    values.push(rawVal === 0 ? 10 : rawVal);
   }
-  return values.length === expectedCount ? values : undefined;
+  return values;
 }
 
 /**
  * True when the faces left on the felt are exactly the dice the server recorded.
- * Bonus (explosion) dice are rolled by the server only and are not on the felt.
  */
 export function physicalDiceMatchRoll(
   physicalDiceValues: number[] | undefined,
-  roll: W20RollResult
+  roll: W20RollResult,
+  physicalBonusWaves: number[][] = []
 ): boolean {
   if (!physicalDiceValues) return false;
-  const recorded = roll.dice.filter((die) => !die.isBonusExplosionDie);
+  const values = [...physicalDiceValues, ...physicalBonusWaves.flat()];
   return (
-    recorded.length === physicalDiceValues.length &&
-    recorded.every((die, idx) => die.value === physicalDiceValues[idx])
+    roll.dice.length === values.length &&
+    roll.dice.every(
+      (die, idx) =>
+        die.value === values[idx] && die.isBonusExplosionDie === (idx >= physicalDiceValues.length)
+    )
   );
+}
+
+/**
+ * Derives the throw size of each recorded bonus wave. Legacy records wrote each
+ * explosion chain in order immediately after its original die.
+ */
+export function getRecordedBonusWaveSizes(roll: W20RollResult): number[] {
+  const waveByIndex: number[] = [];
+  const counts: number[] = [];
+  for (const [index, die] of roll.dice.entries()) {
+    const parent = die.parentIndex ?? index - 1;
+    const wave = die.isBonusExplosionDie ? (waveByIndex[parent] ?? 0) + 1 : 0;
+    waveByIndex.push(wave);
+    if (wave > 0) counts[wave - 1] = (counts[wave - 1] ?? 0) + 1;
+  }
+  return counts;
 }
 
 /** Colours handed to the 3D dice renderer. Rage dice are identified by their colour. */
@@ -188,11 +210,11 @@ export class SafeDiceBoxController {
   }
 
   setBox(box: DiceBoxLike | null, ready: boolean): void {
-    this.box = box;
-    this.ready = Boolean(ready && box);
-    if (!this.ready) {
+    if (this.box && (this.box !== box || !ready)) {
       this.interruptCurrentThrow();
     }
+    this.box = box;
+    this.ready = Boolean(ready && box);
   }
 
   isReady(): boolean {
@@ -217,14 +239,14 @@ export class SafeDiceBoxController {
 
   async throwDice(
     groups: DiceBoxGroup[],
-    opts?: { timeoutMs?: number; rollOptions?: DiceBoxRollOptions }
+    opts?: { timeoutMs?: number; rollOptions?: DiceBoxRollOptions; append?: boolean }
   ): Promise<{ settled: unknown; interrupted: boolean }> {
     if (this.cancelActiveThrow) {
       this.interruptCurrentThrow();
     }
 
     if (!this.ready || !this.box) {
-      return { settled: undefined, interrupted: false };
+      return { settled: undefined, interrupted: true };
     }
 
     if (groups.length === 0) {
@@ -238,6 +260,11 @@ export class SafeDiceBoxController {
     }
 
     const activeBox = this.box;
+    const throwCollection = opts?.append ? activeBox.add : activeBox.roll;
+    if (!throwCollection) {
+      this.clearBoxSafely();
+      return { settled: undefined, interrupted: true };
+    }
     const timeoutMs = opts?.timeoutMs ?? PHYSICS_SETTLE_TIMEOUT_MS;
     const rollOptions: DiceBoxRollOptions = opts?.rollOptions ?? {
       theme: 'default',
@@ -288,15 +315,40 @@ export class SafeDiceBoxController {
       }
 
       try {
-        activeBox.roll(groups, rollOptions).then(
+        throwCollection.call(activeBox, groups, rollOptions).then(
           (result) => finish(result, false),
-          () => finish(undefined, true)
+          () => {
+            if (settledOnce) return;
+            this.clearBoxSafely();
+            finish(undefined, true);
+          }
         );
       } catch {
         this.clearBoxSafely();
         finish(undefined, true);
       }
     });
+  }
+}
+
+/** Replays recorded throw sizes with fresh physics, keeping earlier dice on the felt until reveal. */
+export async function playRecordedDiceThrow(
+  diceBox: SafeDiceBoxController,
+  roll: W20RollResult,
+  rageCount: number,
+  isCanceled: () => boolean,
+  onThrow?: (count: number, rage: number) => void
+): Promise<void> {
+  const waveSizes = [roll.effectivePool, ...getRecordedBonusWaveSizes(roll)];
+  for (const [index, count] of waveSizes.entries()) {
+    if (isCanceled() || !diceBox.isReady() || count <= 0) break;
+    const rage = index === 0 ? rageCount : 0;
+    onThrow?.(count, rage);
+    const { interrupted } = await diceBox.throwDice(buildDiceBoxGroups(count, rage), {
+      append: index > 0,
+      rollOptions: { seed: roll.physicsSeed },
+    });
+    if (interrupted) break;
   }
 }
 
@@ -420,7 +472,6 @@ export class RollStageCoordinator {
     this.feltClearedForActiveThrow = true;
     this.options.onStopThrowSound();
     this.diceBox.interruptCurrentThrow();
-    this.diceBox.clearBoxSafely();
     this.bannerShownAtMs = 0;
     this.options.onSetHasDiceOnTable(false);
     this.options.onSetBanner(null);
@@ -612,27 +663,47 @@ export class RollStageCoordinator {
     this.options.onSetBanner(null);
     this.emitStatus();
 
-    const groups = buildDiceBoxGroups(spec.effectivePool, spec.effectiveRage);
-    this.options.onPlayThrowSound(spec.effectivePool, spec.effectiveRage);
-
-    const { settled, interrupted } = await this.diceBox.throwDice(groups);
-    this.options.onStopThrowSound();
-
-    const physicalDiceValues = interrupted
-      ? undefined
-      : extractSettledDiceValues(settled, spec.effectivePool);
+    const physicalDiceValues = await this.throwLocalWave(spec.effectivePool, spec.effectiveRage, false);
+    const physicalBonusWaves: number[][] = [];
+    let hasDice = Boolean(physicalDiceValues);
+    if (
+      physicalDiceValues &&
+      spec.rollMode === 'pool' &&
+      spec.hasSpecialty &&
+      spec.specialtyMode === 'revised_explode'
+    ) {
+      let previousWave = physicalDiceValues;
+      while (
+        !this.disposed &&
+        !this.inFlightLocalSent &&
+        !this.feltClearedForActiveThrow &&
+        physicalBonusWaves.length < MAX_PHYSICAL_BONUS_WAVES
+      ) {
+        const waveSize = previousWave.filter((face) => face === 10).length;
+        if (waveSize === 0) break;
+        const faces = await this.throwLocalWave(waveSize, 0, true);
+        if (!faces) {
+          hasDice = false;
+          break;
+        }
+        physicalBonusWaves.push(faces);
+        previousWave = faces;
+      }
+    }
 
     if (!this.disposed && !this.feltClearedForActiveThrow) {
-      this.options.onSetHasDiceOnTable(
-        groups.length > 0 && !interrupted && this.diceBox.isReady()
-      );
+      this.options.onSetHasDiceOnTable(hasDice);
     }
 
     // Register echo waiter BEFORE invoking onSendRollCommand so synchronous echoes are captured
     const echoPromise = this.waitForEcho(spec.rollClientId, this.echoWaitTimeoutMs);
     if (!this.inFlightLocalSent) {
       this.inFlightLocalSent = true;
-      this.options.onSendRollCommand(spec, physicalDiceValues);
+      if (physicalBonusWaves.length > 0) {
+        this.options.onSendRollCommand(spec, physicalDiceValues, physicalBonusWaves);
+      } else {
+        this.options.onSendRollCommand(spec, physicalDiceValues);
+      }
     }
     this.notifyInboundQueueChanged();
 
@@ -646,14 +717,12 @@ export class RollStageCoordinator {
       this.options.onLocalRollUnconfirmed?.(spec, this.inFlightRejected ? 'rejected' : 'timeout');
     }
 
-    // Dice left on the felt must be the dice in the ledger. If the server recorded
-    // anything else (it rolled for us, or sized the pool differently), take them away
-    // so only the recorded result is on screen.
+    // Only confirmed faces can remain on the felt.
     if (
-      echoedRoll &&
+      hasDice &&
       !this.disposed &&
       !this.feltClearedForActiveThrow &&
-      !physicalDiceMatchRoll(physicalDiceValues, echoedRoll.roll)
+      (!echoedRoll || !physicalDiceMatchRoll(physicalDiceValues, echoedRoll.roll, physicalBonusWaves))
     ) {
       this.diceBox.clearBoxSafely();
       this.options.onSetHasDiceOnTable(false);
@@ -674,6 +743,23 @@ export class RollStageCoordinator {
     this.emitStatus();
   }
 
+  private async throwLocalWave(count: number, rageCount: number, append: boolean) {
+    if (count > MAX_PHYSICAL_DICE_PER_WAVE) {
+      this.diceBox.clearBoxSafely();
+      return undefined;
+    }
+    if (count > 0) this.options.onPlayThrowSound(count, rageCount);
+    const { settled, interrupted } = await this.diceBox.throwDice(
+      buildDiceBoxGroups(count, rageCount),
+      { append }
+    );
+    this.options.onStopThrowSound();
+    if (interrupted || this.disposed || this.feltClearedForActiveThrow) return undefined;
+    const faces = extractSettledDiceValues(settled, count);
+    if (!faces && count > 0) this.diceBox.clearBoxSafely();
+    return faces;
+  }
+
   private async runRemoteRoll(remote: Queued3DRoll): Promise<void> {
     this.activeRemoteId = remote.id;
     this.feltClearedForActiveThrow = false;
@@ -689,14 +775,15 @@ export class RollStageCoordinator {
       // would land on different faces, so show the recorded result on its own.
       const isLateOwnRoll =
         remote.rollClientId !== undefined && this.lateLocalClientIds.delete(remote.rollClientId);
-      const groups = isLateOwnRoll
-        ? []
-        : buildDiceBoxGroups(remote.roll.effectivePool, rageCount);
-      if (groups.length > 0) {
-        this.options.onPlayThrowSound(remote.roll.effectivePool, rageCount);
+      if (!isLateOwnRoll) {
+        await playRecordedDiceThrow(
+          this.diceBox,
+          remote.roll,
+          rageCount,
+          () => this.disposed || this.feltClearedForActiveThrow,
+          this.options.onPlayThrowSound
+        );
       }
-
-      await this.diceBox.throwDice(groups);
       this.options.onStopThrowSound();
 
       if (!this.disposed && !this.feltClearedForActiveThrow) {

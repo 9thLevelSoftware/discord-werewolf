@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientCommand, ClientEnvelope, ServerEnvelope, ServerEvent } from '@w20-vtt/protocol';
 import { discordIdToUuidV5, mintAuthTokensForIdentity } from '../discordOAuth';
 import { GameRoomDO } from '../GameRoomDO';
+import { FAIR_FORTUNE_RULE_ID } from '../ruleRerolls';
 import { createBlankUserCharacterSheet, type W20UserCharacterSheet } from '@w20-vtt/core';
 import { UserSheetRepository } from '../userSheetStore';
 import {
@@ -255,6 +256,36 @@ describe('sourced room modifier transactions', () => {
     return sheet;
   }
 
+  it('uses the seated player’s shared mode for physical waves and restores it on reconnect', async () => {
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, canonicalEnv());
+    const roller = await connect(room, state, casterId);
+    const watcher = await connect(room, state, recipientId);
+    const currentSeq = roller.drainJson<ServerEnvelope>().at(-1)!.seq;
+    watcher.drainJson();
+    await sendCommand(room, roller, currentSeq, { type: 'SET_TABLE_SPECIALTY_MODE', specialtyMode: 'revised_explode' });
+    expect(watcher.drainJson<ServerEnvelope<ServerEvent>>().map(({ event }) => event))
+      .toContainEqual(expect.objectContaining({ type: 'WORLD_ENV_UPDATED', specialtyMode: 'revised_explode' }));
+    await sendCommand(room, roller, 0, {
+      type: 'ROLL_TABLE_POOL', pool: 3, rageDiceCount: 0, difficulty: 6, hasSpecialty: true,
+      spendWillpower: false, applyWoundPenalty: false, physicalDiceValues: [10, 10, 1],
+      physicalBonusWaves: [[10, 1], [6]],
+    });
+    const dice = watcher.drainJson<ServerEnvelope<ServerEvent>>().find(({ event }) => event.type === 'DICE_ROLLED_3D')?.event;
+    expect(dice).toMatchObject({ roll: {
+      effectivePool: 3, netSuccesses: 3, rawSuccesses: 4, onesRolled: 1,
+      hasApplicableSpecialty: true, specialtyMode: 'revised_explode',
+    } });
+    if (dice?.type === 'DICE_ROLLED_3D') {
+      expect(dice.roll.dice.map((die) => [die.value, die.parentIndex])).toEqual([
+        [10, undefined], [10, undefined], [1, undefined], [10, 0], [1, 1], [6, 3],
+      ]);
+    }
+    const reconnect = await connect(new GameRoomDO(state as unknown as DurableObjectState, canonicalEnv()), state, recipientId);
+    expect(reconnect.drainJson<ServerEnvelope<ServerEvent>>().map(({ event }) => event))
+      .toContainEqual(expect.objectContaining({ type: 'SYNC_SNAPSHOT', snapshot: expect.objectContaining({ specialtyMode: 'revised_explode' }) }));
+  });
+
   function lastRuleSheet(ws: MockWebSocket, id: string): W20UserCharacterSheet | undefined {
     const events = ws.drainJson<ServerEnvelope<ServerEvent>>();
     const states = events.flatMap((envelope) =>
@@ -266,6 +297,109 @@ describe('sourced room modifier transactions', () => {
     );
     return states.at(-1)?.sheets.find((sheet) => sheet.id === id);
   }
+
+  it('applies specialty modifiers once and validates typed declarations against the sheet', async () => {
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const targetWs = await connect(room, state, recipientId);
+    const sheet = blank('specialty-sheet', casterId);
+    sheet.baseAttributes.strength = 4;
+    sheet.specialties.strength = 'Crushing Grip';
+    sheet.equipment = [{
+      id: 'specialty-rulings',
+      name: 'Specialty rulings',
+      carried: true,
+      customRule: {
+        id: 'specialty-rulings',
+        name: 'Specialty rulings',
+        source: { book: 'Chronicle' },
+        effects: [
+          { target: 'specialty', operation: 'add', value: -1, when: ['attribute:strength'] },
+          { target: 'specialty', operation: 'add', value: 1, when: ['attribute:stamina'] },
+        ],
+      },
+    }];
+    const shortcut = {
+      id: 'check',
+      name: 'Check',
+      difficulty: 6,
+      rageDiceCount: 0,
+      applyWoundPenalty: false,
+      isSecretRoll: false,
+    };
+    const legacyShortcut = {
+      ...shortcut,
+      id: 'legacy-specialty',
+      source: { kind: 'trait_combo', attribute: 'wits' } as const,
+      forceSpecialty: true,
+    };
+    sheet.shortcuts.push(legacyShortcut);
+    const target = blank('specialty-defense-sheet', recipientId);
+    target.equipment = [{
+      id: 'specialty-defense',
+      name: 'Specialty defense',
+      carried: true,
+      customRule: {
+        id: 'specialty-defense',
+        name: 'Specialty defense',
+        source: { book: 'Chronicle' },
+        effects: [{ target: 'target:specialty', operation: 'add', value: -1 }],
+      },
+    }];
+    await saveCanonicalSheets(env, sheet, target);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    await sendCommand(room, targetWs, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet: target });
+    ws.drainJson();
+
+    async function check(
+      configured: NonNullable<Extract<ClientCommand, {type: 'ROLL_TABLE_POOL'}>['shortcut']>,
+      specialtyOverride: boolean | undefined,
+      declared: boolean,
+      applied: boolean,
+      targetIds?: string[],
+    ) {
+      const context = { specialtyOverride, targetIds };
+      await sendCommand(room, ws, 0, {
+        type: 'PREVIEW_RULE_ROLL',
+        seatId: 'primary',
+        sheetId: sheet.id,
+        shortcut: configured,
+        context,
+      });
+      const preview = ws.drainJson<ServerEnvelope<ServerEvent>>()
+        .find(({ event }) => event.type === 'RULE_ROLL_PREVIEW');
+      expect(preview?.event).toMatchObject({ hasSpecialty: applied });
+      await sendCommand(room, ws, 0, {
+        type: 'ROLL_TABLE_POOL',
+        seatId: 'primary',
+        sheetId: sheet.id,
+        shortcut: configured,
+        ruleContext: context,
+        pool: 1,
+        difficulty: 6,
+        rageDiceCount: 0,
+        hasSpecialty: true,
+        spendWillpower: false,
+        applyWoundPenalty: false,
+        physicalDiceValues: [10, 2, 2, 2],
+      });
+      const dice = ws.drainJson<ServerEnvelope<ServerEvent>>()
+        .find(({ event }) => event.type === 'DICE_ROLLED_3D');
+      expect(dice?.event).toMatchObject({ roll: {
+        declaredSpecialty: declared,
+        hasApplicableSpecialty: applied,
+        rawSuccesses: applied ? 2 : 1,
+      } });
+    }
+
+    await check({...shortcut, source: {kind: 'trait_combo', attribute: 'strength'}}, true, true, false);
+    await check({...shortcut, source: {kind: 'trait_combo', attribute: 'stamina'}}, undefined, false, true);
+    await check({...shortcut, source: {kind: 'trait_combo', attribute: 'stamina'}}, undefined, false, false, [target.id]);
+    await check({...shortcut, source: {kind: 'trait_combo', attribute: 'wits'}, forceSpecialty: true}, true, false, false);
+    await check(legacyShortcut, undefined, true, true);
+  });
 
   it('charges a targeted activation once, preserves it across restart, and keeps other sheets private', async () => {
     const env = canonicalEnv();
@@ -411,6 +545,325 @@ describe('sourced room modifier transactions', () => {
     ).toBe(4);
     expect(view?.event.type === 'RULE_STATE_UPDATED' && view.event.state.effects).toEqual([]);
     expect((await new UserSheetRepository(env).getById(sheet.id))?.gnosis.temporary).toBe(4);
+  });
+
+  it('uses Fair Fortune once per scene, charges one Gnosis, and locks the original across both powers', async () => {
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((array) => {
+      (array as Uint8Array).fill(9);
+      return array;
+    });
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const sheet = blank('fortunate-sheet', casterId);
+    sheet.otherTraits.push({ id: 'lucky', name: 'Lucky', kind: 'merit', dots: 3, ruleId: 'merit-lucky' });
+    sheet.gifts.push({ id: 'fair-fortune', name: 'Fair Fortune', level: 3, summary: '', ruleId: FAIR_FORTUNE_RULE_ID });
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    ws.drainJson();
+
+    async function botchedRoll() {
+      await sendCommand(room, ws, 0, {
+        type: 'ROLL_TABLE_POOL', seatId: 'primary', sheetId: sheet.id, pool: 1, difficulty: 6,
+        rageDiceCount: 0, hasSpecialty: false, spendWillpower: false, applyWoundPenalty: false,
+        physicalDiceValues: [1], label: 'Original',
+      });
+      const rolled = ws.drainJson<ServerEnvelope<ServerEvent>>().find(({ event }) => event.type === 'DICE_ROLLED_3D');
+      if (rolled?.event.type !== 'DICE_ROLLED_3D' || !rolled.event.historyEntry) throw new Error('Expected a roll');
+      return rolled.event.historyEntry.id;
+    }
+    const rollId = await botchedRoll();
+    const command = { type: 'REROLL_RULE_ROLL', seatId: 'primary', sheetId: sheet.id, rollId, ruleId: FAIR_FORTUNE_RULE_ID } as const;
+    await sendCommand(room, ws, 0, command, 'fortune-once');
+    const replacement = ws.drainJson<ServerEnvelope<ServerEvent>>().find(({ event }) => event.type === 'DICE_ROLLED_3D');
+    expect(replacement?.event.type === 'DICE_ROLLED_3D' && replacement.event.historyEntry?.rerollOf).toBe(rollId);
+    expect(replacement?.event.type === 'DICE_ROLLED_3D' && replacement.event.roll.netSuccesses).toBe(1);
+    await sendCommand(room, ws, 0, command, 'fortune-once');
+    expect((await new UserSheetRepository(env).getById(sheet.id))?.gnosis.temporary).toBe(4);
+    ws.drainJson();
+
+    await sendCommand(room, ws, 0, { ...command, ruleId: 'merit-lucky' });
+    expect(ws.drainJson<ServerEnvelope<ServerEvent>>().some(({ event }) => event.type === 'COMMAND_REJECTED')).toBe(true);
+    const secondRoll = await botchedRoll();
+    await sendCommand(room, ws, 0, { ...command, rollId: secondRoll });
+    expect(ws.drainJson<ServerEnvelope<ServerEvent>>().some(({ event }) => event.type === 'COMMAND_REJECTED')).toBe(true);
+    await sendCommand(room, ws, 0, { type: 'ADVANCE_RULE_CLOCK', unit: 'scene', amount: 1 });
+    await sendCommand(room, ws, 0, { ...command, rollId: secondRoll });
+    expect((await new UserSheetRepository(env).getById(sheet.id))?.gnosis.temporary).toBe(3);
+  });
+
+  async function rollBotchForReplacement(room: GameRoomDO, ws: MockWebSocket, sheetId: string, hasSpecialty = false) {
+    await sendCommand(room, ws, 0, {
+      type: 'ROLL_TABLE_POOL', seatId: 'primary', sheetId, pool: 1, difficulty: 6,
+      rageDiceCount: 0, hasSpecialty, spendWillpower: false, applyWoundPenalty: false,
+      physicalDiceValues: [1], label: 'Botched roll',
+    });
+    const envelopes = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const event = envelopes.find(({ event }) => event.type === 'DICE_ROLLED_3D')?.event;
+    if (event?.type !== 'DICE_ROLLED_3D' || !event.historyEntry) throw new Error('Expected a roll');
+    expect(event.roll.isBotch).toBe(true);
+    return { rollId: event.historyEntry.id, roll: event.roll, seq: envelopes.at(-1)!.seq, envelopes };
+  }
+
+  it('allows three Lucky replacements per story and restores the budget in the next story', async () => {
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const sheet = blank('lucky-budget', casterId);
+    sheet.otherTraits.push({ id: 'lucky', name: 'Lucky', kind: 'merit', dots: 3, ruleId: 'merit-lucky' });
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    ws.drainJson();
+
+    async function useLucky(rollId: string) {
+      await sendCommand(room, ws, 0, {
+        type: 'REROLL_RULE_ROLL', seatId: 'primary', sheetId: sheet.id, rollId, ruleId: 'merit-lucky',
+      });
+      return ws.drainJson<ServerEnvelope<ServerEvent>>().map(({ event }) => event);
+    }
+
+    for (let use = 1; use <= 3; use++) {
+      const { rollId } = await rollBotchForReplacement(room, ws, sheet.id);
+      expect(await useLucky(rollId)).toContainEqual(expect.objectContaining({
+        type: 'DICE_ROLLED_3D', historyEntry: expect.objectContaining({ rerollOf: rollId }),
+      }));
+    }
+    const fourth = await rollBotchForReplacement(room, ws, sheet.id);
+    const rejected = await useLucky(fourth.rollId);
+    expect(rejected.some(({ type }) => type === 'COMMAND_REJECTED')).toBe(true);
+    expect(rejected.some(({ type }) => type === 'DICE_ROLLED_3D')).toBe(false);
+    await sendCommand(room, ws, 0, { type: 'ADVANCE_RULE_CLOCK', unit: 'story', amount: 1 });
+    ws.drainJson();
+    expect(await useLucky(fourth.rollId)).toContainEqual(expect.objectContaining({
+      type: 'DICE_ROLLED_3D', historyEntry: expect.objectContaining({ rerollOf: fourth.rollId }),
+    }));
+  });
+
+  it('honors a legacy prepaid Fair Fortune without spending Gnosis again', async () => {
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const savedRoom = state.sql.exec<{ state_json: string }>('SELECT state_json FROM room_state WHERE id = 1').toArray()[0]!;
+    const { ruleCommitNamespace, ruleState } = JSON.parse(savedRoom.state_json);
+    const scene = ruleState?.clock.scene ?? 0;
+    const sheet = blank('prepaid-fortune', casterId);
+    const sourceId = 'fair-fortune';
+    const effectId = 'legacy-prepaid-fortune';
+    sheet.gnosis.temporary = 4;
+    sheet.gifts.push({ id: sourceId, name: 'Fair Fortune', level: 3, summary: '', ruleId: FAIR_FORTUNE_RULE_ID });
+    sheet.ruleActivationReceipts = [
+      ['rule-use', sheet.id, FAIR_FORTUNE_RULE_ID, 'self', ruleCommitNamespace, 'scene', scene].join(':'),
+    ];
+    sheet.activeRuleEffects = [{
+      id: effectId, sourceId: sheet.id + ':' + sourceId, sourceItemId: sourceId, sourceOwnerId: sheet.id,
+      ruleId: FAIR_FORTUNE_RULE_ID, duration: 'next-roll', clockId: 'dice-room-modifier-tests',
+    }];
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    ws.drainJson();
+
+    const { rollId, envelopes } = await rollBotchForReplacement(room, ws, sheet.id);
+    const projected = envelopes.flatMap(({ event }) => event.type === 'RULE_STATE_UPDATED' ? event.state.rerollOptions ?? [] : []);
+    expect(projected).toContainEqual(expect.objectContaining({ rollId, ruleId: FAIR_FORTUNE_RULE_ID, gnosisCost: 0 }));
+    await sendCommand(room, ws, 0, {
+      type: 'REROLL_RULE_ROLL', seatId: 'primary', sheetId: sheet.id, rollId, ruleId: FAIR_FORTUNE_RULE_ID,
+    });
+    expect(ws.drainJson<ServerEnvelope<ServerEvent>>().map(({ event }) => event)).toContainEqual(expect.objectContaining({
+      type: 'DICE_ROLLED_3D', historyEntry: expect.objectContaining({ rerollOf: rollId }),
+    }));
+    const saved = await new UserSheetRepository(env).getById(sheet.id);
+    expect(saved?.gnosis.temporary).toBe(4);
+    expect(saved?.activeRuleEffects?.some(({ id }) => id === effectId)).toBe(false);
+  });
+
+  it('uses the original specialty mode for a Lucky replacement after the room switches modes', async () => {
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const sheet = blank('lucky-specialty', casterId);
+    sheet.otherTraits.push({ id: 'lucky', name: 'Lucky', kind: 'merit', dots: 3, ruleId: 'merit-lucky' });
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    const seq = ws.drainJson<ServerEnvelope<ServerEvent>>().at(-1)!.seq;
+    await sendCommand(room, ws, seq, { type: 'SET_TABLE_SPECIALTY_MODE', specialtyMode: 'revised_explode' });
+    ws.drainJson();
+    const original = await rollBotchForReplacement(room, ws, sheet.id, true);
+    expect(original.roll).toMatchObject({ specialtyMode: 'revised_explode', hasApplicableSpecialty: true });
+    await sendCommand(room, ws, original.seq, { type: 'SET_TABLE_SPECIALTY_MODE', specialtyMode: 'w20_double' });
+    expect(ws.drainJson<ServerEnvelope<ServerEvent>>().map(({ event }) => event)).toContainEqual(expect.objectContaining({
+      type: 'WORLD_ENV_UPDATED', specialtyMode: 'w20_double',
+    }));
+
+    const replacementFaces = [10, 6];
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((array) => {
+      const isDie = array instanceof Uint8Array && array.length === 1;
+      (array as Uint8Array).fill(isDie ? (replacementFaces.shift() ?? 6) - 1 : 0);
+      return array;
+    });
+    await sendCommand(room, ws, 0, {
+      type: 'REROLL_RULE_ROLL', seatId: 'primary', sheetId: sheet.id, rollId: original.rollId, ruleId: 'merit-lucky',
+    });
+    const replacement = ws.drainJson<ServerEnvelope<ServerEvent>>().find(({ event }) => event.type === 'DICE_ROLLED_3D')?.event;
+    expect(replacement).toMatchObject({
+      historyEntry: { rerollOf: original.rollId },
+      roll: { specialtyMode: 'revised_explode', dice: [
+        { value: 10, isBonusExplosionDie: false }, { value: 6, isBonusExplosionDie: true, parentIndex: 0 },
+      ] },
+    });
+  });
+
+  it('defers a private failed activation at its opposed threshold and uses the original request after restart', async () => {
+    let generatedFaces = [10, 6];
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((array) => {
+      const face = array instanceof Uint8Array && array.length === 1 ? generatedFaces.shift() ?? 10 : 10;
+      (array as Uint8Array).fill(face - 1);
+      return array;
+    });
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const observer = await connect(room, state, recipientId);
+    const sheet = blank('fortunate-caster', casterId);
+    sheet.otherTraits.push(
+      { id: 'lucky', name: 'Lucky', kind: 'merit', dots: 3, ruleId: 'merit-lucky' },
+      { id: 'charm', name: 'Opposed Charm', kind: 'other', dots: 1, customRule: {
+        id: 'opposed-charm', name: 'Opposed Charm', source: { book: 'Chronicle rules' },
+        activation: {
+          cost: { gnosis: 1 }, roll: true, duration: 'scene',
+          rollSpec: { pool: 2, difficulty: 10, opposed: true },
+          failureEffects: [{ target: 'attribute:strength', operation: 'add', value: -1, duration: 'scene' }],
+        },
+        effects: [{ target: 'attribute:strength', operation: 'add', value: 2, duration: 'scene' }],
+      } },
+    );
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    ws.drainJson();
+    observer.drainJson();
+    const activate = { type: 'ACTIVATE_RULE', sourceEntryId: 'charm', ruleId: 'opposed-charm', targetIds: [], opposingSuccesses: 1 } as const;
+    await sendCommand(room, ws, 0, { ...activate, targetIds: [] }, 'pending-cast');
+    const events = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const latest = events.filter(({ event }) => event.type === 'RULE_STATE_UPDATED').at(-1)?.event;
+    expect(latest?.type === 'RULE_STATE_UPDATED' && latest.state.effects).toHaveLength(0);
+    expect(events.some(({ event }) => event.type === 'RULE_ACTIVATION_RESOLVED')).toBe(false);
+    const pending = latest?.type === 'RULE_STATE_UPDATED' ? latest.state.pendingActivations?.[0] : undefined;
+    if (!pending) throw new Error('Expected a deferred result');
+    expect(pending.roll.netSuccesses).toBe(1);
+    expect(observer.drainJson<ServerEnvelope<ServerEvent>>().every(({ event }) =>
+      event.type !== 'RULE_STATE_UPDATED' || !event.state.pendingActivations?.length)).toBe(true);
+    expect((await new UserSheetRepository(env).getById(sheet.id))?.gnosis.temporary).toBe(4);
+
+    const restartedState = new MockDurableObjectState(state.sql.db);
+    const restarted = new GameRoomDO(restartedState as unknown as DurableObjectState, env);
+    const reconnected = await connect(restarted, restartedState, casterId);
+    await sendCommand(restarted, reconnected, 0, { ...activate, targetIds: [] }, 'pending-cast');
+    expect(reconnected.drainJson<ServerEnvelope<ServerEvent>>().some(({ event }) =>
+      event.type === 'RULE_STATE_UPDATED' && event.state.pendingActivations?.[0]?.rollId === pending.rollId)).toBe(true);
+    await sendCommand(restarted, reconnected, 0, { type: 'REROLL_RULE_ROLL', seatId: 'primary', sheetId: sheet.id, rollId: pending.rollId, ruleId: 'merit-lucky' }, 'lucky-activation');
+    const result = reconnected.drainJson<ServerEnvelope<ServerEvent>>();
+    expect(result.some(({ event }) => event.type === 'RULE_ACTIVATION_RESOLVED' && event.succeeded)).toBe(true);
+    expect(result.some(({ event }) => event.type === 'DICE_ROLLED_3D' && event.historyEntry?.rerollOf === pending.rollId && event.roll.dice.length === 2)).toBe(true);
+    const saved = await new UserSheetRepository(env).getById(sheet.id);
+    expect(saved?.gnosis.temporary).toBe(4);
+    expect(saved?.activeRuleEffects?.map((effect) => effect.ruleId)).toContain('opposed-charm');
+  });
+
+  it('keeps a pending botch once before the clock advances and expires its failure effect in the old scene', async () => {
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((array) => {
+      (array as Uint8Array).fill(0);
+      return array;
+    });
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const ws = await connect(room, state, casterId);
+    const sheet = blank('clock-caster', casterId);
+    sheet.otherTraits.push(
+      { id: 'lucky', name: 'Lucky', kind: 'merit', dots: 3, ruleId: 'merit-lucky' },
+      { id: 'charm', name: 'Short Charm', kind: 'other', dots: 1, customRule: {
+        id: 'short-charm', name: 'Short Charm', source: { book: 'Chronicle rules' },
+        activation: {
+          cost: { gnosis: 1 }, roll: true, duration: 'scene', rollSpec: { pool: 1, difficulty: 6 },
+          botchEffects: [{ target: 'attribute:strength', operation: 'add', value: -1, duration: 'scene' }],
+        },
+        effects: [],
+      } },
+    );
+    await saveCanonicalSheets(env, sheet);
+    await sendCommand(room, ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    ws.drainJson();
+    const activate: ClientCommand = { type: 'ACTIVATE_RULE', sourceEntryId: 'charm', ruleId: 'short-charm', targetIds: [] };
+    await sendCommand(room, ws, 0, activate, 'auto-keep-original');
+    const pending = ws.drainJson<ServerEnvelope<ServerEvent>>().flatMap(({ event }) =>
+      event.type === 'RULE_STATE_UPDATED' ? event.state.pendingActivations ?? [] : []
+    ).at(-1);
+    if (!pending) throw new Error('Expected a deferred result');
+    await sendCommand(room, ws, 0, { type: 'ADVANCE_RULE_CLOCK', unit: 'scene', amount: 1 }, 'advance-once');
+    await sendCommand(room, ws, 0, { type: 'ADVANCE_RULE_CLOCK', unit: 'scene', amount: 1 }, 'advance-once');
+    const events = ws.drainJson<ServerEnvelope<ServerEvent>>();
+    const outcomes = events.flatMap(({ event }) => event.type === 'RULE_ACTIVATION_RESOLVED' ? [event] : []);
+    expect(outcomes.map((event) => event.roll?.isBotch)).toEqual([true]);
+    const stateUpdates = events.flatMap(({ event }) => event.type === 'RULE_STATE_UPDATED' ? [event.state] : []);
+    expect(stateUpdates.at(-1)?.clock.scene).toBe(1);
+    expect(stateUpdates.at(-1)?.pendingActivations).toEqual([]);
+    expect(stateUpdates.at(-1)?.effects).toHaveLength(0);
+    await sendCommand(room, ws, 0, { type: 'KEEP_ACTIVATION_RESULT', seatId: 'primary', sheetId: sheet.id, rollId: pending.rollId }, 'keep-again');
+    expect(ws.drainJson<ServerEnvelope<ServerEvent>>().some(({ event }) => event.type === 'RULE_ACTIVATION_RESOLVED')).toBe(false);
+    expect((await new UserSheetRepository(env).getById(sheet.id))?.gnosis.temporary).toBe(4);
+  });
+
+  it('reserves the exact active parent while the target decides whether to retry its resistance roll', async () => {
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((array) => {
+      (array as Uint8Array).fill(0);
+      return array;
+    });
+    const env = canonicalEnv();
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, env);
+    const caster = await connect(room, state, casterId);
+    const target = await connect(room, state, recipientId);
+    const casterSheet = blank('sign-caster', casterId);
+    const targetSheet = blank('sign-target', recipientId);
+    targetSheet.otherTraits.push({ id: 'lucky', name: 'Lucky', kind: 'merit', dots: 3, ruleId: 'merit-lucky' });
+    casterSheet.otherTraits.push({
+      id: 'sign', name: 'Sign', kind: 'other', dots: 1, customRule: {
+        id: 'resistance-sign', name: 'Sign', source: { book: 'Chronicle rules' },
+        activation: { roll: false, duration: 'scene' },
+        effects: [{ target: 'item:sign', operation: 'allow', value: 1, duration: 'scene' }],
+        actions: [{
+          id: 'resist', name: 'Resist', requiresActive: true, endsParent: true,
+          activation: { roll: true, duration: 'instant', rollSpec: { actor: 'target', pool: 1, difficulty: 6, outcome: 'failure' } },
+          effects: [{ target: 'form:lupus', operation: 'allow', value: 1, recipient: 'target', duration: 'instant' }],
+        }],
+      },
+    });
+    await saveCanonicalSheets(env, casterSheet, targetSheet);
+    await sendCommand(room, caster, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet: casterSheet });
+    await sendCommand(room, target, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet: targetSheet });
+    const activate: ClientCommand = { type: 'ACTIVATE_RULE', sourceEntryId: 'sign', ruleId: 'resistance-sign', targetIds: [] };
+    await sendCommand(room, caster, 0, activate);
+    const parent = lastRuleSheet(caster, casterSheet.id)?.activeRuleEffects?.[0];
+    if (!parent) throw new Error('Expected a parent effect');
+    target.drainJson();
+    const resist = { ...activate, actionId: 'resist', targetIds: [targetSheet.id] };
+    await sendCommand(room, caster, 0, resist);
+    const pending = target.drainJson<ServerEnvelope<ServerEvent>>().flatMap(({ event }) =>
+      event.type === 'RULE_STATE_UPDATED' ? event.state.pendingActivations ?? [] : []
+    ).at(-1);
+    if (!pending) throw new Error('Expected the target to receive a private decision');
+    expect(caster.drainJson<ServerEnvelope<ServerEvent>>().every(({ event }) =>
+      event.type !== 'RULE_STATE_UPDATED' || !event.state.pendingActivations?.length)).toBe(true);
+    await sendCommand(room, caster, 0, resist);
+    await sendCommand(room, caster, 0, { type: 'END_RULE_EFFECT', effectId: parent.id });
+    expect(caster.drainJson<ServerEnvelope<ServerEvent>>().filter(({ event }) => event.type === 'COMMAND_REJECTED')).toHaveLength(2);
+
+    await sendCommand(room, target, 0, { type: 'KEEP_ACTIVATION_RESULT', seatId: 'primary', sheetId: targetSheet.id, rollId: pending.rollId });
+    expect(lastRuleSheet(caster, casterSheet.id)?.activeRuleEffects).toEqual([]);
   });
 
   it('corrects a selected original roll with Fate while preserving every original die', async () => {

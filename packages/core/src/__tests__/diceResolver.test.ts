@@ -137,16 +137,85 @@ describe('W20 d10 Dice Pool Resolver & Golden Rule', () => {
         hasApplicableSpecialty: true,
         specialtyMode: 'revised_explode',
       },
-      seqRng([10, 10, 1, 7])
+      seqRng([10, 7, 10, 1])
     );
     // Base dice: 10 (1), 7 (1). Bonus dice: 10 (1), 1 (0, isOne: false). Total raw = 3, onesRolled = 0.
     expect(revisedSpec.dice).toHaveLength(4);
-    expect(revisedSpec.dice[1].isBonusExplosionDie).toBe(true);
-    expect(revisedSpec.dice[2].isBonusExplosionDie).toBe(true);
-    expect(revisedSpec.dice[2].isOne).toBe(false);
+    expect(revisedSpec.dice[1].isBonusExplosionDie).toBe(false);
+    expect(revisedSpec.dice[2]).toMatchObject({ isBonusExplosionDie: true, parentIndex: 0 });
+    expect(revisedSpec.dice[3]).toMatchObject({ isOne: false, parentIndex: 2 });
     expect(revisedSpec.onesRolled).toBe(0);
     expect(revisedSpec.netSuccesses).toBe(3);
     expect(revisedSpec.outcome).toBe('complete');
+  });
+
+  it('resolves complete and partial physical explosion waves breadth-first with parent indices', () => {
+    let fallbackIndex = 0;
+    const fallback = [1, 6, 8];
+    const result = resolveW20DicePool(
+      {
+        label: 'Physical explosions',
+        basePool: 4,
+        specialtyMode: 'revised_explode',
+        hasApplicableSpecialty: true,
+      },
+      () => fallback[fallbackIndex++],
+      { base: [10, 0, 10, 10, 9], bonusWaves: [[10, 1], [10, 10], [11], [10]] }
+    );
+    expect(result).toMatchObject({
+      specialtyMode: 'revised_explode',
+      hasApplicableSpecialty: true,
+      rawSuccesses: 7,
+      onesRolled: 1,
+      netSuccesses: 6,
+    });
+    expect(result.dice.map(({ value, parentIndex }) => [value, parentIndex])).toEqual([
+      [10, undefined], [1, undefined], [10, undefined], [10, undefined],
+      [10, 0], [1, 2], [6, 3], [10, 4], [8, 7],
+    ]);
+    expect(fallbackIndex).toBe(3);
+  });
+
+  it('ignores bonus waves without an applicable exploding specialty', () => {
+    const rng = () => { throw new Error('No fallback die expected'); };
+    const req = { label: 'Single physical die', basePool: 1 };
+    const physical = { base: [10], bonusWaves: [[10], [1]] };
+
+    expect(resolveW20DicePool({ ...req, hasApplicableSpecialty: true }, rng, physical))
+      .toMatchObject({
+        dice: [{ value: 10, contributedSuccesses: 2 }],
+        specialtyMode: 'w20_double',
+        hasApplicableSpecialty: true,
+      });
+    expect(resolveW20DicePool({ ...req, specialtyMode: 'revised_explode' }, rng, physical))
+      .toMatchObject({ dice: [{ value: 10, contributedSuccesses: 1 }], hasApplicableSpecialty: false });
+    expect(resolveW20DicePool({ ...req, basePool: 0 }, rng, physical))
+      .toMatchObject({ dice: [], netSuccesses: 0, hasApplicableSpecialty: false });
+  });
+
+  it('accepts a physical explosion wave when a rule grants the specialty', () => {
+    const result = resolveW20DicePool(
+      {
+        label: 'Rule-granted specialty',
+        basePool: 1,
+        specialtyMode: 'revised_explode',
+        ruleModifiers: [{
+          sourceId: 'rule-source',
+          ruleId: 'rule-specialty',
+          name: 'Granted specialty',
+          source: { book: 'W20' },
+          target: 'specialty',
+          operation: 'allow',
+          value: 1,
+        }],
+      },
+      () => { throw new Error('No fallback die expected'); },
+      { base: [10], bonusWaves: [[6]] }
+    );
+
+    expect(result.hasApplicableSpecialty).toBe(true);
+    expect(result.dice[1]).toMatchObject({ value: 6, parentIndex: 0 });
+    expect(result.netSuccesses).toBe(2);
   });
 
   it('classifies exceptional (4) and phenomenal (5+) outcomes and ignores wound penalties when requested', () => {

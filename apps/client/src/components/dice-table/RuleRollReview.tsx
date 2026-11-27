@@ -109,6 +109,7 @@ export function RuleRollReview({
   onConfirm: (context: RuleContext, preview: RollPreview) => void;
 }) {
   const [tags, setTags] = useState<string[]>(initial.tags ?? []);
+  const [specialtyOverride, setSpecialtyOverride] = useState(initial.specialtyOverride);
   const [target, setTarget] = useState(initial.targetIds?.[0] ?? '');
   const [request, setRequest] = useState<{ id: string; key: string }>();
   const [effectChoices, setEffectChoices] = useState<RuleContext['effectChoices']>(
@@ -124,8 +125,15 @@ export function RuleRollReview({
   const error = useVttRoomStore((s) => s.lastError);
   const connected = useVttRoomStore((s) => s.connectionStatus === 'authenticated');
   const context = useMemo(
-    () => ({ ...initial, tags, effectChoices, penalties, targetIds: target ? [target] : [] }),
-    [initial, tags, target, effectChoices, penalties]
+    () => ({
+      ...initial,
+      tags,
+      effectChoices,
+      penalties,
+      targetIds: target ? [target] : [],
+      ...(specialtyOverride !== undefined && { specialtyOverride }),
+    }),
+    [initial, tags, target, effectChoices, penalties, specialtyOverride]
   );
   const local = resolveSheetShortcut(sheet, shortcut, context);
   const baseline = resolveSheetShortcut(sheet, shortcut, initial);
@@ -173,6 +181,16 @@ export function RuleRollReview({
       }
     >
       <div className="space-y-4">
+        {local.hasEligibleNamedSpecialty && (
+          <label className="block">
+            <input
+              type="checkbox"
+              checked={specialtyOverride ?? shortcut.forceSpecialty ?? false}
+              onChange={(e) => setSpecialtyOverride(e.target.checked)}
+            />{' '}
+            Apply specialty ({local.specialtyReason})
+          </label>
+        )}
         {choices.length > 0 && (
           <label className="block">
             Target{' '}

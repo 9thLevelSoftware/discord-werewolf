@@ -126,9 +126,33 @@ export interface RoomRuleStateView {
   sheets: W20UserCharacterSheet[];
   effects: RoomRuleEffect[];
   clock: RuleClock;
+  /** Private choices available to the connected roller's bound sheets. */
+  rerollOptions?: RollReplacementOption[];
+  pendingActivations?: PendingActivationChoice[];
+  correctableRollIds?: string[];
   packWillpower?: { current: number; max: number };
   packPools?: Record<string, { current: number; max: number; name: string }>;
 }
+
+export interface RollReplacementOption {
+  rollId: string;
+  sheetId: string;
+  ruleId: string;
+  name: string;
+  remaining: number;
+  gnosisCost: number;
+}
+
+export interface PendingActivationChoice {
+  rollId: string;
+  sheetId: string;
+  label: string;
+  roll: W20RollResult;
+}
+
+/** Additional physical waves the client can submit before the Worker finishes the chain. */
+export const MAX_PHYSICAL_BONUS_WAVES = 12;
+export const MAX_PHYSICAL_DICE_PER_WAVE = 30;
 
 /**
  * One line of the shared initiative order in a dice room: the latest non-secret
@@ -180,6 +204,8 @@ export interface ClientEnvelope<TPayload = ClientCommand> {
 }
 
 export type ClientCommand =
+  | { type: 'SET_TABLE_SPECIALTY_MODE'; specialtyMode: SpecialtyMode }
+  | { type: 'KEEP_ACTIVATION_RESULT'; seatId: string; sheetId: string; rollId: string }
   | {
       type: 'APPLY_RULE_EVENT';
       seatId?: string;
@@ -307,6 +333,7 @@ export type ClientCommand =
       label?: string;
       isSecretRoll?: boolean;
       physicalDiceValues?: number[];
+      physicalBonusWaves?: number[][];
       rollClientId?: string;
       seatId?: string;
       rollerDisplayName?: string;

@@ -1,4 +1,5 @@
 import {
+  compactRuleReceipts,
   applyHealthStateDamage,
   healHealthStateDamage,
   type W20UserCharacterSheet,
@@ -21,6 +22,7 @@ export type SharedRuleCommand = Extract<
       | 'ACTIVATE_RULE'
       | 'ROLL_TABLE_POOL'
       | 'REROLL_RULE_ROLL'
+      | 'KEEP_ACTIVATION_RESULT'
       | 'APPLY_RULE_EVENT'
       | 'END_RULE_EFFECT';
   }
@@ -145,13 +147,11 @@ export function applyRuleSheetMutation(
       ),
       ...mutation.effects,
     ],
-    ruleActivationReceipts: [
-      ...new Set([
-        ...(sheet.ruleActivationReceipts ?? []),
-        mutation.operationId,
-        ...mutation.consumedSourceIds.map((id) => `consumed:${id}`),
-      ]),
-    ],
+    ruleActivationReceipts: compactRuleReceipts([
+      ...(sheet.ruleActivationReceipts ?? []),
+      mutation.operationId,
+      ...mutation.consumedSourceIds.map((id) => `consumed:${id}`),
+    ]),
     updatedAt: Math.max(Date.now(), sheet.updatedAt + 1),
   };
 }

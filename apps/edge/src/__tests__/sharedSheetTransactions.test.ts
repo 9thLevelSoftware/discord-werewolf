@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createBlankUserCharacterSheet, type W20UserCharacterSheet } from '@w20-vtt/core';
+import {
+  createBlankUserCharacterSheet,
+  RULE_RECEIPT_REPLAY_WINDOW,
+  type W20UserCharacterSheet,
+} from '@w20-vtt/core';
 import type { ClientCommand, ClientEnvelope, ServerEnvelope, ServerEvent } from '@w20-vtt/protocol';
 import { discordIdToUuidV5, mintAuthTokensForIdentity } from '../discordOAuth';
 import type { WorkerEnv } from '../env';
@@ -671,6 +675,49 @@ describe.each(['r2', 'supabase'] as const)('shared-sheet transactions through %s
     expect(results).toHaveLength(1);
     expect(results[0]?.roll.netSuccesses).toBe(2);
     expect((await backend.repository.getById(SHEET_ID))?.willpower.temporary).toBe(1);
+  });
+
+  it('keeps the receipt ledger bounded across many paid rolls from two rooms', async () => {
+    const backend = createBackend(kind);
+    const paidRolls = RULE_RECEIPT_REPLAY_WINDOW + 40;
+    const sheet = sheetWithBalances();
+    // Each successful roll refunds the point it spent, so the sheet can keep paying.
+    sheet.otherTraits.push({
+      id: 'merit-self-confident',
+      name: 'Self-Confident',
+      dots: 5,
+      kind: 'merit',
+    });
+    const clients = await twoRooms(backend, sheet);
+    let largestLedger = 0;
+    for (let index = 0; index < paidRolls; index += 1) {
+      const client = clients[index % 2]!;
+      await command(client, paidRoll(`bounded-${index}`), `bounded-${index}`);
+      await settle(client);
+      const events = client.ws.drainJson<Envelope>();
+      expect(rejected(events)).toBe(false);
+      expect(rolls(events)).toHaveLength(1);
+      const stored = await backend.repository.getById(SHEET_ID);
+      largestLedger = Math.max(largestLedger, stored?.ruleActivationReceipts?.length ?? 0);
+    }
+    const stored = await backend.repository.getById(SHEET_ID);
+    expect(stored?.willpower.temporary).toBe(1);
+    // The replay window plus the single compaction watermark.
+    expect(largestLedger).toBe(RULE_RECEIPT_REPLAY_WINDOW + 1);
+    expect(stored?.ruleActivationReceipts).toHaveLength(RULE_RECEIPT_REPLAY_WINDOW + 1);
+    // The latest debit is still guarded against a replay.
+    const replay = await backend.repository.authorizeRuleSpend({
+      sheetId: SHEET_ID,
+      operationId: stored!.ruleActivationReceipts!.at(-1)!,
+      costs: { willpower: 1 },
+    });
+    expect(replay.alreadyCommitted).toBe(true);
+    expect(replay.sheet.willpower.temporary).toBe(1);
+    // The room that did not make the last roll holds receipts the ledger has since dropped;
+    // binding there must still adopt the stored sheet instead of its own older copy.
+    const rebound = views(await bind(clients[0]!, structuredClone(stored!), 'rebind'));
+    expect(rebound.at(-1)?.sheets.find((item) => item.id === SHEET_ID)?.ruleActivationReceipts)
+      .toEqual(stored?.ruleActivationReceipts);
   });
 });
 

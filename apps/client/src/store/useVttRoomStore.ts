@@ -117,6 +117,7 @@ interface VttRoomStoreState {
   rollHistory: RollHistoryEntry[];
   ruleState: RoomRuleStateView | null;
   lastRuleActivation:{reqId:string;ruleId:string} | null;
+  lastRuleStateReply?: string;
   rulePreview: {reqId:string;event:Extract<ServerEvent,{type:'RULE_ROLL_PREVIEW'}>} | null;
   /** Shared initiative order for this dice room (unsorted; see rankInitiative). */
   tableInitiative: TableInitiativeEntry[];
@@ -467,7 +468,8 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
           }
           case 'RULE_STATE_UPDATED': {
             useCharacterSheetStore.getState().receiveRuleSheets(event.state.sheets,get().ruleState?.sheets);
-            set({ruleState:event.state,lastSeq:Math.max(seq,get().lastSeq),serverClockOffsetMs:offsetMs});
+            set({ruleState:event.state,lastRuleStateReply:envelope.replyToReqId,
+              lastSeq:Math.max(seq,get().lastSeq),serverClockOffsetMs:offsetMs});
             break;
           }
           case 'RULE_ACTIVATION_RESOLVED': {

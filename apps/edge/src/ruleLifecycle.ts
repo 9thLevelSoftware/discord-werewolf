@@ -24,6 +24,8 @@ import {
   type RuleMagnitude,
   type W20CharacterState,
   type W20RollResult,
+  type W20RollRequest,
+  type SpecialtyMode,
   type W20UserCharacterSheet,
 } from '@w20-vtt/core';
 import type { RoomRuleEffect, RuleClock } from '@w20-vtt/protocol';
@@ -156,17 +158,23 @@ export function rollRuleActivation(
   context: RuleContext,
   spendGnosis = false,
   rngD10 = rollCsprngD10,
-  options: { difficulty?: number; target?: RuleActor } = {}
+  options: { difficulty?: number; target?: RuleActor; itemOwner?: RuleActor; specialtyMode?: SpecialtyMode; captureRequest?: (request: W20RollRequest) => void } = {}
 ): W20RollResult | null {
-  const fetish = actor.fetishes.find((item) => item.id === source.id);
+  const itemOwner = options.itemOwner ?? actor;
+  const fetish = itemOwner.fetishes.find((item) => item.id === source.id);
   if (fetish && spendGnosis) return null;
+  const resolve = (request: W20RollRequest) => {
+    const original = { ...request, specialtyMode: options.specialtyMode };
+    options.captureRequest?.(original);
+    return resolveW20DicePool(original, rngD10);
+  };
   const needsRoll = rule.activation?.roll ?? Boolean(fetish);
   if (!needsRoll) return null;
 
   const gift = W20_GIFT_CATALOG.find((entry) => entry.id === source.ruleId || entry.id === rule.id);
   const rite = W20_RITE_CATALOG.find((entry) => entry.id === source.ruleId || entry.id === rule.id);
-  const sheetGift = isRuleSheet(actor)
-    ? actor.gifts.find((entry) => entry.id === source.id)
+  const sheetGift = isRuleSheet(itemOwner)
+    ? itemOwner.gifts.find((entry) => entry.id === source.id)
     : undefined;
   const isAncestors = rule.id === 'ancestors' || rule.id === 'background-ancestors';
   const spec = rule.activation?.rollSpec;
@@ -257,8 +265,7 @@ export function rollRuleActivation(
       },
       activationContext
     );
-    const stats = computeUserSheetStats(actor);
-    return resolveW20DicePool(
+    return resolve(
       {
         label: rule.name,
         basePool: Math.max(
@@ -277,10 +284,9 @@ export function rollRuleActivation(
         baseDifficulty: applyRuleValue({ modifiers: defenses }, 'difficulty', resolved.difficulty),
         woundPenalty: resolved.woundPenalty,
         applyWoundPenalty: resolved.applyWoundPenalty,
-        hasApplicableSpecialty: resolved.hasSpecialty,
+        hasApplicableSpecialty: resolved.declaredSpecialty,
         ruleModifiers: [...resolved.modifiers, ...defenses],
-      },
-      rngD10
+      }
     );
   }
 
@@ -301,7 +307,7 @@ export function rollRuleActivation(
     difficulty,
     woundPenalty: isAncestors || fetish ? 0 : stats.woundPenalty,
   });
-  return resolveW20DicePool(
+  return resolve(
     {
       label: rule.name,
       basePool: Math.max(
@@ -317,8 +323,7 @@ export function rollRuleActivation(
       baseDifficulty: applyRuleValue({ modifiers: defenses }, 'difficulty', resolved.difficulty),
       woundPenalty: resolved.woundPenalty,
       ruleModifiers: [...resolved.modifiers, ...defenses],
-    },
-    rngD10
+    }
   );
 }
 

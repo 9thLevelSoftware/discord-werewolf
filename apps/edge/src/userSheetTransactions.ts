@@ -1,4 +1,4 @@
-import type { W20UserCharacterSheet } from '@w20-vtt/core';
+import { compactRuleReceipts, type W20UserCharacterSheet } from '@w20-vtt/core';
 
 export type RuleResource = 'rage' | 'gnosis' | 'willpower';
 export type RuleResourceAmounts = Partial<Record<RuleResource, number>>;
@@ -30,8 +30,32 @@ export interface RuleSpendInput {
   permanentResourceDelta?: RuleResourceAmounts;
   consumedSourceIds?: string[];
   requiredSourceIds?: string[];
+  sourceReservationSettlements?: Array<{ sourceId: string; token: string }>;
   requiredAbsentReceipts?: string[];
   additionalReceipts?: string[];
+}
+
+const SOURCE_RESERVATION_PREFIX = 'pending-source:';
+
+export function reserveRuleSourceReceipt(sourceId: string, token: string): string {
+  return SOURCE_RESERVATION_PREFIX + encodeURIComponent(sourceId) + ':' + token;
+}
+
+export function settleRuleSourceReceipt(token: string): string {
+  return 'settled-source:' + token;
+}
+
+function reservedRuleSources(receipts: readonly string[]): Map<string, string> {
+  const settled = new Set(receipts.filter((receipt) => receipt.startsWith('settled-source:')));
+  const active = new Map<string, string>();
+  for (const receipt of receipts) {
+    if (!receipt.startsWith(SOURCE_RESERVATION_PREFIX)) continue;
+    const boundary = receipt.indexOf(':', SOURCE_RESERVATION_PREFIX.length);
+    if (boundary < 0) continue;
+    const token = receipt.slice(boundary + 1);
+    if (!settled.has(settleRuleSourceReceipt(token))) active.set(receipt.slice(SOURCE_RESERVATION_PREFIX.length, boundary), token);
+  }
+  return active;
 }
 
 export function nextSheetVersion(existing: W20UserCharacterSheet): number {
@@ -50,6 +74,11 @@ export function preserveRuleTransactions(
   const consumed = new Set(
     receipts.filter((receipt) => receipt.startsWith('consumed:')).map((receipt) => receipt.slice(9))
   );
+  const reserved = reservedRuleSources(receipts);
+  const mergeSources = <T extends { id: string }>(stored: T[], submitted: T[]) => [
+    ...submitted.filter((source) => !consumed.has(source.id) && !reserved.has(encodeURIComponent(source.id))),
+    ...stored.filter((source) => !consumed.has(source.id) && reserved.has(encodeURIComponent(source.id))),
+  ];
   return {
     ...incoming,
     id: existing.id,
@@ -68,9 +97,9 @@ export function preserveRuleTransactions(
           activeRuleEffects: existing.activeRuleEffects,
         }
       : {}),
-    fetishes: incoming.fetishes.filter((item) => !consumed.has(item.id)),
-    equipment: incoming.equipment?.filter((item) => !consumed.has(item.id)),
-    combatWeapons: incoming.combatWeapons.filter((item) => !consumed.has(item.id)),
+    fetishes: mergeSources(existing.fetishes, incoming.fetishes),
+    equipment: existing.equipment || incoming.equipment ? mergeSources(existing.equipment ?? [], incoming.equipment ?? []) : undefined,
+    combatWeapons: mergeSources(existing.combatWeapons, incoming.combatWeapons),
     // Editors preserve the server's debit log, including transactions they have not seen yet.
     ruleActivationReceipts: existing.ruleActivationReceipts,
     updatedAt: nextSheetVersion(existing),
@@ -133,7 +162,18 @@ export function applyRuleSpend(
       sourceIds.add(`shared-gift:${grant.id}`);
     }
   }
+  const reservations = reservedRuleSources(receipts);
+  const settlements = new Map((input.sourceReservationSettlements ?? []).map(({ sourceId, token }) => [sourceId, token]));
+  for (const [sourceId, token] of settlements) {
+    if (reservations.get(encodeURIComponent(sourceId)) !== token) {
+      throw new RuleSpendConflictError('SOURCE_MISSING', 'The pending source reservation is no longer available.', existing);
+    }
+  }
   for (const id of [...(input.requiredSourceIds ?? []), ...(input.consumedSourceIds ?? [])]) {
+    const reservation = reservations.get(encodeURIComponent(id));
+    if (reservation && reservation !== settlements.get(id)) {
+      throw new RuleSpendConflictError('ALREADY_USED', 'This source has a pending use.', existing);
+    }
     if (!sourceIds.has(id) || receipts.includes(`consumed:${id}`)) {
       throw new RuleSpendConflictError(
         'SOURCE_MISSING',
@@ -184,14 +224,14 @@ export function applyRuleSpend(
     fetishes: edited.fetishes.filter((item) => !consumed.has(item.id)),
     equipment: edited.equipment?.filter((item) => !consumed.has(item.id)),
     combatWeapons: edited.combatWeapons.filter((item) => !consumed.has(item.id)),
-    ruleActivationReceipts: [
-      ...new Set([
-        ...receipts,
-        input.operationId,
-        ...(input.additionalReceipts ?? []),
-        ...(input.consumedSourceIds ?? []).map((id) => `consumed:${id}`),
-      ]),
-    ],
+    // Built from the stored ledger, so receipts the editing callback added are not kept.
+    ruleActivationReceipts: compactRuleReceipts([
+      ...receipts,
+      ...Array.from(settlements.values(), settleRuleSourceReceipt),
+      input.operationId,
+      ...(input.additionalReceipts ?? []),
+      ...(input.consumedSourceIds ?? []).map((id) => `consumed:${id}`),
+    ]),
     updatedAt: nextSheetVersion(existing),
   };
 }

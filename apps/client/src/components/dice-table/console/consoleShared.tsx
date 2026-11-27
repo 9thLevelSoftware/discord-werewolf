@@ -183,7 +183,7 @@ const ToggleChip: React.FC<{
     className={cx(
       'flex items-center justify-center gap-1.5 border text-xs font-bold transition',
       'disabled:cursor-not-allowed disabled:opacity-45',
-      touch ? 'h-control-touch rounded-xl px-3' : 'h-control-sm rounded-lg px-2.5',
+      touch ? 'min-h-control-touch rounded-xl px-3 py-1' : 'min-h-control-sm rounded-lg px-2.5 py-1',
       pressed
         ? TOGGLE_ON[tone]
         : 'border-stone-700 bg-obsidian-950 text-stone-300 hover:not-disabled:border-stone-500'
@@ -193,12 +193,30 @@ const ToggleChip: React.FC<{
   </button>
 );
 
+export function SpecialtyDeclaration({
+  declared,
+  reason,
+  touch = false,
+  onToggle,
+}: {
+  declared: boolean;
+  reason?: string | null;
+  touch?: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <ToggleChip pressed={declared} tone="amber" touch={touch} onClick={onToggle}>
+      <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+      {reason ? <span>Apply specialty ({reason})</span> : <span>Apply specialty</span>}
+    </ToggleChip>
+  );
+}
+
 export interface RollModifierTogglesProps {
   /** row: inline chips for the desktop tray. grid: 2x2 touch tiles for the mobile sheet. */
   layout: 'row' | 'grid';
-  hasSpecialty: boolean;
-  /** The specialty was switched on automatically from the character sheet. */
-  specialtyFromSheet: boolean;
+  showSpecialty?: boolean;
+  specialtyDeclared: boolean;
   specialtyReason?: string | null;
   spendWillpower: boolean;
   applyWoundPenalty: boolean;
@@ -213,8 +231,8 @@ export interface RollModifierTogglesProps {
 
 export const RollModifierToggles: React.FC<RollModifierTogglesProps> = ({
   layout,
-  hasSpecialty,
-  specialtyFromSheet,
+  showSpecialty = true,
+  specialtyDeclared,
   specialtyReason,
   spendWillpower,
   applyWoundPenalty,
@@ -234,21 +252,14 @@ export const RollModifierToggles: React.FC<RollModifierTogglesProps> = ({
       aria-label="Roll modifiers"
       className={touch ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap items-center gap-1.5'}
     >
-      <ToggleChip
-        pressed={hasSpecialty}
-        tone="amber"
-        touch={touch}
-        onClick={onToggleSpecialty}
-        title={specialtyReason ?? 'Specialty: 10s count twice'}
-      >
-        <Sparkles className={iconClass} />
-        <span>Specialty</span>
-        {specialtyFromSheet && hasSpecialty && (
-          <span className="rounded bg-amber-400/20 px-1 text-xs font-extrabold text-amber-200">
-            Sheet
-          </span>
-        )}
-      </ToggleChip>
+      {showSpecialty && (
+        <SpecialtyDeclaration
+          declared={specialtyDeclared}
+          reason={specialtyReason}
+          touch={touch}
+          onToggle={onToggleSpecialty}
+        />
+      )}
 
       <ToggleChip
         pressed={spendWillpower}

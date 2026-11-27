@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { W20RollResult } from '@w20-vtt/core';
+import { resolveW20DicePool, type W20RollResult } from '@w20-vtt/core';
 import type { ClientEnvelope, ServerEnvelope, ServerEvent } from '@w20-vtt/protocol';
 
 vi.mock('../../../audio/SyncedSoundscapeEngine', () => ({
@@ -724,8 +724,9 @@ describe('useVttRoomStore reconnect buffering & roll deduplication', () => {
     box: DiceBoxLike;
     echoFor: (
       spec: LocalQueuedRollSpec,
-      physicalDiceValues: number[] | undefined
-    ) => { values: number[]; delayMs: number };
+      physicalDiceValues: number[] | undefined,
+      physicalBonusWaves?: number[][]
+    ) => { values: number[]; delayMs: number; roll?: W20RollResult };
     echoWaitTimeoutMs?: number;
   }) {
     const safeBox = new SafeDiceBoxController({ isDocumentHidden: () => false });
@@ -746,12 +747,13 @@ describe('useVttRoomStore reconnect buffering & roll deduplication', () => {
         if (idx < 0) return null;
         return remoteQueue.splice(idx, 1)[0] ?? null;
       },
-      onSendRollCommand: (spec, physicalDiceValues) => {
-        const echo = opts.echoFor(spec, physicalDiceValues);
+      onSendRollCommand: (spec, physicalDiceValues, physicalBonusWaves) => {
+        const echo = opts.echoFor(spec, physicalDiceValues, physicalBonusWaves);
         setTimeout(() => {
-          remoteQueue.push(
-            makeRemoteRoll(`echo-${spec.rollClientId}`, 'Maya', spec.label, echo.values, spec.rollClientId)
+          const queued = makeRemoteRoll(
+            `echo-${spec.rollClientId}`, 'Maya', spec.label, echo.values, spec.rollClientId
           );
+          remoteQueue.push(echo.roll ? { ...queued, roll: echo.roll } : queued);
           coordinator.notifyInboundQueueChanged();
         }, echo.delayMs);
       },
@@ -781,7 +783,7 @@ describe('useVttRoomStore reconnect buffering & roll deduplication', () => {
     expect(DICE_FORCE_FREEZE_MS).toBeGreaterThan(PHYSICS_SETTLE_TIMEOUT_MS);
   });
 
-  it('compares felt dice to the recorded roll, ignoring server-only bonus dice', () => {
+  it('compares all felt dice to the recorded roll, including bonus dice', () => {
     const roll = makeRollResult([9, 10, 2]);
     expect(physicalDiceMatchRoll([9, 10, 2], roll)).toBe(true);
     expect(physicalDiceMatchRoll([10, 9, 2], roll)).toBe(false);
@@ -795,7 +797,102 @@ describe('useVttRoomStore reconnect buffering & roll deduplication', () => {
         { value: 4, isBonusExplosionDie: true, contributedSuccesses: 0, isOne: false },
       ],
     };
-    expect(physicalDiceMatchRoll([9, 10, 2], withBonus)).toBe(true);
+    expect(physicalDiceMatchRoll([9, 10, 2], withBonus)).toBe(false);
+    expect(physicalDiceMatchRoll([9, 10, 2], withBonus, [[4]])).toBe(true);
+    expect(physicalDiceMatchRoll([9, 10, 2], withBonus, [[5]])).toBe(false);
+  });
+
+  const explodingResult = () => {
+    const faces = [10, 10, 7, 10, 1, 8];
+    return resolveW20DicePool({
+      label: 'Brawl',
+      basePool: 3,
+      hasApplicableSpecialty: true,
+      specialtyMode: 'revised_explode',
+    }, () => faces.shift()!);
+  };
+
+  it('appends physical waves after base dice and sends them with the original command', async () => {
+    const box = {
+      roll: vi.fn(async () => [{ value: 0 }, { value: 10 }, { value: 7 }]),
+      add: vi.fn()
+        .mockResolvedValueOnce([{ value: 10 }, { value: 1 }])
+        .mockResolvedValueOnce([{ value: 8 }]),
+      clear: vi.fn(),
+    };
+    const echoFor = vi.fn(() => ({ values: [], roll: explodingResult(), delayMs: 5 }));
+    const h = makeHarness({ box, echoFor });
+    const spec = {
+      ...makeLocalSpec('local-waves', 'Brawl'),
+      hasSpecialty: true,
+      specialtyMode: 'revised_explode' as const,
+      effectiveRage: 1,
+    };
+    h.coordinator.enqueueLocalRoll(spec);
+    await waitForCondition(() => h.shownBanners.length === 1);
+
+    expect(box.roll).toHaveBeenCalledWith([
+      { qty: 2, sides: 10, themeColor: '#18181b' },
+      { qty: 1, sides: 10, themeColor: '#991b1b' },
+    ], expect.anything());
+    expect(box.add.mock.calls.map(([groups]) => groups)).toEqual([
+      [{ qty: 2, sides: 10, themeColor: '#18181b' }],
+      [{ qty: 1, sides: 10, themeColor: '#18181b' }],
+    ]);
+    expect(echoFor).toHaveBeenCalledExactlyOnceWith(spec, [10, 10, 7], [[10, 1], [8]]);
+    expect(h.hasDiceCalls).toEqual([true]);
+    expect(box.clear).not.toHaveBeenCalled();
+    h.coordinator.dispose();
+  });
+
+  it('submits only fully settled waves when a later bonus wave is interrupted', async () => {
+    const box = {
+      roll: vi.fn(async () => [{ value: 10 }, { value: 10 }, { value: 7 }]),
+      add: vi.fn()
+        .mockResolvedValueOnce([{ value: 10 }, { value: 1 }])
+        .mockImplementationOnce(() => new Promise(() => {})),
+      clear: vi.fn(),
+    };
+    const echoFor = vi.fn(() => ({ values: [], roll: explodingResult(), delayMs: 5 }));
+    const h = makeHarness({ box, echoFor });
+    const spec = {
+      ...makeLocalSpec('local-interrupted-bonus', 'Brawl'),
+      hasSpecialty: true,
+      specialtyMode: 'revised_explode' as const,
+    };
+    h.coordinator.enqueueLocalRoll(spec);
+    await waitForCondition(() => box.add.mock.calls.length === 2);
+    h.coordinator.clearFelt();
+    await waitForCondition(() => !h.coordinator.getStatus().isRolling);
+
+    expect(echoFor).toHaveBeenCalledExactlyOnceWith(spec, [10, 10, 7], [[10, 1]]);
+    expect(h.hasDiceCalls).toEqual([false]);
+    expect(box.clear).toHaveBeenCalled();
+    h.coordinator.dispose();
+  });
+
+  it('animates remote waves from the recorded parents even when the replay lands no tens', async () => {
+    const box = {
+      roll: vi.fn(async () => [{ value: 1 }, { value: 2 }, { value: 3 }]),
+      add: vi.fn().mockResolvedValue([]),
+      clear: vi.fn(),
+    };
+    const h = makeHarness({ box, echoFor: () => ({ values: [], delayMs: 5 }) });
+    h.remoteQueue.push({
+      ...makeRemoteRoll('remote-waves', 'Kaelen', 'Brawl', []),
+      roll: explodingResult(),
+    });
+    h.coordinator.notifyInboundQueueChanged();
+    await waitForCondition(() => h.shownBanners.length === 1);
+
+    expect(box.roll).toHaveBeenCalledTimes(1);
+    expect(box.add.mock.calls.map(([groups]) => groups)).toEqual([
+      [{ qty: 2, sides: 10, themeColor: '#18181b' }],
+      [{ qty: 1, sides: 10, themeColor: '#18181b' }],
+    ]);
+    expect(h.shownBanners[0]?.roll.dice.map((die) => die.value)).toEqual([10, 10, 7, 10, 1, 8]);
+    expect(box.clear).toHaveBeenCalled();
+    h.coordinator.dispose();
   });
 
   it('keeps the dice on the felt when the ledger records exactly those faces', async () => {

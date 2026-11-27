@@ -10,6 +10,10 @@ import {
   type W20UserCharacterSheet,
   type ActiveRuleInstance,
   type W20RollRequest,
+  type W20RollResult,
+  type ModifierRule,
+  type RuleSource,
+  type RuleContext,
 } from '@w20-vtt/core';
 import type {
   AudioSyncPayload,
@@ -29,6 +33,7 @@ import type {
   RoomRuleStateView,
   RuleClock,
 } from '@w20-vtt/protocol';
+import { canCorrectRuleRoll, getRerollOptions } from './ruleRerolls';
 import type { SharedActionRecord, SharedRuleIntent } from './sharedRuleCommit';
 
 export interface BoundRuleSheet {
@@ -37,6 +42,42 @@ export interface BoundRuleSheet {
   /** Version supplied by the editor, before room resource deductions. */
   editorUpdatedAt: number;
   canonicalKnown?: boolean;
+}
+
+export interface RuleRollRecord {
+  sheetId: string;
+  discordUserId: string;
+  request: W20RollRequest;
+  history: RollHistoryEntry;
+  rerolled?: boolean;
+  superseded?: boolean;
+  refundedWillpower?: boolean;
+  packKey?: string;
+  minimumSuccesses?: number;
+  activationClosed?: boolean;
+}
+
+export interface PendingRuleActivation {
+  operationId: string;
+  casterDiscordId: string;
+  actorId: string;
+  targetIds: string[];
+  rule: ModifierRule;
+  source: RuleSource;
+  parentEffectIds?: string[];
+  endsParent?: boolean;
+  endParentOnEitherResult?: boolean;
+  sourceReservation?: { sourceId: string; token: string };
+  grantedGift?: ActiveRuleInstance['grantedGift'];
+  choices: NonNullable<ActiveRuleInstance['ruleChoices']>;
+  targetChoices: Record<string, NonNullable<ActiveRuleInstance['ruleChoices']>>;
+  context: RuleContext;
+  sourceTraits: Record<string, number>;
+  choiceValue?: number;
+  opposingSuccesses: number;
+  privateRollerDiscordId?: string;
+  referenceRollId?: string;
+  roll: W20RollResult;
 }
 
 export interface PersistedRuleState {
@@ -48,19 +89,8 @@ export interface PersistedRuleState {
   activationReceipts: Record<string, Extract<ServerEvent, { type: 'RULE_ACTIVATION_RESOLVED' }>>;
   advanceReceipts: string[];
   rollReceipts: Record<string, RollHistoryEntry>;
-  rollRequests: Record<
-    string,
-    {
-      sheetId: string;
-      discordUserId: string;
-      request: W20RollRequest;
-      history: RollHistoryEntry;
-      rerolled?: boolean;
-      superseded?: boolean;
-      refundedWillpower?: boolean;
-      packKey?: string;
-    }
-  >;
+  rollRequests: Record<string, RuleRollRecord>;
+  pendingActivations?: Record<string, PendingRuleActivation>;
   rerollUsage: Record<string, number>;
   frequencyReceipts: string[];
   packWillpower?: { current: number; max: number };
@@ -78,6 +108,7 @@ export interface RuleSheetMutation {
   }>;
   operationId: string;
   sheetId: string;
+  sourceReservation?: { sourceId: string; token: string };
   resourceDelta: { rage: number; gnosis: number; willpower: number };
   consumedSourceIds: string[];
   effects: ActiveRuleInstance[];
@@ -355,6 +386,21 @@ export function projectRuleState(
       (effect) =>
         visibleIds.has(effect.targetId) || effect.casterDiscordId === attachment.discordUserId,
     ),
+    correctableRollIds: Object.values(rules.rollRequests).filter((original) =>
+      original.discordUserId === attachment.discordUserId && visibleIds.has(original.sheetId) &&
+      canCorrectRuleRoll(rules, original)).map((original) => original.history.id),
+    rerollOptions: Object.values(rules.rollRequests).flatMap((original) => {
+      const sheet = rules.sheets[original.sheetId]?.sheet;
+      if (original.discordUserId !== attachment.discordUserId || !visibleIds.has(original.sheetId) || !sheet) return [];
+      return getRerollOptions(state, sheet, original).map(({ ruleId, name, remaining, gnosisCost }) =>
+        ({ rollId: original.history.id, sheetId: sheet.id, ruleId, name, remaining, gnosisCost }));
+    }),
+    pendingActivations: Object.entries(rules.pendingActivations ?? {}).flatMap(([rollId, pending]) => {
+      const original = rules.rollRequests[rollId];
+      return original && original.discordUserId === attachment.discordUserId && visibleIds.has(original.sheetId)
+        ? [{ rollId, sheetId: original.sheetId, label: pending.rule.name, roll: pending.roll }]
+        : [];
+    }),
     clock: { ...rules.clock },
     packWillpower: rules.packWillpower,
     packPools: Object.fromEntries(Object.entries(rules.packPools).filter(([key]) => attachment.role === 'storyteller' || Object.values(rules.sheets).some((record) => visibleIds.has(record.sheet.id) && record.sheet.packName.trim().toLowerCase() === key))),
