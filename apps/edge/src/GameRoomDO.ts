@@ -1035,7 +1035,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   }
 
   private commitTableInitiative(replyToReqId?: string): void {
-    this.commitAndBroadcast([{ event: this.tableInitiativeEvent() }], replyToReqId, undefined, true);
+    this.persistAndBroadcastEvents([{ event: this.tableInitiativeEvent() }], replyToReqId, undefined, true);
   }
 
   private isVoiceTableStoryteller(attachment: InternalSocketAttachment): boolean {
@@ -2957,7 +2957,6 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     pending: PendingOutboundEvent[],
     replyToReqId?: string,
     directSnapshotSockets?: WebSocket[],
-    transactional = false,
   ): void {
     if (this.reconcileRuleSources())
       pending = [
@@ -2996,6 +2995,15 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return;
     }
     this.trimRuleReplayCaches();
+    this.persistAndBroadcastEvents(pending, replyToReqId, directSnapshotSockets);
+  }
+
+  private persistAndBroadcastEvents(
+    pending: PendingOutboundEvent[],
+    replyToReqId?: string,
+    directSnapshotSockets?: WebSocket[],
+    transactional = false,
+  ): void {
     const newEntries: BufferedRoomEvent[] = [];
     const previousSeq = this.roomState.seq;
     const now = Date.now();
@@ -3041,7 +3049,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       }
     };
     try {
-      if (transactional && typeof this.ctx.storage.transactionSync === 'function') this.ctx.storage.transactionSync(persist);
+      if (transactional) this.ctx.storage.transactionSync(persist);
       else persist();
     } catch (error) {
       this.roomState.seq = previousSeq;

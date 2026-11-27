@@ -379,6 +379,79 @@ describe('voice-table Storyteller', () => {
     expect(JSON.stringify(drain(rejoinedPlayer.ws))).not.toContain('STORYTELLER_ROLL_RECORDED');
   });
 
+  it('commits reveal and clear together with their replay events after a storage failure', async () => {
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, makeEnv());
+    const st = await connect(room, state, storytellerId);
+    const player = await connect(room, state, playerId);
+    await sendCommand(room, player.ws, 0, {
+      type: 'ROLL_TABLE_POOL', pool: 1, rageDiceCount: 0, difficulty: 6, hasSpecialty: false,
+      spendWillpower: false, applyWoundPenalty: false, rollClientId: 'public-before-initiative',
+    });
+    const beforeSeq = drain(player.ws).find(({ event }) => event.type === 'DICE_ROLLED_3D')!.seq;
+    drain(st.ws);
+    await sendCommand(room, st.ws, beforeSeq, {
+      type: 'ST_ROLL_TABLE_INITIATIVE', label: 'Hidden combatant', modifier: 0, rollClientId: 'init-for-retry',
+    });
+    const privateEntry = find(drain(st.ws), 'STORYTELLER_ROLL_RECORDED')!.initiative!;
+
+    // Reconciliation can save a snapshot when it changes an unrelated rule source.
+    const ruleSourceHooks = room as unknown as { reconcileRuleSources(): boolean; persistStateSnapshot(): void };
+    const reconciliation = vi.spyOn(ruleSourceHooks, 'reconcileRuleSources').mockImplementation(() => {
+      ruleSourceHooks.persistStateSnapshot();
+      return true;
+    });
+    const checkpoint = () => ({
+      state: state.sql.exec('SELECT state_json FROM room_state').one(),
+      events: state.sql.exec('SELECT seq, envelope_json FROM room_event_ring ORDER BY seq').toArray(),
+    });
+    const failEventWrites = () => state.sql.exec(`
+      CREATE TRIGGER fail_initiative_events BEFORE INSERT ON room_event_ring BEGIN
+        SELECT RAISE(ABORT, 'injected event-ring failure');
+      END
+    `);
+    const restoreEventWrites = () => state.sql.exec('DROP TRIGGER fail_initiative_events');
+
+    const reveal = { type: 'ST_REVEAL_TABLE_INITIATIVE', entryId: privateEntry.id } as const;
+    const beforeReveal = checkpoint();
+    failEventWrites();
+    await sendCommand(room, st.ws, beforeSeq, reveal, 'retry-reveal');
+    expect(find(drain(st.ws), 'COMMAND_REJECTED')).toMatchObject({ code: 'VALIDATION_ERROR', currentSeq: beforeSeq });
+    expect(drain(player.ws)).toEqual([]);
+    expect(checkpoint()).toEqual(beforeReveal);
+    restoreEventWrites();
+
+    await sendCommand(room, st.ws, beforeSeq, reveal, 'retry-reveal');
+    expect(find(drain(st.ws), 'STORYTELLER_INITIATIVE_UPDATED')?.entries).toEqual([{ ...privateEntry, revealed: true }]);
+    const revealEvent = drain(player.ws).find(({ event }) => event.type === 'TABLE_INITIATIVE_UPDATED')!;
+    expect(revealEvent.seq).toBe(beforeSeq + 1);
+    expect(find([revealEvent], 'TABLE_INITIATIVE_UPDATED')?.entries).toMatchObject([{ displayName: privateEntry.label }]);
+
+    const clear = { type: 'CLEAR_TABLE_INITIATIVE' } as const;
+    const beforeClear = checkpoint();
+    failEventWrites();
+    await sendCommand(room, player.ws, revealEvent.seq, clear, 'retry-clear');
+    expect(find(drain(player.ws), 'COMMAND_REJECTED')).toMatchObject({ code: 'VALIDATION_ERROR', currentSeq: revealEvent.seq });
+    expect(drain(st.ws)).toEqual([]);
+    expect(checkpoint()).toEqual(beforeClear);
+    restoreEventWrites();
+
+    await sendCommand(room, player.ws, revealEvent.seq, clear, 'retry-clear');
+    expect(find(drain(st.ws), 'STORYTELLER_INITIATIVE_UPDATED')?.entries).toEqual([]);
+    const clearEvent = drain(player.ws).find(({ event }) => event.type === 'TABLE_INITIATIVE_UPDATED')!;
+    expect(clearEvent).toMatchObject({ seq: revealEvent.seq + 1, event: { entries: [] } });
+    expect(reconciliation).not.toHaveBeenCalled();
+
+    const restartedState = new MockDurableObjectState(state.sql.db);
+    const restarted = new GameRoomDO(restartedState as unknown as DurableObjectState, makeEnv());
+    const rejoined = await connect(restarted, restartedState, playerId, { lastSeenSeq: beforeSeq });
+    expect(rejoined.events).toContainEqual(revealEvent);
+    expect(rejoined.events).toContainEqual(clearEvent);
+    expect(find(rejoined.events, 'TABLE_INITIATIVE_UPDATED')?.entries).toEqual([]);
+    const rejoinedSt = await connect(restarted, restartedState, storytellerId);
+    expect(find(rejoinedSt.events, 'STORYTELLER_TABLE_SYNC')?.state.initiative).toEqual([]);
+  });
+
   it('projects gameplay stats only from sheets bound to connected seats', async () => {
     const state = new MockDurableObjectState();
     const room = new GameRoomDO(state as unknown as DurableObjectState, makeEnv());
