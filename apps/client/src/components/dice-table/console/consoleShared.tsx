@@ -172,18 +172,21 @@ const ToggleChip: React.FC<{
   onClick: () => void;
   disabled?: boolean;
   title?: string;
+  /** Accessible name when the visible text is shortened. */
+  label?: string;
   children: React.ReactNode;
-}> = ({ pressed, tone, touch, onClick, disabled, title, children }) => (
+}> = ({ pressed, tone, touch, onClick, disabled, title, label, children }) => (
   <button
     type="button"
     aria-pressed={pressed}
+    aria-label={label}
     disabled={disabled}
     onClick={onClick}
     title={title}
     className={cx(
-      'flex items-center justify-center gap-1.5 border text-xs font-bold transition',
+      'flex min-w-0 items-center justify-center gap-1.5 border text-xs font-bold transition',
       'disabled:cursor-not-allowed disabled:opacity-45',
-      touch ? 'min-h-control-touch rounded-xl px-3 py-1' : 'min-h-control-sm rounded-lg px-2.5 py-1',
+      touch ? 'h-control-touch rounded-xl px-3' : 'h-control-sm rounded-lg px-2.5',
       pressed
         ? TOGGLE_ON[tone]
         : 'border-stone-700 bg-obsidian-950 text-stone-300 hover:not-disabled:border-stone-500'
@@ -204,10 +207,30 @@ export function SpecialtyDeclaration({
   touch?: boolean;
   onToggle: () => void;
 }) {
+  // The specialty names can be long, so the chip shows them shortened and keeps the full text
+  // in its accessible name and tooltip.
+  const fullLabel = reason ? `Apply specialty (${reason})` : 'Apply specialty';
   return (
-    <ToggleChip pressed={declared} tone="amber" touch={touch} onClick={onToggle}>
+    <ToggleChip
+      pressed={declared}
+      tone="amber"
+      touch={touch}
+      onClick={onToggle}
+      label={fullLabel}
+      title={fullLabel}
+    >
       <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-      {reason ? <span>Apply specialty ({reason})</span> : <span>Apply specialty</span>}
+      <span className="shrink-0">Specialty</span>
+      {reason && (
+        <span
+          className={cx(
+            'truncate font-normal opacity-80',
+            touch ? 'max-w-56' : 'hidden max-w-40 2xl:inline'
+          )}
+        >
+          {reason}
+        </span>
+      )}
     </ToggleChip>
   );
 }

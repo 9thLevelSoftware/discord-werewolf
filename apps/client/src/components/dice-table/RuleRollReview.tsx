@@ -10,8 +10,8 @@ import {
 } from '@w20-vtt/core';
 import { useVttRoomStore } from '../../store/useVttRoomStore';
 import { useRuleTargetOptions } from '../character-sheet/sheetShared';
-import { Modal } from '../ui';
-import { factLabel, ruleButton, ruleField } from '../character-sheet/RuleEditor';
+import { Button, Modal } from '../ui';
+import { factLabel, ruleField, ruleInset } from '../character-sheet/RuleEditor';
 
 export function ModifierBreakdown({ modifiers }: { modifiers: AppliedRuleModifier[] }) {
   return (
@@ -169,18 +169,19 @@ export function RuleRollReview({
       title={shortcut.name}
       size="sm"
       footer={
-        <button
-          className={ruleButton}
+        <Button
+          variant="primary"
+          fullWidth
           disabled={!resolved || (resolved.pool <= 0 && !canResolveWithoutDice(resolved.modifiers))}
           onClick={() => resolved && onConfirm(context, resolved)}
         >
           {resolved && resolved.effectivePool === 0
             ? 'Resolve roll'
             : 'Roll ' + (resolved?.effectivePool ?? '…') + ' dice'}
-        </button>
+        </Button>
       }
     >
-      <div className="space-y-4">
+      <div className="w20-rules space-y-4">
         {local.hasEligibleNamedSpecialty && (
           <label className="block">
             <input
@@ -192,7 +193,7 @@ export function RuleRollReview({
           </label>
         )}
         {choices.length > 0 && (
-          <label className="block">
+          <label>
             Target{' '}
             <select
               className={ruleField}
@@ -210,9 +211,7 @@ export function RuleRollReview({
         )}
         {facts.length > 0 && (
           <fieldset className="space-y-1.5">
-            <legend className="mb-1 text-sm font-semibold text-amber-200">
-              Which circumstances apply?
-            </legend>
+            <legend>Which circumstances apply?</legend>
             {facts.map((tag) => (
               <label key={tag} className="block">
                 <input
@@ -258,14 +257,15 @@ export function RuleRollReview({
             const update = (patch: { pool?: number; difficulty?: number }) =>
               setPenalties([...penalties.filter((p) => p.key !== key), { ...row, key, ...patch }]);
             return (
-              <details key={m.sourceId + key}>
+              <details key={m.sourceId + key} className={ruleInset}>
                 <summary>
                   {factLabel(key)} penalty · {m.name}
                 </summary>
+                <div className="grid grid-cols-2 gap-2">
                 <label>
                   Dice penalty{' '}
                   <input
-                    className={ruleField + ' w-20'}
+                    className={ruleField}
                     type="number"
                     min={-30}
                     max={0}
@@ -278,7 +278,7 @@ export function RuleRollReview({
                 <label>
                   Difficulty increase{' '}
                   <input
-                    className={ruleField + ' w-20'}
+                    className={ruleField}
                     type="number"
                     min={0}
                     max={10}
@@ -288,18 +288,19 @@ export function RuleRollReview({
                     }
                   />
                 </label>
+                </div>
               </details>
             );
           })}
         {resolved ? (
-          <>
-            <p aria-live="polite" className="font-semibold">
+          <div className="space-y-2 rounded-lg border border-gold-500/30 bg-obsidian-900 px-3 py-2.5">
+            <p aria-live="polite" className="font-display text-base font-bold tracking-wide text-parchment">
               {resolved.effectivePool} dice · Difficulty {resolved.difficulty}
             </p>
-            <ModifierBreakdown modifiers={resolved.modifiers} />
-          </>
+            {resolved.modifiers.length > 0 && <ModifierBreakdown modifiers={resolved.modifiers} />}
+          </div>
         ) : (
-          <p role="status">
+          <p role="status" className="text-sm text-stone-400">
             {(error?.reqId === request?.id ? error?.message : undefined) ??
               (connected ? 'Checking target modifiers…' : 'Waiting for the table to reconnect…')}
           </p>

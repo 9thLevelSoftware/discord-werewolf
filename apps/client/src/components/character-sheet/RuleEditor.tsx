@@ -5,11 +5,25 @@ import {
   type ModifierRule,
   type RuleEffect,
 } from '@w20-vtt/core';
+import { X } from 'lucide-react';
+import { Button, ConfirmButton, IconButton } from '../ui';
 
+/** Text inputs and selects in rule forms. Matches the shared `TextInput` and `Select`. */
 export const ruleField =
-  'rounded border border-stone-700 bg-zinc-950 px-2 py-1.5 text-sm text-stone-100';
+  'h-control-md min-w-0 rounded-lg border border-stone-700 bg-obsidian-950 px-2.5 text-sm text-parchment transition ' +
+  'placeholder:text-stone-500 hover:not-disabled:border-stone-500 focus-visible:border-gold-400 ' +
+  'disabled:cursor-not-allowed disabled:opacity-45';
+/** Secondary actions in rule forms. Matches the shared secondary `Button`. */
 export const ruleButton =
-  'rounded border border-amber-600/60 bg-amber-950/40 px-3 py-1.5 text-sm text-amber-100 disabled:opacity-40';
+  'inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-lg border border-gold-500/45 ' +
+  'bg-obsidian-900 px-3.5 text-xs font-semibold text-gold-200 transition hover:not-disabled:border-gold-300 ' +
+  'hover:not-disabled:bg-obsidian-800 disabled:cursor-not-allowed disabled:opacity-45';
+/** A titled card on the Rules & Equipment page. Matches the other sheet pages. */
+export const rulePanel = 'rounded-xl border border-amber-500/20 bg-zinc-950/75 p-3.5';
+export const rulePanelTitle =
+  'font-display text-xs font-bold tracking-wider uppercase text-amber-200';
+/** An inset group inside a panel. */
+export const ruleInset = 'rounded-lg border border-stone-800 bg-obsidian-950/60 p-3';
 const targets = [
   'pool',
   'difficulty',
@@ -136,16 +150,16 @@ export function RuleEditor({
     });
   };
   return (
-    <details className="mt-3 rounded border border-stone-700 p-3">
-      <summary className="cursor-pointer text-sm text-amber-200">Edit custom rule</summary>
+    <details className={ruleInset}>
+      <summary>Edit custom rule</summary>
       <form
-        className="mt-3 space-y-3"
+        className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
           save(effects.length ? effects : [readClause()]);
         }}
       >
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-[minmax(0,1fr)_5rem] gap-2">
           <label>
             Rule source{' '}
             <input
@@ -160,7 +174,7 @@ export function RuleEditor({
           <label>
             Page{' '}
             <input
-              className={ruleField + ' w-20'}
+              className={ruleField}
               type="number"
               min="1"
               value={page}
@@ -168,19 +182,23 @@ export function RuleEditor({
             />
           </label>
         </div>
-        {effects.map((effect, index) => (
-          <div key={index} className="flex items-center gap-3">
-            {effectText(effect)}{' '}
-            <button
-              type="button"
-              className={ruleButton}
-              onClick={() => setEffects(effects.filter((_, i) => i !== index))}
-            >
-              Remove clause
-            </button>
-          </div>
-        ))}
-        <div className="flex flex-wrap items-end gap-2">
+        {effects.length > 0 && (
+          <ul className="divide-y divide-stone-800 rounded-lg border border-stone-800">
+            {effects.map((effect, index) => (
+              <li key={index} className="flex items-center justify-between gap-3 py-1 pr-1 pl-3">
+                <span className="min-w-0 text-sm text-parchment">{effectText(effect)}</span>
+                <IconButton
+                  label="Remove clause"
+                  icon={<X className="h-3.5 w-3.5" />}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEffects(effects.filter((_, i) => i !== index))}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3">
           <label>
             Adjust{' '}
             <select
@@ -210,7 +228,7 @@ export function RuleEditor({
           <label>
             Amount{' '}
             <input
-              className={ruleField + ' w-24'}
+              className={ruleField}
               value={value}
               onChange={(e) => setValue(e.target.value)}
               list="custom-amounts"
@@ -257,7 +275,7 @@ export function RuleEditor({
             </select>
           </label>
           <button
-            className={ruleButton}
+            className={ruleButton + ' col-span-2 sm:col-span-3 sm:justify-self-start'}
             type="button"
             disabled={!validClause || effects.length >= 64}
             onClick={() => setEffects([...effects, readClause()])}
@@ -265,7 +283,7 @@ export function RuleEditor({
             Add clause
           </button>
         </div>
-        <label className="block">
+        <label>
           Rule notes{' '}
           <input
             className={ruleField}
@@ -275,9 +293,10 @@ export function RuleEditor({
           />
         </label>
         {(duration || effects.some((e) => e.duration)) && (
-          <fieldset className="space-y-2">
-            <legend>Activation</legend>
-            <label className="block">
+          <fieldset className="space-y-2.5 border-t border-stone-800 pt-3">
+            <legend className="sr-only">Activation</legend>
+            <p className={rulePanelTitle}>Activation</p>
+            <label>
               <input
                 type="checkbox"
                 checked={
@@ -292,7 +311,7 @@ export function RuleEditor({
             {(activationRoll ||
               effects.some((e) => e.value === 'successes') ||
               value === 'successes') && (
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <label>
                   Attribute or resource{' '}
                   <select
@@ -325,7 +344,7 @@ export function RuleEditor({
                 <label>
                   Fixed pool{' '}
                   <input
-                    className={ruleField + ' w-20'}
+                    className={ruleField}
                     type="number"
                     min={1}
                     max={30}
@@ -337,7 +356,7 @@ export function RuleEditor({
                 <label>
                   Difficulty{' '}
                   <input
-                    className={ruleField + ' w-20'}
+                    className={ruleField}
                     type="number"
                     min={2}
                     max={10}
@@ -347,12 +366,12 @@ export function RuleEditor({
                 </label>
               </div>
             )}
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {(['rage', 'gnosis', 'willpower'] as const).map((key) => (
                 <label key={key}>
                   {factLabel(key)} cost{' '}
                   <input
-                    className={ruleField + ' w-16'}
+                    className={ruleField}
                     type="number"
                     min={0}
                     max={10}
@@ -364,21 +383,24 @@ export function RuleEditor({
             </div>
           </fieldset>
         )}
-        <button
-          className={ruleButton}
-          disabled={!source.trim() || (!effects.length && !validClause)}
-        >
-          Save rule
-        </button>
-        {existing && (
-          <button
-            className="ml-3 text-sm text-red-300"
-            type="button"
-            onClick={() => onSave(undefined)}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-stone-800 pt-3">
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={!source.trim() || (!effects.length && !validClause)}
           >
-            Remove custom rule
-          </button>
-        )}
+            Save rule
+          </Button>
+          {existing && (
+            <ConfirmButton
+              prompt="Remove this custom rule?"
+              confirmLabel="Remove"
+              onConfirm={() => onSave(undefined)}
+            >
+              Remove custom rule
+            </ConfirmButton>
+          )}
+        </div>
       </form>
     </details>
   );

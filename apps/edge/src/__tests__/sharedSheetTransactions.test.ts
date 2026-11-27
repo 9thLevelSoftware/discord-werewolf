@@ -756,3 +756,96 @@ describe('Supabase remains authoritative on ordinary provider errors', () => {
     }
   );
 });
+
+describe('several players at one table', () => {
+  const GUEST = '345678901234567890';
+  const LOCAL_ID = '88888888-8888-4888-8888-888888888888';
+  const GUEST_ID = '99999999-9999-4999-8999-999999999999';
+
+  async function join(env: WorkerEnv, host: RoomClient, discordId: string): Promise<RoomClient> {
+    const jwt = await tokenFor(env, discordId);
+    await host.room.fetch(
+      new Request(`https://vtt.example/ws/room/${host.roomId}`, {
+        headers: { Upgrade: 'websocket' },
+      })
+    );
+    const client: RoomClient = {
+      ...host,
+      ws: host.state.acceptedSockets.at(-1)!,
+      jwt,
+      authEvents: [],
+    };
+    await command(
+      client,
+      {
+        type: 'HELLO_AUTH',
+        sessionJwt: jwt,
+        campaignId: host.roomId,
+        characterId: null,
+        lastSeenSeq: null,
+      },
+      'authenticate'
+    );
+    client.authEvents = client.ws.drainJson<Envelope>();
+    return client;
+  }
+
+  function localSheet(ownerDiscordId: string, name: string): W20UserCharacterSheet {
+    return createBlankUserCharacterSheet({ id: LOCAL_ID, ownerDiscordId, name, now: 100 });
+  }
+
+  it('refuses to replace another player’s bound local sheet', async () => {
+    const backend = createBackend('r2');
+    const owner = await connect(backend.env, 'dice-room-local-bind', OWNER);
+    await bind(owner, localSheet(OWNER, 'Unsaved Garou'));
+    const intruder = await join(backend.env, owner, CONTROLLER);
+    owner.ws.drainJson<Envelope>();
+
+    await command(
+      intruder,
+      { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet: localSheet(CONTROLLER, 'Impostor') },
+      'steal'
+    );
+    await settle(owner);
+
+    expect(rejected(intruder.ws.drainJson<Envelope>())).toBe(true);
+    await command(owner, { type: 'ADVANCE_RULE_CLOCK', unit: 'turn', amount: 1 }, 'tick');
+    const sheets = views(owner.ws.drainJson<Envelope>()).at(-1)?.sheets ?? [];
+    expect(sheets.find((sheet) => sheet.id === LOCAL_ID)?.name).toBe('Unsaved Garou');
+  });
+
+  it('keeps saving other characters after an update for an unsaved sheet cannot be stored', async () => {
+    const backend = createBackend('r2');
+    const caster = sheetWithBalances(2);
+    caster.otherTraits[0]!.customRule!.effects = [
+      {
+        target: 'attribute:strength',
+        operation: 'add',
+        value: 2,
+        duration: 'scene',
+        recipient: 'target',
+      },
+    ];
+    const guest = createBlankUserCharacterSheet({
+      id: GUEST_ID,
+      ownerDiscordId: GUEST,
+      name: 'Saved Packmate',
+      now: 100,
+    });
+    await backend.repository.create(caster);
+    await backend.repository.create(guest);
+
+    const owner = await connect(backend.env, 'dice-room-outbox', OWNER);
+    await bind(owner, structuredClone(caster));
+    const unsaved = await join(backend.env, owner, CONTROLLER);
+    await bind(unsaved, localSheet(CONTROLLER, 'Unsaved Garou'));
+    const saved = await join(backend.env, owner, GUEST);
+    await bind(saved, structuredClone(guest));
+
+    await command(owner, { ...activate, targetIds: [LOCAL_ID, GUEST_ID] }, 'bless-both');
+    await settle(owner);
+
+    expect(activations(owner.ws.drainJson<Envelope>())).toHaveLength(1);
+    expect((await backend.repository.getById(GUEST_ID))?.activeRuleEffects).toHaveLength(1);
+  });
+});

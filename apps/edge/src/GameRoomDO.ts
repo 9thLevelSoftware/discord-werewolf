@@ -1348,6 +1348,10 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         throw new Error('Only the owner may bind a local character sheet.');
       }
       const existing = rules.sheets[submitted.id];
+      // A sheet outside shared storage is vouched for only by the room record its owner bound.
+      if (!stored && existing && existing.sheet.ownerDiscordId !== attachment.discordUserId) {
+        throw new Error('Only the owner may bind a local character sheet.');
+      }
       let sheet = structuredClone(submitted);
       const pendingLocalReceipts = existing && stored && hasUnacknowledgedRuleReceipts(existing.sheet.ruleActivationReceipts, stored.ruleActivationReceipts);
       const base = pendingLocalReceipts ? existing!.sheet : stored && (!existing || stored.updatedAt > existing.sheet.updatedAt) ? stored : existing?.sheet ?? stored;
@@ -2066,7 +2070,14 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         }
         rules.persistenceQueue.shift();
         this.persistStateSnapshot();
-      } catch {
+      } catch (error) {
+        if (error instanceof RuleSpendConflictError && error.code !== 'STALE') {
+          // This update can never be saved, so it must not hold back the updates queued behind it.
+          rules.persistenceQueue.shift();
+          if (error.latestSheet && rules.sheets[error.latestSheet.id]) this.replaceCanonicalRuleSheet(error.latestSheet);
+          this.persistStateSnapshot();
+          continue;
+        }
         // The durable outbox is retried on the next authenticated interaction or reconnect.
         return;
       }
@@ -2081,6 +2092,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const rules = this.getRuleState();
     const actor = this.resolveRuleActor(attachment, command.seatId, command.characterId);
     if (!isRuleSheet(actor) && command.event === 'experience_award') throw new Error(`General experience awards require Storyteller approval through POST /api/campaigns/${actor.campaignId}/xp-award and the existing XP ledger.`);
+    if (!isRuleSheet(actor) && command.event === 'renown_award' && this.roomState.storytellerDiscordId && attachment.role !== 'storyteller') throw new Error('Only the Storyteller awards Renown to a chronicle character.');
     const operationId = this.ruleOperationId('event', attachment.discordUserId, reqId);
     if (rules.frequencyReceipts.includes(operationId) || isRuleSheet(actor) && actor.ruleActivationReceipts?.includes(operationId)) return;
     const allSources = isRuleSheet(actor) ? getSheetModifierSources(actor) : getCharacterModifierSources(actor);

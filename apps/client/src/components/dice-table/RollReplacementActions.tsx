@@ -9,7 +9,10 @@ export function RollReplacementActions({ options, disabled, onChoose }: {
 }) {
   return options.map((option) => (
     <Button key={option.ruleId} size="sm" disabled={disabled} onClick={() => onChoose(option)}>
-      Use {option.name}{option.gnosisCost > 0 && ` · ${option.gnosisCost} Gnosis`} · {option.remaining} left
+      Use {option.name}
+      <span className="font-normal text-stone-400">
+        {option.gnosisCost > 0 && ` · ${option.gnosisCost} Gnosis`} · {option.remaining} left
+      </span>
     </Button>
   ));
 }

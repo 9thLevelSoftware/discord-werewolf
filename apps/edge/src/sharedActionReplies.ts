@@ -1,5 +1,7 @@
 import type { SharedActionRecord } from './sharedRuleCommit';
 
+const MAX_SHARED_ACTION_REPLIES = 1000;
+
 /** Durable command replies, kept outside the room's JSON snapshot. */
 export class SharedActionReplies {
   constructor(private readonly storage: DurableObjectStorage) {
@@ -26,6 +28,11 @@ export class SharedActionReplies {
       'INSERT INTO shared_action_replies (action_key, record_json) VALUES (?, ?) ON CONFLICT(action_key) DO UPDATE SET record_json = excluded.record_json',
       actionKey,
       JSON.stringify(record)
+    );
+    // Only recent actions can be retried, so older replies are not kept.
+    this.storage.sql.exec(
+      'DELETE FROM shared_action_replies WHERE rowid <= (SELECT MAX(rowid) FROM shared_action_replies) - ?',
+      MAX_SHARED_ACTION_REPLIES
     );
   }
 }
