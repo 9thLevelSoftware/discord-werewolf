@@ -19,6 +19,8 @@ export interface WorkerEnv
   ALLOWED_REDIRECT_URIS?: string;
   /** Local development only. '1' enables the mock sign-in route on loopback hosts. */
   DEV_MOCK_AUTH?: string;
+  /** JSON object mapping raw Discord voice channel IDs to Discord user IDs. */
+  VOICE_TABLE_STORYTELLERS?: string;
 }
 
 export function jsonResponse(

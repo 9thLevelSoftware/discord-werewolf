@@ -46,6 +46,43 @@ describe('@w20-vtt/protocol parseClientEnvelope & schemas', () => {
     }
   });
 
+  it('validates private Storyteller pools without accepting client dice faces', () => {
+    const command = {
+      type: 'ST_ROLL_TABLE_POOL',
+      count: 30,
+      difficulty: 6,
+      rollClientId: 'pool-1',
+    } as const;
+    expect(parseClientEnvelope(makeEnvelope(command))).toMatchObject({ success: true });
+    expect(parseClientEnvelope(makeEnvelope({ ...command, count: 0 }))).toMatchObject({ success: false });
+    expect(parseClientEnvelope(makeEnvelope({ ...command, count: 31 }))).toMatchObject({ success: false });
+    expect(parseClientEnvelope(makeEnvelope({ ...command, difficulty: 11 }))).toMatchObject({ success: false });
+
+    const suppliedFaces = { ...command, physicalDiceValues: Array.from({ length: 30 }, () => 10) };
+    expect(parseClientEnvelope(makeEnvelope(suppliedFaces))).toMatchObject({ success: false });
+  });
+
+  it('requires a named Storyteller initiative roll and a reveal entry id', () => {
+    const command = {
+      type: 'ST_ROLL_TABLE_INITIATIVE',
+      rollClientId: 'initiative-1',
+      label: '  First guard  ',
+      modifier: -2,
+    } as const;
+    expect(parseClientEnvelope(makeEnvelope(command))).toMatchObject({
+      success: true,
+      data: { command: { label: 'First guard', modifier: -2 } },
+    });
+    expect(parseClientEnvelope(makeEnvelope({ ...command, label: '  ' }))).toMatchObject({ success: false });
+    expect(parseClientEnvelope(makeEnvelope({ ...command, modifier: 51 }))).toMatchObject({ success: false });
+    expect(parseClientEnvelope(makeEnvelope({
+      type: 'ST_REVEAL_TABLE_INITIATIVE', entryId: 'initiative-1',
+    }))).toMatchObject({ success: true });
+    expect(parseClientEnvelope(makeEnvelope({
+      type: 'ST_REVEAL_TABLE_INITIATIVE', entryId: '',
+    }))).toMatchObject({ success: false });
+  });
+
   it('accepts all 36 ClientCommand variants with strict schema validation', () => {
     const sampleMacro = {
       id: 'macro-razor-claws',

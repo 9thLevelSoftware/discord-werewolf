@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveW20InitiativeRoll } from '@w20-vtt/core';
+import type { RollHistoryEntry, ServerEvent, StorytellerTableState } from '@w20-vtt/protocol';
 import { useVttRoomStore } from '../useVttRoomStore';
 
 class FakeSocket {
@@ -40,6 +42,10 @@ function reject(socket: FakeSocket, code: string, message: string): void {
       event: { type: 'COMMAND_REJECTED', code, message, currentSeq: 0 },
     }),
   });
+}
+
+function receive(socket: FakeSocket, event: ServerEvent, replyToReqId?: string): void {
+  socket.onmessage?.({ data: JSON.stringify({ seq: 5, serverTime: Date.now(), replyToReqId, event }) });
 }
 
 beforeEach(() => {
@@ -91,5 +97,71 @@ describe('room connection when the session is refused', () => {
     expect(useVttRoomStore.getState().lastError?.message).toBe('Pool is too large.');
     useVttRoomStore.getState().clearLastError();
     expect(useVttRoomStore.getState().lastError).toBeNull();
+  });
+});
+
+describe('private Storyteller room state', () => {
+  const label = 'Gatekeeper';
+  const roll = resolveW20InitiativeRoll({ label, initiativeModifier: 4 }, () => 7);
+  const entry: RollHistoryEntry = {
+    id: 'private-roll', timestamp: 100, rollerDiscordId: PARAMS.localDiscordId,
+    rollerName: 'Storyteller', rollerAvatarUrl: null, label, rageDiceCount: 0,
+    isSecretRoll: true, roll,
+  };
+  const initiative = { id: 'private-initiative', label, total: 11, revealed: false };
+  const emptyTable: StorytellerTableState = { rollHistory: [], initiative: [], seats: [] };
+
+  it('deduplicates private receipts, clears initiative without losing history, and keeps rolls out of the shared animation', () => {
+    useVttRoomStore.getState().connectRoom(PARAMS);
+    const socket = FakeSocket.instances[0]!;
+    receive(socket, { type: 'STORYTELLER_TABLE_SYNC', state: emptyTable });
+    receive(socket, { type: 'STORYTELLER_ROLL_RECORDED', entry, initiative }, 'roll-1');
+    receive(socket, { type: 'STORYTELLER_ROLL_RECORDED', entry, initiative }, 'retry-1');
+
+    expect(useVttRoomStore.getState()).toMatchObject({
+      storytellerTable: { rollHistory: [entry], initiative: [initiative] },
+      rollHistory: [],
+      diceQueue: [],
+    });
+
+    receive(socket, { type: 'STORYTELLER_INITIATIVE_UPDATED', entries: [] });
+    expect(useVttRoomStore.getState().storytellerTable).toEqual({ ...emptyTable, rollHistory: [entry] });
+  });
+
+  it('requires fresh private authorization after reconnect and drops old state on account changes', () => {
+    useVttRoomStore.getState().connectRoom(PARAMS);
+    const first = FakeSocket.instances[0]!;
+    const state = { ...emptyTable, rollHistory: [entry], initiative: [initiative] };
+    receive(first, { type: 'STORYTELLER_TABLE_SYNC', state });
+    first.onclose?.();
+    expect(useVttRoomStore.getState().storytellerTable).toBeNull();
+
+    vi.advanceTimersByTime(500);
+    const second = FakeSocket.instances[1]!;
+    receive(second, { type: 'STORYTELLER_ROLL_RECORDED', entry });
+    expect(useVttRoomStore.getState().storytellerTable).toBeNull();
+    receive(second, { type: 'STORYTELLER_TABLE_SYNC', state });
+    expect(useVttRoomStore.getState().storytellerTable).toEqual(state);
+
+    useVttRoomStore.getState().connectRoom({ ...PARAMS, localDiscordId: 'other-user', sessionJwt: 'other-token' });
+    expect(useVttRoomStore.getState()).toMatchObject({ storytellerTable: null, lastSeq: 0 });
+    receive(second, { type: 'STORYTELLER_TABLE_SYNC', state });
+    expect(useVttRoomStore.getState().storytellerTable).toBeNull();
+  });
+
+  it('marks a Storyteller command refusal as an action error and keeps the session live', () => {
+    useVttRoomStore.getState().connectRoom(PARAMS);
+    const socket = FakeSocket.instances[0]!;
+    receive(socket, { type: 'PARTICIPANTS_UPDATED', participants: [] });
+    const reqId = useVttRoomStore.getState().sendCommand({
+      type: 'ST_REVEAL_TABLE_INITIATIVE', entryId: 'expired-initiative',
+    });
+    const event = { type: 'COMMAND_REJECTED', code: 'FORBIDDEN', message: 'Access ended.', currentSeq: 5 } as const;
+    receive(socket, event, reqId);
+
+    expect(useVttRoomStore.getState()).toMatchObject({
+      connectionStatus: 'authenticated',
+      lastError: { code: 'FORBIDDEN', storyteller: true, reqId },
+    });
   });
 });

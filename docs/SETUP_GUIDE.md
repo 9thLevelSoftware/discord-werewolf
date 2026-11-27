@@ -97,6 +97,22 @@ This guide walks through configuring Discord, Supabase, Cloudflare Workers + Dur
    SUPABASE_JWT_SECRET=your_supabase_jwt_secret
    ```
 
+### Assign a voice-table Storyteller
+
+Set the optional Worker variable `VOICE_TABLE_STORYTELLERS` to a JSON object. Each key is a raw Discord voice channel ID and each value is that table's Storyteller Discord user ID. With Discord Developer Mode enabled, use **Copy Channel ID** and **Copy User ID** to get these values.
+
+```json
+{"123456789012345678":"234567890123456789"}
+```
+
+For production, set it as a string in the Worker's variables. For local mock mode, add the following to `apps/edge/.dev.vars`, restart the local Worker, and sign in with mock slot 1.
+
+```ini
+VOICE_TABLE_STORYTELLERS='{"mock-channel":"900000000000000001"}'
+```
+
+The appointed account gets a private roll log, named initiative rolls it can reveal, and a read-only view of sheets currently bound to connected seats in that voice table. The latest 50 private rolls are stored in the table's Durable Object. Revealing publishes the initiative name and total to the shared order. Seated players can clear the order for the next encounter.
+
 ---
 
 ## 5. Register Discord `/w20` Slash Commands

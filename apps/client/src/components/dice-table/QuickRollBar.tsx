@@ -102,6 +102,7 @@ export interface DiceTableHudProps {
   composerAbil: string;
   onCycleLayoutMode: () => void;
   onToggleFeed: () => void;
+  onOpenStoryteller?: () => void;
   onCloseFeed: () => void;
   onTogglePack: () => void;
   onClearTable: () => void;

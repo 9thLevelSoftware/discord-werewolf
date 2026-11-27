@@ -35,6 +35,7 @@ import type {
 } from '@w20-vtt/protocol';
 import { canCorrectRuleRoll, getRerollOptions } from './ruleRerolls';
 import type { SharedActionRecord, SharedRuleIntent } from './sharedRuleCommit';
+import type { StoredStorytellerTable } from './voiceTableStoryteller';
 
 export interface BoundRuleSheet {
   sheet: W20UserCharacterSheet;
@@ -186,6 +187,8 @@ export interface PersistedRoomState {
   rollHistory?: RollHistoryEntry[];
   /** Shared initiative order for dice rooms. Separate from the campaign combat machine. */
   tableInitiative?: TableInitiativeEntry[];
+  tableInitiativeClearReceipts?: string[];
+  storytellerTable?: StoredStorytellerTable;
   ruleState?: PersistedRuleState;
 }
 

@@ -3,18 +3,23 @@ import type { TableInitiativeEntry } from '@w20-vtt/protocol';
 import { Zap } from 'lucide-react';
 import { ConfirmButton, cx } from '../ui';
 
-export interface RankedInitiativeEntry extends TableInitiativeEntry {
+export type RankedInitiativeEntry = TableInitiativeEntry & {
   /** 1-based position. Entries with the same total share a position. */
   rank: number;
   tied: boolean;
-}
+};
 
 /**
  * Highest total acts first. Equal totals share a rank and are flagged as tied;
  * the table settles ties itself (in W20, usually by comparing Dexterity + Wits).
  */
 export function rankInitiative(entries: TableInitiativeEntry[]): RankedInitiativeEntry[] {
-  const sorted = [...entries].sort((a, b) => b.total - a.total || a.rolledAt - b.rolledAt);
+  const sorted = [...entries].sort((a, b) => {
+    if (a.total !== b.total) return b.total - a.total;
+    if (a.source === 'storyteller') return b.source === 'storyteller' ? 0 : 1;
+    if (b.source === 'storyteller') return -1;
+    return a.rolledAt - b.rolledAt;
+  });
   const counts = new Map<number, number>();
   for (const entry of sorted) {
     counts.set(entry.total, (counts.get(entry.total) ?? 0) + 1);
@@ -37,6 +42,8 @@ export interface InitiativeOrderPanelProps {
   onClear: () => void;
   /** Larger touch targets for the mobile sheet. */
   touch?: boolean;
+  /** The room can have private initiative even when its shared order is empty. */
+  hasPrivateInitiative?: boolean;
 }
 
 /** The table's shared initiative order, built from everyone's latest initiative roll. */
@@ -45,6 +52,7 @@ export const InitiativeOrderPanel: React.FC<InitiativeOrderPanelProps> = ({
   currentUserId,
   onClear,
   touch = false,
+  hasPrivateInitiative = false,
 }) => {
   const ranked = useMemo(() => rankInitiative(entries), [entries]);
 
@@ -55,7 +63,7 @@ export const InitiativeOrderPanel: React.FC<InitiativeOrderPanelProps> = ({
           <Zap className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
           Initiative
         </h3>
-        {ranked.length > 0 && (
+        {(ranked.length > 0 || hasPrivateInitiative) && (
           <ConfirmButton
             variant="ghost"
             size={touch ? 'md' : 'sm'}
@@ -75,7 +83,7 @@ export const InitiativeOrderPanel: React.FC<InitiativeOrderPanelProps> = ({
       ) : (
         <ol className="space-y-1.5">
           {ranked.map((entry) => {
-            const mine = entry.discordUserId === currentUserId;
+            const mine = entry.source !== 'storyteller' && entry.discordUserId === currentUserId;
             return (
               <li
                 key={entry.participantKey}
@@ -91,7 +99,7 @@ export const InitiativeOrderPanel: React.FC<InitiativeOrderPanelProps> = ({
                 >
                   {entry.rank}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-xs font-semibold text-amber-50">
+                <span className="min-w-0 flex-1 break-words py-1 text-xs font-semibold text-amber-50">
                   {entry.displayName}
                   {mine && <span className="font-normal text-stone-400"> (you)</span>}
                 </span>

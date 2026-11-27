@@ -874,8 +874,11 @@ describe('several players at one table', () => {
     expect(sheets.find((sheet) => sheet.id === LOCAL_ID)?.name).toBe('Unsaved Garou');
   });
 
-  it('keeps saving other characters after an update for an unsaved sheet cannot be stored', async () => {
+  it('keeps saving other characters and refreshes the Storyteller after skipping a local-only sheet', async () => {
     const backend = createBackend('r2');
+    const channelId = '567890123456789012';
+    const storytellerId = '456789012345678901';
+    backend.env.VOICE_TABLE_STORYTELLERS = JSON.stringify({ [channelId]: storytellerId });
     const caster = sheetWithBalances(2);
     caster.otherTraits[0]!.customRule!.effects = [
       {
@@ -895,18 +898,35 @@ describe('several players at one table', () => {
     await backend.repository.create(caster);
     await backend.repository.create(guest);
 
-    const owner = await connect(backend.env, 'dice-room-outbox', OWNER);
+    const owner = await connect(backend.env, `dice-room-${channelId}`, OWNER);
     await bind(owner, structuredClone(caster));
     const unsaved = await join(backend.env, owner, CONTROLLER);
     await bind(unsaved, localSheet(CONTROLLER, 'Unsaved Garou'));
     const saved = await join(backend.env, owner, GUEST);
     await bind(saved, structuredClone(guest));
+    const storyteller = await join(backend.env, owner, storytellerId);
+    expect(storyteller.authEvents.some(({ event }) => event.type === 'STORYTELLER_TABLE_SYNC')).toBe(true);
+    const messageCountsAtWrite: number[] = [];
+    backend.control.observeCommit = () => messageCountsAtWrite.push(storyteller.ws.sentMessages.length);
 
     await command(owner, { ...activate, targetIds: [LOCAL_ID, GUEST_ID] }, 'bless-both');
     await settle(owner);
 
     expect(activations(owner.ws.drainJson<Envelope>())).toHaveLength(1);
     expect((await backend.repository.getById(GUEST_ID))?.activeRuleEffects).toHaveLength(1);
+    expect(messageCountsAtWrite).toHaveLength(2);
+    const afterTargetSave = storyteller.ws.drainJson<Envelope>().slice(messageCountsAtWrite[1]);
+    expect(afterTargetSave.map(({ event }) => event)).toContainEqual(expect.objectContaining({
+      type: 'STORYTELLER_SEATS_UPDATED',
+      seats: expect.arrayContaining([expect.objectContaining({
+        participantKey: GUEST,
+        sheet: expect.objectContaining({
+          computed: expect.objectContaining({
+            effectiveAttributes: expect.objectContaining({ strength: guest.baseAttributes.strength + 2 }),
+          }),
+        }),
+      })]),
+    }));
   });
 
   it('keeps dependent updates queued when a previously saved recipient goes missing', async () => {
