@@ -217,6 +217,200 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('voice-table Storyteller', () => {
+  const channelId = '123456789012345678';
+  const storytellerId = '234567890123456789';
+  const playerId = '345678901234567890';
+  const roomId = `dice-room-${channelId}`;
+  const makeEnv = () => createMockEnv({
+    SUPABASE_URL: '',
+    SUPABASE_SERVICE_ROLE_KEY: '',
+    VOICE_TABLE_STORYTELLERS: JSON.stringify({ [channelId]: storytellerId }),
+  });
+  type Envelope = ServerEnvelope<ServerEvent>;
+  const drain = (ws: MockWebSocket) => ws.drainJson<Envelope>();
+  const find = <T extends ServerEvent['type']>(events: Envelope[], type: T) =>
+    events.filter((envelope) => envelope.event.type === type).at(-1)?.event as
+      Extract<ServerEvent, { type: T }> | undefined;
+
+  async function connect(
+    room: GameRoomDO,
+    state: MockDurableObjectState,
+    discordId: string,
+    options: { lastSeenSeq?: number; routedRoom?: string; requestedRoom?: string } = {},
+  ) {
+    const path = options.routedRoom ?? roomId;
+    const jwt = await mintJwtForUser(discordId, discordId, [], makeEnv().SUPABASE_JWT_SECRET);
+    const response = await room.fetch(new Request(`https://vtt.example/ws/room/${path}`, {
+      headers: { Upgrade: 'websocket' },
+    }));
+    expect(response.status).toBe(101);
+    const ws = state.acceptedSockets.at(-1)!;
+    await sendCommand(room, ws, 0, {
+      type: 'HELLO_AUTH', sessionJwt: jwt, campaignId: options.requestedRoom ?? path,
+      characterId: null,
+      lastSeenSeq: options.lastSeenSeq ?? null,
+    });
+    return { ws, events: drain(ws) };
+  }
+
+  it('allows the configured identity only in its own room and grants no campaign powers', async () => {
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, makeEnv());
+    const st = await connect(room, state, storytellerId);
+    expect(find(st.events, 'SYNC_SNAPSHOT')?.snapshot.viewerRole).toBe('player');
+    expect(find(st.events, 'STORYTELLER_TABLE_SYNC')?.state.rollHistory).toEqual([]);
+    await sendCommand(room, st.ws, 0, { type: 'COMBAT_END' });
+    expect(find(drain(st.ws), 'COMMAND_REJECTED')?.code).toBe('UNAUTHORIZED');
+
+    const otherState = new MockDurableObjectState();
+    const otherRoom = new GameRoomDO(otherState as unknown as DurableObjectState, makeEnv());
+    const other = await connect(otherRoom, otherState, storytellerId, { routedRoom: 'dice-room-other' });
+    expect(find(other.events, 'STORYTELLER_TABLE_SYNC')).toBeUndefined();
+    await sendCommand(otherRoom, other.ws, 0, { type: 'ST_ROLL_TABLE_POOL', count: 1, difficulty: 6, rollClientId: 'cross-room' });
+    expect(find(drain(other.ws), 'COMMAND_REJECTED')?.code).toBe('FORBIDDEN');
+    const mismatch = await connect(otherRoom, otherState, storytellerId, {
+      routedRoom: 'dice-room-other', requestedRoom: roomId,
+    });
+    expect(find(mismatch.events, 'COMMAND_REJECTED')?.code).toBe('FORBIDDEN');
+    expect(mismatch.ws.closedCode).toBe(1008);
+  });
+
+  it('persists private rolls independently, keeps retries idempotent, and publishes only an explicitly revealed row', async () => {
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, makeEnv());
+    const st = await connect(room, state, storytellerId);
+    const player = await connect(room, state, playerId);
+    const secondTab = await connect(room, state, storytellerId);
+    const playerRoll = {
+      type: 'ROLL_TABLE_POOL', pool: 1, rageDiceCount: 0, difficulty: 6, hasSpecialty: false,
+      spendWillpower: false, applyWoundPenalty: false, rollClientId: 'player-roll',
+    } as const;
+    await sendCommand(room, player.ws, 0, playerRoll);
+    const publicSeq = drain(player.ws).find(({ event }) => event.type === 'DICE_ROLLED_3D')!.seq;
+    drain(st.ws);
+    drain(secondTab.ws);
+
+    const command = { type: 'ST_ROLL_TABLE_POOL', count: 7, difficulty: 6, rollClientId: 'private-pool' } as const;
+    await sendCommand(room, player.ws, publicSeq, command);
+    expect(find(drain(player.ws), 'COMMAND_REJECTED')?.code).toBe('FORBIDDEN');
+    await sendCommand(room, st.ws, publicSeq, command);
+    const first = find(drain(st.ws), 'STORYTELLER_ROLL_RECORDED');
+    expect(first?.entry.roll.dice).toHaveLength(7);
+    expect(first?.entry.roll.dice.every(({ value }) => value >= 1 && value <= 10)).toBe(true);
+    expect(find(drain(secondTab.ws), 'STORYTELLER_ROLL_RECORDED')).toEqual(first);
+    expect(drain(player.ws)).toEqual([]);
+    await sendCommand(room, st.ws, publicSeq, command, 'private-pool-retry');
+    expect(drain(st.ws)).toEqual([expect.objectContaining({ replyToReqId: 'private-pool-retry', event: first })]);
+    expect(drain(secondTab.ws)).toEqual([]);
+
+    const label = 'Unseen Howler';
+    await sendCommand(room, st.ws, publicSeq, {
+      type: 'ST_ROLL_TABLE_INITIATIVE', label, modifier: 8, rollClientId: 'named-init',
+    });
+    const named = find(drain(st.ws), 'STORYTELLER_ROLL_RECORDED');
+    const entry = named!.initiative!;
+    expect(entry).toMatchObject({ label, revealed: false });
+    expect(entry.total).toBe(named!.entry.roll.dice[0]!.value + 8);
+    expect(drain(player.ws)).toEqual([]);
+    await sendCommand(room, player.ws, publicSeq, { type: 'ST_REVEAL_TABLE_INITIATIVE', entryId: entry.id });
+    expect(find(drain(player.ws), 'COMMAND_REJECTED')?.code).toBe('FORBIDDEN');
+    const lateBeforeReveal = await connect(room, state, playerId);
+    expect(JSON.stringify(lateBeforeReveal.events)).not.toContain(label);
+    expect(find(lateBeforeReveal.events, 'SYNC_SNAPSHOT')?.snapshot.rollHistory).toHaveLength(1);
+
+    const restartedState = new MockDurableObjectState(state.sql.db);
+    const restarted = new GameRoomDO(restartedState as unknown as DurableObjectState, makeEnv());
+    const rejoinedSt = await connect(restarted, restartedState, storytellerId, { lastSeenSeq: publicSeq });
+    expect(find(rejoinedSt.events, 'STORYTELLER_TABLE_SYNC')?.state).toMatchObject({
+      rollHistory: [named!.entry, first!.entry], initiative: [entry],
+    });
+    const rejoinedPlayer = await connect(restarted, restartedState, playerId, { lastSeenSeq: publicSeq });
+    expect(JSON.stringify(rejoinedPlayer.events)).not.toContain(label);
+    const reveal = { type: 'ST_REVEAL_TABLE_INITIATIVE', entryId: entry.id } as const;
+    await sendCommand(restarted, rejoinedSt.ws, publicSeq, reveal, 'requested-reveal');
+    expect(drain(rejoinedSt.ws)).toContainEqual(expect.objectContaining({
+      replyToReqId: 'requested-reveal',
+      event: { type: 'STORYTELLER_INITIATIVE_UPDATED', entries: [{ ...entry, revealed: true }] },
+    }));
+    const publicReveal = drain(rejoinedPlayer.ws);
+    const publicEntry = find(publicReveal, 'TABLE_INITIATIVE_UPDATED')?.entries[0];
+    expect(publicEntry).toMatchObject({ source: 'storyteller', displayName: label, total: entry.total });
+    expect(JSON.stringify(publicReveal)).not.toContain(entry.id);
+    expect(JSON.stringify(publicReveal)).not.toContain('"dice"');
+    const deltaPlayer = await connect(restarted, restartedState, playerId, { lastSeenSeq: publicSeq });
+    expect(find(deltaPlayer.events, 'SYNC_SNAPSHOT')).toBeUndefined();
+    expect(find(deltaPlayer.events, 'TABLE_INITIATIVE_UPDATED')?.entries).toEqual([publicEntry]);
+    expect(find(deltaPlayer.events, 'STORYTELLER_TABLE_SYNC')).toBeUndefined();
+
+    drain(rejoinedPlayer.ws);
+    await sendCommand(restarted, rejoinedSt.ws, publicSeq, reveal, 'reveal-retry');
+    expect(drain(rejoinedSt.ws)).toContainEqual(expect.objectContaining({ replyToReqId: 'reveal-retry' }));
+    expect(drain(rejoinedPlayer.ws)).toEqual([]);
+    await sendCommand(restarted, rejoinedSt.ws, publicSeq, {
+      type: 'SYNC_CLIENT_SEATS',
+      seats: [{ seatId: 'second', displayName: 'Seat Two', trackers: { rage: 3, gnosis: 3, willpower: 5, woundPenalty: 0 } }],
+    });
+    const afterSeat = await connect(restarted, restartedState, playerId);
+    expect(find(afterSeat.events, 'SYNC_SNAPSHOT')?.snapshot.tableInitiative).toEqual([publicEntry]);
+    drain(rejoinedSt.ws);
+
+    await sendCommand(restarted, rejoinedPlayer.ws, publicSeq, { type: 'CLEAR_TABLE_INITIATIVE' }, 'clear-round');
+    expect(find(drain(rejoinedSt.ws), 'STORYTELLER_INITIATIVE_UPDATED')?.entries).toEqual([]);
+    expect(find(drain(rejoinedPlayer.ws), 'TABLE_INITIATIVE_UPDATED')?.entries).toEqual([]);
+    await sendCommand(restarted, rejoinedSt.ws, publicSeq, reveal);
+    expect(find(drain(rejoinedSt.ws), 'COMMAND_REJECTED')?.code).toBe('VALIDATION_ERROR');
+    await sendCommand(restarted, rejoinedSt.ws, publicSeq, {
+      type: 'ST_ROLL_TABLE_INITIATIVE', label: 'Next Round', modifier: 0, rollClientId: 'new-init',
+    });
+    const next = find(drain(rejoinedSt.ws), 'STORYTELLER_ROLL_RECORDED')!.initiative!;
+    await sendCommand(restarted, rejoinedPlayer.ws, publicSeq, { type: 'CLEAR_TABLE_INITIATIVE' }, 'clear-round');
+    await sendCommand(restarted, rejoinedSt.ws, publicSeq, { type: 'ST_REVEAL_TABLE_INITIATIVE', entryId: next.id });
+    expect(find(drain(rejoinedPlayer.ws), 'TABLE_INITIATIVE_UPDATED')?.entries[0]?.displayName).toBe('Next Round');
+
+    for (let index = 0; index < 50; index += 1) {
+      await sendCommand(restarted, rejoinedSt.ws, publicSeq, { ...command, rollClientId: `history-${index}` });
+    }
+    const retained = await connect(restarted, restartedState, storytellerId);
+    const privateHistory = find(retained.events, 'STORYTELLER_TABLE_SYNC')?.state.rollHistory;
+    expect(privateHistory).toHaveLength(50);
+    expect(privateHistory?.some(({ id }) => id === first?.entry.id)).toBe(false);
+    expect(find(retained.events, 'SYNC_SNAPSHOT')?.snapshot.rollHistory).toHaveLength(1);
+    expect(JSON.stringify(drain(rejoinedPlayer.ws))).not.toContain('STORYTELLER_ROLL_RECORDED');
+  });
+
+  it('projects gameplay stats only from sheets bound to connected seats', async () => {
+    const state = new MockDurableObjectState();
+    const room = new GameRoomDO(state as unknown as DurableObjectState, makeEnv());
+    const st = await connect(room, state, storytellerId);
+    const player = await connect(room, state, playerId);
+    const viewer = await connect(room, state, '456789012345678901');
+    drain(st.ws);
+    drain(viewer.ws);
+    const sheet = createBlankUserCharacterSheet({ id: 'observer-sheet', ownerDiscordId: playerId, name: 'Road Runner', syncCode: 'SECRET01' });
+    sheet.baseAttributes.strength = 4;
+    sheet.ruleActivationReceipts = ['private-transaction-receipt'];
+    await sendCommand(room, player.ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    const bound = find(drain(st.ws), 'STORYTELLER_SEATS_UPDATED');
+    expect(bound?.seats).toContainEqual(expect.objectContaining({
+      participantKey: playerId,
+      sheet: expect.objectContaining({
+        sheet: expect.objectContaining({ name: 'Road Runner', baseAttributes: expect.objectContaining({ strength: 4 }) }),
+        computed: expect.objectContaining({ effectiveAttributes: expect.objectContaining({ strength: 4 }) }),
+      }),
+    }));
+    expect(bound?.seats).toContainEqual({ participantKey: '456789012345678901', sheet: null });
+    expect(JSON.stringify(bound)).not.toMatch(/syncCode|SECRET01|ruleActivationReceipts|private-transaction-receipt/);
+    expect(find(drain(viewer.ws), 'STORYTELLER_SEATS_UPDATED')).toBeUndefined();
+    await sendCommand(room, st.ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet });
+    expect(find(drain(st.ws), 'COMMAND_REJECTED')?.code).toBe('VALIDATION_ERROR');
+    await sendCommand(room, player.ws, 0, { type: 'BIND_TABLE_SHEET', seatId: 'primary', sheet: null });
+    expect(find(drain(st.ws), 'STORYTELLER_SEATS_UPDATED')?.seats).toContainEqual({ participantKey: playerId, sheet: null });
+    await room.webSocketClose(player.ws as unknown as WebSocket);
+    expect(find(drain(st.ws), 'STORYTELLER_SEATS_UPDATED')?.seats.some((seat) => seat.participantKey === playerId)).toBe(false);
+  });
+});
+
 describe('sourced room modifier transactions', () => {
   const casterId = '123456789012345678';
   const recipientId = '234567890123456789';

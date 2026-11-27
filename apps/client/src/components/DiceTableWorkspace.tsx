@@ -60,6 +60,7 @@ import {
   type RollPreview,
 } from './dice-table/RuleRollReview';
 import { RollFeedDrawer } from './dice-table/RollFeedDrawer';
+import { StorytellerPanel } from './dice-table/StorytellerPanel';
 import { RollReplacementActions } from './dice-table/RollReplacementActions';
 import { AuthoritativeDieChips } from './dice-table/DieFaceTiles';
 
@@ -144,11 +145,17 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
   const lastError = useVttRoomStore((s) => s.lastError);
   const tableInitiative = useVttRoomStore((s) => s.tableInitiative);
   const clearTableInitiative = useVttRoomStore((s) => s.clearTableInitiative);
+  const storytellerTable = useVttRoomStore((s) => s.storytellerTable);
+  const [storytellerOpen, setStorytellerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!storytellerTable) setStorytellerOpen(false);
+  }, [storytellerTable]);
 
   // Show each server rejection once as a toast, then clear it.
   useEffect(() => {
     if (!lastError) return;
-    coordinatorRef.current?.notifyCommandRejected();
+    if (!lastError.storyteller) coordinatorRef.current?.notifyCommandRejected();
     useToasts.getState().push({ id: 'room-error', tone: 'error', message: lastError.message });
     useVttRoomStore.getState().clearLastError();
   }, [lastError]);
@@ -1422,6 +1429,7 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
     composerAbil,
     onCycleLayoutMode: cycleMode,
     onToggleFeed: () => setFeedOpen((v) => !v),
+    onOpenStoryteller: storytellerTable ? () => setStorytellerOpen(true) : undefined,
     onCloseFeed: () => setFeedOpen(false),
     onTogglePack: () => setPackOpen((v) => !v),
     onClearTable: handleClearTable,
@@ -1574,6 +1582,19 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         pendingActivations={pendingActivations}
         onReviewActivation={(id) => setDeferredChoiceIds((ids) => ids.filter((item) => item !== id))}
       />
+      {storytellerOpen && storytellerTable && (
+        <StorytellerPanel
+          mobile={isMobile}
+          connected={connectionStatus === 'authenticated'}
+          table={storytellerTable}
+          participants={participants}
+          sharedInitiative={tableInitiative}
+          currentUserId={session.userId}
+          sendCommand={sendCommand}
+          onClearInitiative={clearTableInitiative}
+          onClose={() => setStorytellerOpen(false)}
+        />
+      )}
 
       {/* Single-Instance Roster & Interactive W20 Sheet Modals mounted outside isMobile branch */}
       {review && activeSheet?.id === review.sheetId && activeSeat.seatId === review.seatId && <RuleRollReview

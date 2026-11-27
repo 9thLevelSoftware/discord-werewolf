@@ -10,30 +10,27 @@ import {
   formatRollTime,
 } from './DieFaceTiles';
 
-interface RollFeedDrawerProps {
-  open: boolean;
+interface RollFeedEntriesProps {
+  privateLog?: boolean;
   rollHistory: RollHistoryEntry[];
-  disabled: boolean;
-  mobileSheet?: boolean;
-  onClose: () => void;
-  replacementOptions: RollReplacementOption[];
-  onReplace: (option: RollReplacementOption) => void;
-  pendingActivations: PendingActivationChoice[];
-  onReviewActivation: (id: string) => void;
-  onReroll: (entry: RollHistoryEntry) => void;
+  disabled?: boolean;
+  replacementOptions?: RollReplacementOption[];
+  onReplace?: (option: RollReplacementOption) => void;
+  pendingActivations?: PendingActivationChoice[];
+  onReviewActivation?: (id: string) => void;
+  onReroll?: (entry: RollHistoryEntry) => void;
 }
 
-export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
-  open,
+export const RollFeedEntries: React.FC<RollFeedEntriesProps> = ({
   rollHistory,
-  disabled,
-  mobileSheet = false,
-  onClose,
-  onReroll, replacementOptions, onReplace, pendingActivations, onReviewActivation,
-}) => {
-  if (!open) return null;
-
-  const entries = (
+  disabled = false,
+  privateLog = false,
+  replacementOptions = [],
+  pendingActivations = [],
+  onReplace = () => {},
+  onReviewActivation = () => {},
+  onReroll,
+}) => (
     <>
         {pendingActivations.map((choice) => (
           <Button key={choice.rollId} size="sm" onClick={() => onReviewActivation(choice.rollId)}>
@@ -45,7 +42,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
             <ScrollText className="h-6 w-6 text-gold-500" aria-hidden="true" />
             <p className="mt-2 text-sm font-semibold text-stone-200">No rolls yet</p>
             <p className="mt-1 text-xs text-stone-400">
-              Rolls from everyone at this table appear here.
+              {privateLog ? 'Your private Storyteller rolls appear here.' : 'Rolls from everyone at this table appear here.'}
             </p>
           </div>
         ) : (
@@ -92,7 +89,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                     </div>
                   </div>
 
-                  <Button
+                  {!privateLog && onReroll && <Button
                     size="sm"
                     disabled={disabled}
                     aria-label={`Roll ${entry.label} again`}
@@ -101,7 +98,7 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
                   >
                     <RotateCcw className="h-3 w-3" />
                     Roll again
-                  </Button>
+                  </Button>}
                 </div>
 
                 <div className="flex flex-wrap gap-1">
@@ -161,7 +158,23 @@ export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
           })
         )}
     </>
-  );
+);
+
+interface RollFeedDrawerProps extends Required<Omit<RollFeedEntriesProps, 'privateLog'>> {
+  open: boolean;
+  mobileSheet?: boolean;
+  onClose: () => void;
+}
+
+export const RollFeedDrawer: React.FC<RollFeedDrawerProps> = ({
+  open,
+  mobileSheet = false,
+  onClose,
+  ...feedProps
+}) => {
+  if (!open) return null;
+
+  const entries = <RollFeedEntries {...feedProps} />;
 
   if (mobileSheet) {
     return (

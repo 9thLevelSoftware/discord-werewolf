@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { resolveModifierRule } from '@w20-vtt/core';
 import { subscribeWithSelector } from 'zustand/middleware';
+import { STORYTELLER_ROLL_HISTORY_LIMIT } from '@w20-vtt/protocol';
 import type {
   CombatEncounterView,
   DeclaredActionInput,
@@ -26,6 +27,7 @@ import type {
   RoomRuleStateView,
   ServerEnvelope,
   ServerEvent,
+  StorytellerTableState,
   TableInitiativeEntry,
   TableParticipant,
   WhisperCardPayload,
@@ -82,7 +84,7 @@ interface VttRoomStoreState {
   connectionStatus: ConnectionStatus;
   lastSeq: number;
   serverClockOffsetMs: number;
-  lastError: { code: CommandRejectionCode | string; message: string; reqId?:string } | null;
+  lastError: { code: CommandRejectionCode | string; message: string; reqId?: string; storyteller?: boolean } | null;
 
   // Viewer Context
   sessionJwt: string | null;
@@ -122,6 +124,7 @@ interface VttRoomStoreState {
   /** Shared initiative order for this dice room (unsorted; see rankInitiative). */
   tableInitiative: TableInitiativeEntry[];
   clearTableInitiative: () => void;
+  storytellerTable: StorytellerTableState | null;
 
   // Store Actions
   connectRoom: (params: ConnectRoomParams) => void;
@@ -188,6 +191,7 @@ let sessionRejected = false;
 let connectionGeneration = 0;
 let latestConnectParams: ConnectRoomParams | null = null;
 const seenRollHistoryIds = new Set<string>();
+const pendingStorytellerRequests = new Set<string>();
 let pendingOutboundCommands: Array<{ reqId: string; command: ClientCommand }> = [];
 
 function recordSeenRollHistoryId(id: string): void {
@@ -297,16 +301,19 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
     ruleState: null, rulePreview:null,lastRuleActivation:null,
     rollHistory: [],
     tableInitiative: [],
+    storytellerTable: null,
 
     connectRoom: (params) => {
       connectionGeneration += 1;
       const myGen = connectionGeneration;
       sessionRejected = false;
+      pendingStorytellerRequests.clear();
 
       const isSameRoom =
         latestConnectParams !== null &&
         latestConnectParams.campaignId === params.campaignId &&
-        latestConnectParams.characterId === params.characterId;
+        latestConnectParams.characterId === params.characterId &&
+        latestConnectParams.localDiscordId === params.localDiscordId;
       latestConnectParams = { ...params };
       if (!isSameRoom) {
         clearTransientRollBuffers();
@@ -323,6 +330,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
         campaignId: params.campaignId,
         lastSeq: isSameRoom ? state.lastSeq : 0,
         lastError: null,
+        storytellerTable: null,
         ...(isSameRoom
           ? {}
           : {
@@ -450,14 +458,17 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
                 connectionStatus: 'session_expired',
                 lastSeq: event.currentSeq,
                 serverClockOffsetMs: offsetMs,
+                storytellerTable: null,
               });
               break;
             }
+            const reqId = envelope.replyToReqId;
+            const storyteller = reqId ? pendingStorytellerRequests.delete(reqId) : false;
             set({
               lastSeq: event.currentSeq,
               serverClockOffsetMs: offsetMs,
               optimisticTokenCoords: {},
-              lastError: { code: event.code, message: event.message, reqId: envelope.replyToReqId },
+              lastError: { code: event.code, message: event.message, reqId, ...(storyteller ? { storyteller } : {}) },
             });
             break;
           }
@@ -479,7 +490,50 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
             break;
           }
           case 'TABLE_INITIATIVE_UPDATED': {
-            set({ tableInitiative: event.entries });
+            set({ tableInitiative: event.entries, lastSeq: Math.max(get().lastSeq, seq) });
+            break;
+          }
+
+          case 'STORYTELLER_TABLE_SYNC': {
+            set({ storytellerTable: event.state });
+            break;
+          }
+
+          case 'STORYTELLER_ROLL_RECORDED': {
+            if (envelope.replyToReqId) pendingStorytellerRequests.delete(envelope.replyToReqId);
+            const table = get().storytellerTable;
+            if (!table) break;
+
+            const { entry, initiative } = event;
+            const rollHistory = table.rollHistory.some((roll) => roll.id === entry.id)
+              ? table.rollHistory
+              : [entry, ...table.rollHistory]
+                  .sort((first, second) => second.timestamp - first.timestamp)
+                  .slice(0, STORYTELLER_ROLL_HISTORY_LIMIT);
+            set({
+              storytellerTable: {
+                ...table,
+                rollHistory,
+                initiative: initiative && !table.initiative.some((row) => row.id === initiative.id)
+                  ? [initiative, ...table.initiative]
+                  : table.initiative,
+              },
+            });
+            break;
+          }
+
+          case 'STORYTELLER_INITIATIVE_UPDATED': {
+            if (envelope.replyToReqId) pendingStorytellerRequests.delete(envelope.replyToReqId);
+            const table = get().storytellerTable;
+            if (table) {
+              set({ storytellerTable: { ...table, initiative: event.entries } });
+            }
+            break;
+          }
+
+          case 'STORYTELLER_SEATS_UPDATED': {
+            const table = get().storytellerTable;
+            if (table) set({ storytellerTable: { ...table, seats: event.seats } });
             break;
           }
 
@@ -728,11 +782,15 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
           heartbeatTimer = null;
         }
         socket = null;
+        pendingStorytellerRequests.clear();
         if (sessionRejected) {
           set({ connectionStatus: 'session_expired' });
           return;
         }
-        set({ connectionStatus: 'reconnecting' });
+        set({
+          connectionStatus: 'reconnecting',
+          storytellerTable: null,
+        });
 
         const backoffMs = Math.min(10_000, 500 * Math.pow(2, reconnectAttempt));
         reconnectAttempt += 1;
@@ -769,6 +827,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
 
     disconnectRoom: () => {
       connectionGeneration += 1;
+      pendingStorytellerRequests.clear();
       reconnectAttempt = 0;
       latestConnectParams = null;
       clearTimers();
@@ -798,6 +857,7 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
         lastRuleActivation: null,
         rollHistory: [],
         tableInitiative: [],
+        storytellerTable: null,
       });
     },
 
@@ -819,6 +879,10 @@ export const useVttRoomStore = create<VttRoomStoreState>()(
       }
 
       if (get().connectionStatus === 'authenticated' && isOpen && socket) {
+        if (command.type === 'ST_ROLL_TABLE_POOL' || command.type === 'ST_ROLL_TABLE_INITIATIVE' ||
+            command.type === 'ST_REVEAL_TABLE_INITIATIVE') {
+          pendingStorytellerRequests.add(reqId);
+        }
         const envelope: ClientEnvelope = {
           reqId,
           expectedSeq: get().lastSeq,

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  BookOpen,
   Dices,
   Eraser,
   FileText,
@@ -139,6 +140,7 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
   composerAbil,
   onCycleLayoutMode,
   onToggleFeed,
+  onOpenStoryteller,
   onCloseFeed,
   onClearTable,
   onDismissBanner,
@@ -276,6 +278,18 @@ export const MobileDiceTableHud: React.FC<DiceTableHudProps> = ({
 
           {/* Right: Compact Icon Buttons */}
           <div className="pointer-events-auto flex shrink-0 items-center gap-1">
+            {onOpenStoryteller && (
+              <button
+                type="button"
+                onClick={onOpenStoryteller}
+                aria-label="Storyteller"
+                aria-haspopup="dialog"
+                title="Storyteller"
+                className="w20-obsidian-panel flex h-11 w-11 items-center justify-center rounded-full text-amber-300 transition active:scale-95"
+              >
+                <BookOpen className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
             {(hasDiceOnTable || activeBanner || rollStageStatus.isRolling) && (
               <button
                 type="button"

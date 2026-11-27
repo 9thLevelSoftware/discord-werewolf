@@ -48,6 +48,7 @@ import {
 } from '@w20-vtt/core';
 import {
   parseClientEnvelope,
+  STORYTELLER_ROLL_HISTORY_LIMIT,
   type AudioSyncPayload,
   type ClientCommand,
   type ClientEnvelope,
@@ -84,6 +85,12 @@ import { reserveRuleSourceReceipt } from './userSheetTransactions';
 import { SharedActionReplies } from './sharedActionReplies';
 import { isMockDiscordId } from './devMockAuth';
 import {
+  projectStorytellerInitiative,
+  projectStorytellerSeats,
+  readVoiceTableStorytellers,
+  VOICE_TABLE_PREFIX,
+} from './voiceTableStoryteller';
+import {
   activationCosts,
   allocationLimit,
   actorWithEffects,
@@ -102,9 +109,15 @@ const MAX_FOG_STROKES = 2000;
 
 interface InternalSocketAttachment extends SocketAttachment {
   authenticated: boolean;
+  routedRoomId?: string;
   isSpeaking?: boolean;
   avatarUrl?: string | null;
 }
+
+type StorytellerRollCommand = Extract<ClientCommand, { type: 'ST_ROLL_TABLE_POOL' | 'ST_ROLL_TABLE_INITIATIVE' }>;
+type StorytellerTableEvent = Extract<ServerEvent, {
+  type: 'STORYTELLER_TABLE_SYNC' | 'STORYTELLER_ROLL_RECORDED' | 'STORYTELLER_INITIATIVE_UPDATED' | 'STORYTELLER_SEATS_UPDATED';
+}>;
 
 function normalizeSeatId(seatId?: string | null): string {
   const trimmed = seatId?.trim();
@@ -233,9 +246,11 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
   private roomOperations: Promise<void> = Promise.resolve();
   private sharedRuleStage: SharedRuleStage | null = null;
   private readonly sharedActionReplies: SharedActionReplies;
+  private readonly voiceTableStorytellers: ReadonlyMap<string, string>;
 
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env);
+    this.voiceTableStorytellers = readVoiceTableStorytellers(env.VOICE_TABLE_STORYTELLERS);
     this.sharedActionReplies = new SharedActionReplies(this.ctx.storage);
     this.ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(`
@@ -308,6 +323,14 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Expected WebSocket upgrade.', { status: 426 });
     }
+    const encodedRoomId = /^\/ws\/room\/([^/]+)$/.exec(new URL(request.url).pathname)?.[1];
+    let routedRoomId: string;
+    try {
+      routedRoomId = encodedRoomId ? decodeURIComponent(encodedRoomId).trim() : '';
+    } catch {
+      return new Response('Invalid room ID.', { status: 400 });
+    }
+    if (!routedRoomId) return new Response('Invalid room ID.', { status: 400 });
 
     const pair = new WebSocketPair();
     const clientSocket = pair[0];
@@ -320,6 +343,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       activeCharacterId: null,
       connectedAt: Date.now(),
       authenticated: false,
+      routedRoomId,
       isSpeaking: false,
       avatarUrl: null,
     };
@@ -374,7 +398,9 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       return;
     }
 
-    if (this.roomState.sharedRuleIntent && !(await this.resumeSharedRuleIntent())) {
+    const isPrivateStorytellerRoll = envelope.command.type === 'ST_ROLL_TABLE_POOL' ||
+      envelope.command.type === 'ST_ROLL_TABLE_INITIATIVE';
+    if (!isPrivateStorytellerRoll && this.roomState.sharedRuleIntent && !(await this.resumeSharedRuleIntent())) {
       this.sendRejection(ws, envelope.reqId, 'VALIDATION_ERROR', 'A previous action is awaiting shared storage confirmation. It will recover without a second charge.');
       return;
     }
@@ -512,7 +538,30 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     }
 
     if (envelope.command.type === 'CLEAR_TABLE_INITIATIVE') {
-      this.handleClearTableInitiative(envelope.reqId);
+      try {
+        this.handleClearTableInitiative(ws, attachment, envelope.reqId);
+      } catch {
+        this.sendRejection(ws, envelope.reqId, 'VALIDATION_ERROR', 'Could not save the initiative clear. Please retry.');
+      }
+      return;
+    }
+
+    if (envelope.command.type === 'ST_ROLL_TABLE_POOL' ||
+        envelope.command.type === 'ST_ROLL_TABLE_INITIATIVE' ||
+        envelope.command.type === 'ST_REVEAL_TABLE_INITIATIVE') {
+      if (!this.isVoiceTableStoryteller(attachment)) {
+        this.sendRejection(ws, envelope.reqId, 'FORBIDDEN', 'Only this voice table’s Storyteller may do that.');
+        return;
+      }
+      try {
+        if (envelope.command.type === 'ST_REVEAL_TABLE_INITIATIVE') {
+          this.revealStorytellerInitiative(ws, attachment, envelope.command.entryId, envelope.reqId);
+        } else {
+          this.rollStorytellerTable(ws, attachment, envelope.command, envelope.reqId);
+        }
+      } catch {
+        this.sendRejection(ws, envelope.reqId, 'VALIDATION_ERROR', 'Could not save the Storyteller action. Please retry.');
+      }
       return;
     }
 
@@ -928,6 +977,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const initiativeBefore = this.roomState.tableInitiative ?? [];
     const initiativeAfter = initiativeBefore.filter(
       (entry) =>
+        entry.source === 'storyteller' ||
         entry.discordUserId !== attachment.discordUserId || keptKeys.has(entry.participantKey),
     );
     const initiativeChanged = initiativeAfter.length !== initiativeBefore.length;
@@ -948,22 +998,207 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     }
   }
 
-  /** Anyone at the table may clear the order; dice rooms have no storyteller. */
-  private handleClearTableInitiative(reqId: string): void {
-    if ((this.roomState.tableInitiative ?? []).length === 0) return;
+  private handleClearTableInitiative(ws: WebSocket, attachment: InternalSocketAttachment, reqId: string): void {
+    if (!Object.values(this.roomState.tableParticipants ?? {}).some(
+      (seat) => seat.discordUserId === attachment.discordUserId && seat.isConnected,
+    )) {
+      this.sendRejection(ws, reqId, 'FORBIDDEN', 'Only a seated participant may clear initiative.');
+      return;
+    }
+    const hasPublicInitiative = Boolean(this.roomState.tableInitiative?.length);
+    const table = this.roomState.storytellerTable;
+    const previousReceipts = this.roomState.tableInitiativeClearReceipts;
+    const receipt = JSON.stringify([attachment.discordUserId, reqId]);
+    if (previousReceipts?.includes(receipt)) return;
+    const previousOrder = this.roomState.tableInitiative;
+    this.roomState.tableInitiativeClearReceipts = [...(previousReceipts ?? []), receipt].slice(-EVENT_RING_CAPACITY);
     this.roomState.tableInitiative = [];
-    this.persistStateSnapshot();
-    this.broadcastTableInitiative(reqId);
+    if (table) this.roomState.storytellerTable = { ...table, initiative: [] };
+    try {
+      if (hasPublicInitiative) this.commitTableInitiative(reqId);
+      else this.persistStateSnapshot();
+    } catch (error) {
+      this.roomState.storytellerTable = table;
+      this.roomState.tableInitiative = previousOrder;
+      this.roomState.tableInitiativeClearReceipts = previousReceipts;
+      throw error;
+    }
+    this.broadcastStorytellerInitiative(reqId, ws);
   }
 
-  private broadcastTableInitiative(replyToReqId?: string): void {
-    this.sendEphemeralBroadcast(
-      {
-        type: 'TABLE_INITIATIVE_UPDATED',
-        entries: this.roomState.tableInitiative ?? [],
+  private tableInitiativeEvent(): Extract<ServerEvent, { type: 'TABLE_INITIATIVE_UPDATED' }> {
+    return { type: 'TABLE_INITIATIVE_UPDATED', entries: this.roomState.tableInitiative ?? [] };
+  }
+
+  private broadcastTableInitiative(): void {
+    this.sendEphemeralBroadcast(this.tableInitiativeEvent());
+  }
+
+  private commitTableInitiative(replyToReqId?: string): void {
+    this.commitAndBroadcast([{ event: this.tableInitiativeEvent() }], replyToReqId, undefined, true);
+  }
+
+  private isVoiceTableStoryteller(attachment: InternalSocketAttachment): boolean {
+    const roomId = this.roomState.campaignId;
+    return attachment.authenticated && !!roomId && attachment.routedRoomId === roomId &&
+      this.voiceTableStorytellers.get(roomId) === attachment.discordUserId;
+  }
+
+  private sendStorytellerEvent(ws: WebSocket, event: StorytellerTableEvent, reqId?: string): void {
+    if (!this.isVoiceTableStoryteller(this.getAttachment(ws))) return;
+    try {
+      ws.send(JSON.stringify({
+        seq: this.roomState.seq,
+        serverTime: Date.now(),
+        ...(reqId ? { replyToReqId: reqId } : {}),
+        event,
+      } satisfies ServerEnvelope<ServerEvent>));
+    } catch {
+      // A disconnected Storyteller receives their saved state at the next HELLO.
+    }
+  }
+
+  private broadcastStorytellerInitiative(reqId?: string, requester?: WebSocket): void {
+    for (const socket of this.ctx.getWebSockets()) {
+      const viewer = this.getAttachment(socket);
+      if (!this.isVoiceTableStoryteller(viewer)) continue;
+      this.sendStorytellerEvent(socket, {
+        type: 'STORYTELLER_INITIATIVE_UPDATED',
+        entries: projectStorytellerInitiative(this.roomState.storytellerTable, viewer.discordUserId),
+      }, socket === requester ? reqId : undefined);
+    }
+  }
+
+  private broadcastStorytellerSeats(excludeWs?: WebSocket): void {
+    let event: Extract<StorytellerTableEvent, { type: 'STORYTELLER_SEATS_UPDATED' }> | undefined;
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === excludeWs || !this.isVoiceTableStoryteller(this.getAttachment(socket))) continue;
+      event ??= { type: 'STORYTELLER_SEATS_UPDATED', seats: this.storytellerSeats() };
+      this.sendStorytellerEvent(socket, event);
+    }
+  }
+
+  private storytellerSeats() {
+    const connected = new Set<string>();
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = this.getAttachment(socket);
+      if (attachment.authenticated && attachment.routedRoomId === this.roomState.campaignId) {
+        connected.add(attachment.discordUserId);
+      }
+    }
+    return projectStorytellerSeats(this.roomState, connected);
+  }
+
+  private syncStorytellerTable(ws: WebSocket, attachment: InternalSocketAttachment): void {
+    if (!this.isVoiceTableStoryteller(attachment)) return;
+    const table = this.roomState.storytellerTable;
+    this.sendStorytellerEvent(ws, {
+      type: 'STORYTELLER_TABLE_SYNC',
+      state: {
+        rollHistory: (table?.rollHistory ?? []).filter((entry) => entry.rollerDiscordId === attachment.discordUserId),
+        initiative: projectStorytellerInitiative(table, attachment.discordUserId),
+        seats: this.storytellerSeats(),
       },
-      replyToReqId,
-    );
+    });
+  }
+
+  private rollStorytellerTable(
+    ws: WebSocket,
+    attachment: InternalSocketAttachment,
+    command: StorytellerRollCommand,
+    reqId: string,
+  ): void {
+    const before = this.roomState.storytellerTable;
+    const table = before ?? { rollHistory: [], initiative: [], rollReceipts: {} };
+    const receiptKey = JSON.stringify([attachment.discordUserId, command.rollClientId]);
+    const previousId = table.rollReceipts[receiptKey];
+    if (previousId) {
+      const entry = table.rollHistory.find((roll) => roll.id === previousId);
+      if (!entry) {
+        this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'This private roll has aged out of the log.');
+        return;
+      }
+      const initiative = projectStorytellerInitiative(table, attachment.discordUserId).find((item) => item.id === previousId);
+      this.sendStorytellerEvent(ws, { type: 'STORYTELLER_ROLL_RECORDED', entry, ...(initiative ? { initiative } : {}) }, reqId);
+      return;
+    }
+    const isInitiative = command.type === 'ST_ROLL_TABLE_INITIATIVE';
+    const label = isInitiative ? command.label.trim() : 'Storyteller Dice Pool';
+    const roll = isInitiative
+      ? resolveW20InitiativeRoll({ label, initiativeModifier: command.modifier }, rollCsprngD10)
+      : resolveW20DicePool({
+          label, basePool: command.count, woundPenalty: 0, applyWoundPenalty: false,
+          baseDifficulty: command.difficulty, hasApplicableSpecialty: false, spendWillpower: false,
+          specialtyMode: this.roomState.specialtyMode,
+        }, rollCsprngD10);
+    const entry: RollHistoryEntry = {
+      id: `st-${crypto.randomUUID()}`,
+      timestamp: Date.now(),
+      rollerDiscordId: attachment.discordUserId,
+      rollerName: attachment.displayName,
+      rollerAvatarUrl: attachment.avatarUrl ?? null,
+      label,
+      rageDiceCount: 0,
+      isSecretRoll: true,
+      roll,
+    };
+    const initiative = isInitiative
+      ? { id: entry.id, label, total: roll.initiativeTotal ?? roll.netSuccesses, revealed: false }
+      : undefined;
+    this.roomState.storytellerTable = {
+      rollHistory: [entry, ...table.rollHistory].slice(0, STORYTELLER_ROLL_HISTORY_LIMIT),
+      initiative: initiative ? [{ ...initiative, rollerDiscordId: attachment.discordUserId }, ...table.initiative] : table.initiative,
+      rollReceipts: Object.fromEntries([...Object.entries(table.rollReceipts), [receiptKey, entry.id]].slice(-EVENT_RING_CAPACITY)),
+    };
+    try {
+      this.persistStateSnapshot();
+    } catch (error) {
+      this.roomState.storytellerTable = before;
+      throw error;
+    }
+    for (const socket of this.ctx.getWebSockets()) {
+      if (this.getAttachment(socket).discordUserId !== attachment.discordUserId) continue;
+      this.sendStorytellerEvent(socket, {
+        type: 'STORYTELLER_ROLL_RECORDED',
+        entry,
+        ...(initiative ? { initiative } : {}),
+      }, socket === ws ? reqId : undefined);
+    }
+  }
+
+  private revealStorytellerInitiative(
+    ws: WebSocket,
+    attachment: InternalSocketAttachment,
+    entryId: string,
+    reqId: string,
+  ): void {
+    const table = this.roomState.storytellerTable;
+    const entry = table?.initiative.find((item) => item.id === entryId && item.rollerDiscordId === attachment.discordUserId);
+    if (!table || !entry) {
+      this.sendRejection(ws, reqId, 'VALIDATION_ERROR', 'This initiative entry is no longer available.');
+      return;
+    }
+    if (!entry.revealed) {
+      const previousOrder = this.roomState.tableInitiative;
+      const publicKey = `st-public-${crypto.randomUUID()}`;
+      this.roomState.storytellerTable = {
+        ...table, initiative: table.initiative.map((item) => item.id === entryId ? { ...item, revealed: true } : item),
+      };
+      this.roomState.tableInitiative = [...(previousOrder ?? []), {
+        source: 'storyteller',
+        participantKey: publicKey,
+        displayName: entry.label,
+        total: entry.total,
+      }];
+      try {
+        this.commitTableInitiative();
+      } catch (error) {
+        this.roomState.storytellerTable = table;
+        this.roomState.tableInitiative = previousOrder;
+        throw error;
+      }
+    }
+    this.broadcastStorytellerInitiative(reqId, ws);
   }
 
   private handleUpdateLightTrackers(
@@ -1078,6 +1313,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
             const current = await new UserSheetRepository(this.env).getById(previous.payerSheetId);
             if (current) {
               this.replaceCanonicalRuleSheet(current);
+              this.persistStateSnapshot();
+              this.broadcastStorytellerSeats();
               const key = buildParticipantKey(attachment.discordUserId, command.seatId);
               const grant = this.getRuleState().seatAuthorizations[key];
               if (current.ownerDiscordId === attachment.discordUserId || grant?.syncCode && grant.syncCode === current.syncCode) this.sendRuleStateToSocket(ws, attachment, reqId);
@@ -1118,6 +1355,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         }
       }
       this.persistStateSnapshot();
+      this.broadcastStorytellerSeats();
       const before = this.roomState;
       const staged = structuredClone(before);
       delete staged.sharedRuleIntent;
@@ -1173,6 +1411,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         delete this.roomState.sharedRuleIntent;
         if (error.latestSheet) this.replaceCanonicalRuleSheet(error.latestSheet);
         this.persistStateSnapshot();
+        if (error.latestSheet) this.broadcastStorytellerSeats();
         if (error.code === 'STALE' && replanCount < 3) {
           const socket = this.ctx.getWebSockets().find((ws) => this.getAttachment(ws).discordUserId === intent.requesterDiscordId) ?? ({ send: () => undefined } as unknown as WebSocket);
           await this.executeSharedRuleCommand(socket, intent.attachment, intent.command, intent.reqId, () => this.performSharedRuleCommand(socket, intent.attachment, intent.command, intent.reqId), replanCount + 1, intent.authorization.sheetId);
@@ -1210,6 +1449,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     const oldRing = this.eventRing;
     const next = structuredClone(intent.stagedState) as PersistedRoomState;
     next.seq = before.seq;
+    next.storytellerTable = before.storytellerTable;
     next.characters = { ...before.characters, ...next.characters };
     for (const [key, participant] of Object.entries(before.tableParticipants ?? {})) next.tableParticipants![key] = { ...participant, ...next.tableParticipants?.[key], isConnected: participant.isConnected, avatarUrl: participant.avatarUrl };
     this.roomState = next;
@@ -1247,6 +1487,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         if (projected) { try { socket.send(JSON.stringify(projected)); } catch { /* Replay remains durable for a disconnected client. */ } }
       }
     }
+    this.broadcastStorytellerSeats();
     this.scheduleCharacterFlush(intent.characterFlushIds.flatMap((id) => next.characters[id] ? [next.characters[id]!] : []));
     for (const audit of intent.audits) this.scheduleRollAuditAndWebhook(audit);
     this.scheduleRulePersistence();
@@ -2070,6 +2311,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
         // The durable outbox is retried on the next authenticated interaction or reconnect.
         return;
       }
+      this.broadcastStorytellerSeats();
     }
   }
 
@@ -2548,6 +2790,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       }
       sock.send(serialized);
     }
+    if (event.type === 'PARTICIPANTS_UPDATED') this.broadcastStorytellerSeats(excludeWs);
   }
 
   private sendRejection(
@@ -2714,6 +2957,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     pending: PendingOutboundEvent[],
     replyToReqId?: string,
     directSnapshotSockets?: WebSocket[],
+    transactional = false,
   ): void {
     if (this.reconcileRuleSources())
       pending = [
@@ -2753,6 +2997,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     }
     this.trimRuleReplayCaches();
     const newEntries: BufferedRoomEvent[] = [];
+    const previousSeq = this.roomState.seq;
     const now = Date.now();
 
     for (const item of pending) {
@@ -2777,27 +3022,32 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       newEntries.push(entry);
     }
 
-    // Persist-first in SQLite BEFORE broadcasting to any client socket
-    this.persistStateSnapshot();
-    for (const entry of newEntries) {
-      this.ctx.storage.sql.exec(
-        'INSERT OR REPLACE INTO room_event_ring (seq, target_role, target_discord_id, envelope_json, raw_tokens_json, raw_combat_json) VALUES (?, ?, ?, ?, ?, ?)',
-        entry.seq,
-        entry.targetRole,
-        entry.targetDiscordId,
-        JSON.stringify(entry.envelope),
-        entry.rawTokensSnapshot ? JSON.stringify(entry.rawTokensSnapshot) : null,
-        entry.rawCombatSnapshot !== undefined ? JSON.stringify(entry.rawCombatSnapshot) : null,
-      );
-      this.eventRing.push(entry);
+    const nextRing = [...this.eventRing, ...newEntries].slice(-EVENT_RING_CAPACITY);
+    const persist = () => {
+      this.persistStateSnapshot();
+      for (const entry of newEntries) {
+        this.ctx.storage.sql.exec(
+          'INSERT OR REPLACE INTO room_event_ring (seq, target_role, target_discord_id, envelope_json, raw_tokens_json, raw_combat_json) VALUES (?, ?, ?, ?, ?, ?)',
+          entry.seq,
+          entry.targetRole,
+          entry.targetDiscordId,
+          JSON.stringify(entry.envelope),
+          entry.rawTokensSnapshot ? JSON.stringify(entry.rawTokensSnapshot) : null,
+          entry.rawCombatSnapshot !== undefined ? JSON.stringify(entry.rawCombatSnapshot) : null,
+        );
+      }
+      if (this.eventRing.length + newEntries.length > EVENT_RING_CAPACITY) {
+        this.ctx.storage.sql.exec('DELETE FROM room_event_ring WHERE seq < ?', nextRing[0]?.seq ?? this.roomState.seq);
+      }
+    };
+    try {
+      if (transactional && typeof this.ctx.storage.transactionSync === 'function') this.ctx.storage.transactionSync(persist);
+      else persist();
+    } catch (error) {
+      this.roomState.seq = previousSeq;
+      throw error;
     }
-
-    if (this.eventRing.length > EVENT_RING_CAPACITY) {
-      const overflow = this.eventRing.length - EVENT_RING_CAPACITY;
-      this.eventRing.splice(0, overflow);
-      const minSeqToKeep = this.eventRing[0]?.seq ?? this.roomState.seq;
-      this.ctx.storage.sql.exec('DELETE FROM room_event_ring WHERE seq < ?', minSeqToKeep);
-    }
+    this.eventRing = nextRing;
 
     const speakingIds = this.collectSpeakingDiscordIds();
     const forceSnapshotSet = new Set(directSnapshotSockets ?? []);
@@ -2811,7 +3061,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       for (const entry of newEntries) {
         const projected = projectEnvelopeForAttachment(entry, this.roomState, att);
         if (projected) {
-          sock.send(JSON.stringify(projected));
+          try { sock.send(JSON.stringify(projected)); } catch { /* Durable events can be replayed. */ }
         }
       }
 
@@ -2825,7 +3075,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
             snapshot: buildProjectedSnapshot(this.roomState, att, speakingIds),
           },
         };
-        sock.send(JSON.stringify(snapshotEnvelope));
+        try { sock.send(JSON.stringify(snapshotEnvelope)); } catch { /* Reconnect sends a fresh snapshot. */ }
       }
     }
   }
@@ -2835,6 +3085,13 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     envelope: ClientEnvelope,
     command: Extract<ClientCommand, { type: 'HELLO_AUTH' }>,
   ): Promise<void> {
+    const routedRoomId = this.getAttachment(ws).routedRoomId;
+    if (routedRoomId !== command.campaignId ||
+        (this.roomState.campaignId && this.roomState.campaignId !== routedRoomId)) {
+      this.sendRejection(ws, envelope.reqId, 'FORBIDDEN', 'The requested room does not match this connection.');
+      ws.close(1008, 'Room mismatch');
+      return;
+    }
     const session = await verifySessionJwt(command.sessionJwt, this.env.SUPABASE_JWT_SECRET);
     if (!session) {
       this.sendRejection(ws, envelope.reqId, 'UNAUTHORIZED', 'Invalid or expired session token.');
@@ -2850,6 +3107,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
     }
 
     const role: ParticipantRole =
+      !routedRoomId.startsWith(VOICE_TABLE_PREFIX) &&
       session.discordId === this.roomState.storytellerDiscordId ? 'storyteller' : 'player';
 
     if (
@@ -2912,6 +3170,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       activeCharacterId: activeCharacterId ?? null,
       connectedAt: Date.now(),
       authenticated: true,
+      routedRoomId,
       isSpeaking: false,
       avatarUrl: session.avatarUrl,
     };
@@ -2957,6 +3216,8 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
           participants: Object.values(this.roomState.tableParticipants ?? {}),
         });
         this.sendRuleStateToSocket(ws, attachment, envelope.reqId);
+        ws.send(JSON.stringify({ seq: this.roomState.seq, serverTime: Date.now(), event: this.tableInitiativeEvent() } satisfies ServerEnvelope<ServerEvent>));
+        this.syncStorytellerTable(ws, attachment);
         this.scheduleRulePersistence();
         return;
       }
@@ -2976,6 +3237,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       },
     };
     ws.send(JSON.stringify(snapshotEnvelope));
+    this.syncStorytellerTable(ws, attachment);
     this.scheduleRulePersistence();
     this.sendEphemeralBroadcast(
       {
@@ -3120,6 +3382,9 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       case 'SYNC_CLIENT_SEATS':
       case 'ROLL_TABLE_POOL':
       case 'CLEAR_TABLE_INITIATIVE':
+      case 'ST_ROLL_TABLE_POOL':
+      case 'ST_ROLL_TABLE_INITIATIVE':
+      case 'ST_REVEAL_TABLE_INITIATIVE':
       case 'BIND_TABLE_SHEET':
       case 'PREVIEW_RULE_ROLL':
       case 'ACTIVATE_RULE':

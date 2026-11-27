@@ -5,7 +5,7 @@ import { cx } from './cx';
 import { useModalStack } from './modalStack';
 import { ToastViewport } from './Toast';
 
-export type ModalVariant = 'center' | 'fullscreen' | 'sheet';
+export type ModalVariant = 'center' | 'fullscreen' | 'sheet' | 'side';
 export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
 
 export interface ModalProps {
@@ -24,7 +24,7 @@ export interface ModalProps {
   renderHeader?: (requestClose: () => void) => React.ReactNode;
   footer?: React.ReactNode;
   children: React.ReactNode;
-  /** center: floating panel. fullscreen: fills the viewport. sheet: slides up from the bottom. */
+  /** center: floating panel. fullscreen: fills the viewport. sheet: bottom. side: right edge. */
   variant?: ModalVariant;
   /** Maximum width of the centre variant. */
   size?: ModalSize;
@@ -49,6 +49,7 @@ const DIALOG_VARIANT: Record<ModalVariant, string> = {
   center: 'm-auto w-[calc(100vw-1.5rem)]',
   fullscreen: 'm-0 h-dvh w-screen max-w-none',
   sheet: 'mx-0 mt-auto mb-0 w-screen max-w-none',
+  side: 'my-0 ml-auto mr-0 h-dvh w-[30rem] max-w-[100vw]',
 };
 
 const PANEL_VARIANT: Record<ModalVariant, string> = {
@@ -56,6 +57,7 @@ const PANEL_VARIANT: Record<ModalVariant, string> = {
   fullscreen: 'flex h-dvh flex-col overflow-hidden bg-obsidian-950',
   sheet:
     'w20-obsidian-panel animate-sheet-up pb-safe flex max-h-[84dvh] flex-col overflow-hidden rounded-t-2xl border-x-0 border-b-0',
+  side: 'w20-obsidian-panel flex h-dvh flex-col overflow-hidden border-y-0 border-r-0',
 };
 
 /**

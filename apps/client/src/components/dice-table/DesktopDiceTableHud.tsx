@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import {
+  BookOpen,
   Check,
   Dices,
   Eraser,
@@ -173,6 +174,7 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
   composerAbil,
   onCycleLayoutMode,
   onToggleFeed,
+  onOpenStoryteller,
   onTogglePack,
   onClearTable,
   onDismissBanner,
@@ -401,6 +403,18 @@ export const DesktopDiceTableHud: React.FC<DiceTableHudProps> = ({
             If the bar runs out of room, this zone wraps below as a unit. */}
         <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1.5">
           <PersonalTrackersControl trackers={activeTrackers} onUpdate={onUpdateTrackers} />
+
+          {onOpenStoryteller && (
+            <button
+              type="button"
+              onClick={onOpenStoryteller}
+              aria-haspopup="dialog"
+              className="w20-obsidian-panel flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-bold text-amber-200 transition hover:border-amber-400/55"
+            >
+              <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
+              Storyteller
+            </button>
+          )}
 
           <button
             type="button"

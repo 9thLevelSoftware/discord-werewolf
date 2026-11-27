@@ -39,6 +39,18 @@ describe('rankInitiative', () => {
     rankInitiative(input);
     expect(input.map((e) => e.participantKey)).toEqual(['a', 'b']);
   });
+
+  it('ranks public Storyteller totals without private metadata and preserves their order within ties', () => {
+    const ranked = rankInitiative([
+      { source: 'storyteller', participantKey: 'st-a', displayName: 'Rook', total: 9 },
+      entry('later', 9, 2),
+      { source: 'storyteller', participantKey: 'st-b', displayName: 'Wolf', total: 9 },
+      entry('earlier', 9, 1),
+    ]);
+    expect(ranked.map(({ participantKey, rank }) => [participantKey, rank])).toEqual([
+      ['earlier', 1], ['later', 1], ['st-a', 1], ['st-b', 1],
+    ]);
+  });
 });
 
 describe('InitiativeOrderPanel', () => {

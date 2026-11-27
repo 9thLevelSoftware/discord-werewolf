@@ -18,6 +18,7 @@ import type {
   RuleContext,
   ActiveRuleInstance,
   AppliedRuleModifier,
+  UserSheetComputedStats,
 } from '@w20-vtt/core';
 
 export type ParticipantRole = 'storyteller' | 'player' | 'spectator';
@@ -153,21 +154,20 @@ export interface PendingActivationChoice {
 /** Additional physical waves the client can submit before the Worker finishes the chain. */
 export const MAX_PHYSICAL_BONUS_WAVES = 12;
 export const MAX_PHYSICAL_DICE_PER_WAVE = 30;
+export const STORYTELLER_ROLL_HISTORY_LIMIT = 50;
 
 /**
- * One line of the shared initiative order in a dice room: the latest non-secret
- * initiative roll for one seat. A player with several seats has one entry per seat.
+ * A shared initiative line for a player seat or a published Storyteller combatant.
  */
-export interface TableInitiativeEntry {
-  /** Same key as TableParticipant.participantKey: user id, or `userId::seatId`. */
+export type TableInitiativeEntry = {
   participantKey: string;
-  discordUserId: string;
-  seatId: string;
   displayName: string;
   /** 1d10 + modifier. */
   total: number;
-  rolledAt: number;
-}
+} & (
+  | { source?: undefined; discordUserId: string; seatId: string; rolledAt: number }
+  | { source: 'storyteller' }
+);
 
 export interface RollHistoryEntry {
   id: string;
@@ -183,6 +183,40 @@ export interface RollHistoryEntry {
   sheetId?: string;
   rerollOf?: string;
   correctionOf?: string;
+}
+
+export interface StorytellerInitiativeEntry {
+  id: string;
+  label: string;
+  total: number;
+  revealed: boolean;
+}
+
+export interface StorytellerSheetStats {
+  sheet: Pick<W20UserCharacterSheet,
+    | 'name' | 'player' | 'chronicle' | 'breed' | 'auspice' | 'tribe' | 'packName' | 'packTotem'
+    | 'concept' | 'deedName' | 'metisDeformity' | 'baseAttributes' | 'abilities' | 'customAbilities'
+    | 'specialties' | 'backgrounds' | 'gifts' | 'renown' | 'rank' | 'rage' | 'gnosis'
+    | 'willpower' | 'silverCarriedItems' | 'health' | 'experience' | 'activeForm' | 'otherTraits'
+    | 'fetishes' | 'rites' | 'combatWeapons' | 'equipment' | 'armor'
+  >;
+  computed: Pick<UserSheetComputedStats,
+    | 'effectiveAbilities' | 'health' | 'effectiveAttributes' | 'effectiveGnosisPool'
+    | 'effectiveRagePool' | 'effectiveWillpowerPool' | 'woundPenalty' | 'woundLabel'
+    | 'perceptionDifficultyMod' | 'shiftDifficulty' | 'initiativeBonus' | 'soakCapabilities'
+    | 'experienceRemaining'
+  >;
+}
+
+export interface StorytellerSeatView {
+  participantKey: string;
+  sheet: StorytellerSheetStats | null;
+}
+
+export interface StorytellerTableState {
+  rollHistory: RollHistoryEntry[];
+  initiative: StorytellerInitiativeEntry[];
+  seats: StorytellerSeatView[];
 }
 
 export type NpcSpawnTemplateId =
@@ -341,6 +375,22 @@ export type ClientCommand =
       ruleContext?: RuleContext;
       sheetId?: string;
       initiativeAdjustment?: number;
+    }
+  | {
+      type: 'ST_ROLL_TABLE_POOL';
+      count: number;
+      difficulty: number;
+      rollClientId: string;
+    }
+  | {
+      type: 'ST_ROLL_TABLE_INITIATIVE';
+      label: string;
+      modifier: number;
+      rollClientId: string;
+    }
+  | {
+      type: 'ST_REVEAL_TABLE_INITIATIVE';
+      entryId: string;
     }
   | {
       type: 'UPDATE_LIGHT_TRACKERS';
@@ -558,6 +608,7 @@ export interface RoomSnapshotView {
 export type CommandRejectionCode =
   | 'SEQ_MISMATCH'
   | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
   | 'INVALID_PHASE'
   | 'OUT_OF_TURN'
   | 'RAGE_GNOSIS_CONFLICT'
@@ -621,6 +672,23 @@ export type ServerEvent =
   | {
       type: 'TABLE_INITIATIVE_UPDATED';
       entries: TableInitiativeEntry[];
+    }
+  | {
+      type: 'STORYTELLER_TABLE_SYNC';
+      state: StorytellerTableState;
+    }
+  | {
+      type: 'STORYTELLER_ROLL_RECORDED';
+      entry: RollHistoryEntry;
+      initiative?: StorytellerInitiativeEntry;
+    }
+  | {
+      type: 'STORYTELLER_INITIATIVE_UPDATED';
+      entries: StorytellerInitiativeEntry[];
+    }
+  | {
+      type: 'STORYTELLER_SEATS_UPDATED';
+      seats: StorytellerSeatView[];
     }
   | {
       type: 'COMBAT_STATE_UPDATED';

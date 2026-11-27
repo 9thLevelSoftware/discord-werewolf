@@ -441,6 +441,22 @@ export const ClientCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('CLEAR_TABLE_INITIATIVE'),
   }),
   z.object({
+    type: z.literal('ST_ROLL_TABLE_POOL'),
+    count: z.number().int().min(1).max(30),
+    difficulty: z.number().int().min(2).max(10),
+    rollClientId: z.string().min(1).max(80),
+  }).strict(),
+  z.object({
+    type: z.literal('ST_ROLL_TABLE_INITIATIVE'),
+    label: z.string().trim().min(1).max(120),
+    modifier: z.number().int().min(-30).max(50),
+    rollClientId: z.string().min(1).max(80),
+  }).strict(),
+  z.object({
+    type: z.literal('ST_REVEAL_TABLE_INITIATIVE'),
+    entryId: z.string().min(1).max(120),
+  }).strict(),
+  z.object({
     type: z.literal('VOICE_SPEAKING_STATE'),
     isSpeaking: z.boolean(),
   }),
