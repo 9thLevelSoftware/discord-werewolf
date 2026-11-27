@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import { Monitor, Settings, Smartphone, Volume2, VolumeX } from 'lucide-react';
 import type { SpecialtyMode } from '@w20-vtt/core';
 import type { ViewportLayoutMode } from '../../../hooks/useViewportLayout';
@@ -46,6 +46,7 @@ export const TableSettingsMenu: React.FC<TableSettingsMenuProps> = ({
   onSetSpecialtyMode,
 }) => {
   const [open, setOpen] = useState(false);
+  const specialtyHintId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -117,6 +118,7 @@ export const TableSettingsMenu: React.FC<TableSettingsMenuProps> = ({
             <select
               value={specialtyMode}
               disabled={!canChangeSpecialtyMode}
+              aria-describedby={specialtyHintId}
               onChange={(e) => onSetSpecialtyMode(e.target.value as SpecialtyMode)}
               className="w-full rounded-lg border border-stone-700 bg-obsidian-950 px-2 py-1.5 text-stone-200 disabled:opacity-60"
             >
@@ -124,6 +126,11 @@ export const TableSettingsMenu: React.FC<TableSettingsMenuProps> = ({
               <option value="revised_explode">Revised · 10s explode</option>
             </select>
           </label>
+          <p id={specialtyHintId} className="-mt-1.5 text-stone-400">
+            {canChangeSpecialtyMode
+              ? 'Changes the rule for everyone at this table.'
+              : 'Take a seat at the table to change this.'}
+          </p>
 
           <div className="w20-gold-divider" />
 

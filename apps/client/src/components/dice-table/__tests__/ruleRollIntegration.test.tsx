@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createBlankUserCharacterSheet,
@@ -146,7 +146,11 @@ describe('sheet rule integration', () => {
     fireEvent.click(screen.getByText('Add equipment'));
     fireEvent.change(screen.getByLabelText('Rulebook equipment'), { target: { value: armor.id } });
     fireEvent.click(screen.getByText('Wear this armor'));
-    fireEvent.change(screen.getByLabelText('Trait or item'), { target: { value: 'armor' } });
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Trait or item' })).getByRole('button', {
+        name: armor.name,
+      })
+    );
     expect(screen.getByTestId('dodge-difficulty').textContent).toBe(
       String(5 + armor.dexterityDifficultyPenalty)
     );

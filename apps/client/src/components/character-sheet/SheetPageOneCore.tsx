@@ -1773,8 +1773,9 @@ export const SheetPageOneCore: React.FC<SheetPageOneCoreProps> = ({
                     >
                       {stats.experienceRemaining}
                     </div>
-                    {sheet.experience.mystical !== undefined && <label>Mystical XP remaining
-                      <input type="number" min={0} max={10000} value={sheet.experience.mystical} className="w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 font-mono"
+                    {sheet.experience.mystical !== undefined && <label className="mt-1.5 block">
+                      <span className="text-caption uppercase text-stone-400">Mystical XP</span>
+                      <input type="number" min={0} max={10000} value={sheet.experience.mystical} className="mt-0.5 w-full rounded border border-stone-700 bg-zinc-900 px-2 py-1 font-mono"
                         onChange={e=>onUpdateSheet(p=>({...p,experience:{...p.experience,mystical:Math.max(0,Math.min(10000,Math.trunc(Number(e.target.value))))}}))}/>
                     </label>}
                   </div>

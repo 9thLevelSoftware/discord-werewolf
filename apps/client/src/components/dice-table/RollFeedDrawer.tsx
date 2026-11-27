@@ -33,9 +33,22 @@ export const RollFeedEntries: React.FC<RollFeedEntriesProps> = ({
 }) => (
     <>
         {pendingActivations.map((choice) => (
-          <Button key={choice.rollId} size="sm" onClick={() => onReviewActivation(choice.rollId)}>
-            Review {choice.label}
-          </Button>
+          <div
+            key={choice.rollId}
+            className="flex items-center justify-between gap-2 rounded-xl border border-gold-500/45 bg-amber-950/30 py-2 pr-2 pl-3"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-gold-200">{choice.label}</p>
+              <p className="text-xs text-stone-400">Waiting for you to keep or replace the result</p>
+            </div>
+            <Button
+              size="sm"
+              aria-label={`Review ${choice.label}`}
+              onClick={() => onReviewActivation(choice.rollId)}
+            >
+              Review
+            </Button>
+          </div>
         ))}
         {rollHistory.length === 0 ? (
           <div className="flex flex-col items-center rounded-xl border border-dashed border-stone-700/60 bg-zinc-950/50 px-4 py-8 text-center">
@@ -81,7 +94,7 @@ export const RollFeedEntries: React.FC<RollFeedEntriesProps> = ({
                           {formatRollTime(entry.timestamp)}
                         </span>
                       </div>
-                      <p className="truncate text-xs text-stone-400">
+                      <p className="break-words text-xs text-stone-400">
                         {isInitiative
                           ? `${entry.label} • 1d10 ${initMod >= 0 ? `+${initMod}` : initMod}`
                           : `${entry.label} • Diff ${entry.roll.clampedDifficulty}`}
@@ -101,18 +114,7 @@ export const RollFeedEntries: React.FC<RollFeedEntriesProps> = ({
                   </Button>}
                 </div>
 
-                <div className="flex flex-wrap gap-1">
-                  {!pendingActivations.some((choice) => choice.rollId === entry.id) &&
-                    <RollReplacementActions options={replacementOptions.filter((option) => option.rollId === entry.id)}
-                      disabled={disabled} onChoose={onReplace} />}
-                </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {entry.rerollOf && <span className="text-xs text-amber-200">Replacement roll</span>}
-                  {rollHistory.some((other) => other.rerollOf === entry.id) &&
-                    <span className="text-xs text-stone-400">Replaced</span>}
-                  {entry.roll.hasApplicableSpecialty && <span className="text-xs text-amber-200">
-                    {entry.roll.specialtyMode === 'revised_explode' ? 'Specialty · exploding 10s' : 'Specialty · double 10s'}
-                  </span>}
                   <span
                     className={`rounded px-1.5 py-0.5 text-xs font-extrabold uppercase tracking-wide ${
                       isInitiative
@@ -147,9 +149,43 @@ export const RollFeedEntries: React.FC<RollFeedEntriesProps> = ({
                       {entry.rageDiceCount} Rage
                     </span>
                   )}
+                  {entry.roll.hasApplicableSpecialty && (
+                    <span className="rounded border border-amber-500/40 bg-amber-950/70 px-1.5 py-0.5 text-xs font-bold text-amber-200">
+                      {entry.roll.specialtyMode === 'revised_explode'
+                        ? 'Specialty · exploding 10s'
+                        : 'Specialty · double 10s'}
+                    </span>
+                  )}
+                  {entry.rerollOf && (
+                    <span className="rounded border border-cyan-500/40 bg-cyan-950/60 px-1.5 py-0.5 text-xs font-bold text-cyan-200">
+                      Replacement roll
+                    </span>
+                  )}
+                  {rollHistory.some((other) => other.rerollOf === entry.id) && (
+                    <span className="rounded border border-stone-700 bg-zinc-900 px-1.5 py-0.5 text-xs font-bold text-stone-400">
+                      Replaced
+                    </span>
+                  )}
                 </div>
+                {!pendingActivations.some((choice) => choice.rollId === entry.id) &&
+                  replacementOptions.some((option) => option.rollId === entry.id) && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <RollReplacementActions
+                        options={replacementOptions.filter((option) => option.rollId === entry.id)}
+                        disabled={disabled}
+                        onChoose={onReplace}
+                      />
+                    </div>
+                  )}
 
-                {!!entry.modifiers?.length && <details className="mt-2 text-xs"><summary className="cursor-pointer text-amber-200">Roll modifiers</summary><ModifierBreakdown modifiers={entry.modifiers}/></details>}
+                {!!entry.modifiers?.length && (
+                  <div className="w20-rules mt-2">
+                    <details>
+                      <summary>Roll modifiers</summary>
+                      <ModifierBreakdown modifiers={entry.modifiers} />
+                    </details>
+                  </div>
+                )}
                 <div className="mt-2">
                   <AuthoritativeDieChips roll={entry.roll} rageDiceCount={entry.rageDiceCount} compact />
                 </div>

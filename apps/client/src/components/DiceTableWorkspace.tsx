@@ -49,7 +49,7 @@ import {
   isRageDieThemeColor,
 } from './dice-table/rollQueueController';
 import { PackPresenceDrawer } from './dice-table/PackPresenceDrawer';
-import { Button, Modal, toast, useToasts } from './ui';
+import { Button, cx, Modal, toast, useToasts } from './ui';
 import { useUiPref } from '../store/useUiPrefsStore';
 import { openSheetRule, useRuleTargetOptions } from './character-sheet/sheetShared';
 import {
@@ -1605,26 +1605,75 @@ export const DiceTableWorkspace: React.FC<DiceTableWorkspaceProps> = ({ session 
         }}/>}
       <CharacterRosterModal session={session} />
       <W20InteractiveSheetModal onRollFromSheet={handleRollFromSheet} />
-      {pendingChoice && <Modal open size="sm" title={pendingChoice.label}
-        subtitle="Choose the result before applying this activation’s effects."
-        onClose={() => {
-          setDeferredChoiceIds((ids) => [...ids, pendingChoice.rollId]);
-          setFeedOpen(true);
-        }}>
-        <p className="mb-2 font-semibold">
-          {pendingChoice.roll.isBotch ? 'Botch' : `${pendingChoice.roll.netSuccesses} net successes`} · difficulty {pendingChoice.roll.clampedDifficulty}
-        </p>
-        <AuthoritativeDieChips roll={pendingChoice.roll} rageDiceCount={0} compact />
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button disabled={connectionStatus !== 'authenticated'} onClick={() => {
-            const seat = seats.find((item) => item.sheetId === pendingChoice.sheetId);
-            if (seat) sendCommand({ type: 'KEEP_ACTIVATION_RESULT', seatId: seat.seatId,
-              sheetId: pendingChoice.sheetId, rollId: pendingChoice.rollId });
-          }}>Keep result</Button>
-          <RollReplacementActions options={replacementOptions.filter((option) => option.rollId === pendingChoice.rollId)}
-            disabled={connectionStatus !== 'authenticated'} onChoose={chooseReplacement} />
-        </div>
-      </Modal>}
+      {pendingChoice && (
+        <Modal
+          open
+          size="sm"
+          title={pendingChoice.label}
+          subtitle="Choose the result before this activation takes effect."
+          onClose={() => {
+            setDeferredChoiceIds((ids) => [...ids, pendingChoice.rollId]);
+            setFeedOpen(true);
+          }}
+          footer={
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <RollReplacementActions
+                options={replacementOptions.filter(
+                  (option) => option.rollId === pendingChoice.rollId
+                )}
+                disabled={connectionStatus !== 'authenticated'}
+                onChoose={chooseReplacement}
+              />
+              <Button
+                variant="primary"
+                disabled={connectionStatus !== 'authenticated'}
+                onClick={() => {
+                  const seat = seats.find((item) => item.sheetId === pendingChoice.sheetId);
+                  if (seat)
+                    sendCommand({
+                      type: 'KEEP_ACTIVATION_RESULT',
+                      seatId: seat.seatId,
+                      sheetId: pendingChoice.sheetId,
+                      rollId: pendingChoice.rollId,
+                    });
+                }}
+              >
+                Keep result
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <p
+                className={cx(
+                  'font-display text-lg font-bold tracking-wide',
+                  pendingChoice.roll.isBotch
+                    ? 'text-red-300'
+                    : pendingChoice.roll.netSuccesses > 0
+                      ? 'text-emerald-300'
+                      : 'text-stone-200'
+                )}
+              >
+                {pendingChoice.roll.isBotch
+                  ? 'Botch'
+                  : pendingChoice.roll.netSuccesses === 0
+                    ? 'Failure'
+                    : pendingChoice.roll.netSuccesses === 1
+                      ? '1 net success'
+                      : `${pendingChoice.roll.netSuccesses} net successes`}
+              </p>
+              <p className="text-xs font-semibold text-stone-400">
+                Difficulty {pendingChoice.roll.clampedDifficulty}
+              </p>
+            </div>
+            <AuthoritativeDieChips roll={pendingChoice.roll} rageDiceCount={0} compact />
+            <p className="text-xs text-stone-400">
+              Closing this leaves the choice waiting in the roll feed.
+            </p>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

@@ -243,6 +243,105 @@
   );
 }
 
+/*
+ * Rule and equipment forms. Their plain labelled controls, disclosures, and option
+ * groups share one look with the rest of the character sheet.
+ */
+.w20-rules label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--color-stone-400);
+}
+
+.w20-rules label > :is(input, select, textarea, small) {
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.w20-rules label:has(> input[type='checkbox']) {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-parchment);
+  cursor: pointer;
+}
+
+.w20-rules input[type='checkbox'] {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.125rem;
+  flex-shrink: 0;
+  accent-color: var(--color-gold-400);
+  color-scheme: dark;
+  cursor: pointer;
+}
+
+.w20-rules fieldset {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+}
+
+.w20-rules legend {
+  margin-bottom: 0.375rem;
+  padding: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--color-stone-400);
+}
+
+.w20-rules details > summary {
+  display: flex;
+  cursor: pointer;
+  list-style: none;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-gold-200);
+}
+
+.w20-rules details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.w20-rules details > summary::before {
+  content: '';
+  width: 0.375rem;
+  height: 0.375rem;
+  flex-shrink: 0;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.w20-rules details[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.w20-rules details > summary:hover {
+  color: var(--color-gold-300);
+}
+
+.w20-rules details[open] > summary {
+  margin-bottom: 0.625rem;
+}
+
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
