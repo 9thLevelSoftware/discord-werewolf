@@ -11,6 +11,7 @@ import {
   DamageType,
   draftToUserCharacterSheet,
   GarouForm,
+  hasUnacknowledgedRuleReceipts,
   HealthState,
   normalizeSyncCode,
   SheetShortcut,
@@ -549,7 +550,7 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
         const currentInStore = get().sheetsById[sheetId];
         const saved = W20UserCharacterSheetSchema.safeParse(data.sheet);
         const savedReceipts = saved.success ? saved.data.ruleActivationReceipts ?? [] : [];
-        if (saved.success && currentInStore?.ruleActivationReceipts?.some(id => !savedReceipts.includes(id))) {
+        if (saved.success && hasUnacknowledgedRuleReceipts(currentInStore?.ruleActivationReceipts, savedReceipts)) {
           // A newer room confirmation arrived while this editor save was in flight.
           scheduleDirtyRetry();
           return;
@@ -1114,7 +1115,8 @@ export const useCharacterSheetStore = create<CharacterSheetStoreState>()(
           const current = next[sheet.id];
           const receipts = sheet.ruleActivationReceipts ?? [];
           const old = current?.ruleActivationReceipts ?? [];
-          if (old.length && !old.every(id => receipts.includes(id))) continue;
+          // A compacted ledger drops old receipts, so their absence alone does not make a sheet stale.
+          if (hasUnacknowledgedRuleReceipts(old, receipts)) continue;
           const newReceipt = receipts.some(id => !old.includes(id));
           const remoteBaseline = remoteRuleSheetSnapshots.get(sheet.id);
           const initialLocalBaseline = initialLocalEditSnapshots.get(sheet.id);

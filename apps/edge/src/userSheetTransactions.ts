@@ -1,4 +1,4 @@
-import type { W20UserCharacterSheet } from '@w20-vtt/core';
+import { compactRuleReceipts, type W20UserCharacterSheet } from '@w20-vtt/core';
 
 export type RuleResource = 'rage' | 'gnosis' | 'willpower';
 export type RuleResourceAmounts = Partial<Record<RuleResource, number>>;
@@ -224,15 +224,14 @@ export function applyRuleSpend(
     fetishes: edited.fetishes.filter((item) => !consumed.has(item.id)),
     equipment: edited.equipment?.filter((item) => !consumed.has(item.id)),
     combatWeapons: edited.combatWeapons.filter((item) => !consumed.has(item.id)),
-    ruleActivationReceipts: [
-      ...new Set([
-        ...receipts,
-        ...Array.from(settlements.values(), settleRuleSourceReceipt),
-        input.operationId,
-        ...(input.additionalReceipts ?? []),
-        ...(input.consumedSourceIds ?? []).map((id) => `consumed:${id}`),
-      ]),
-    ],
+    // Built from the stored ledger, so receipts the editing callback added are not kept.
+    ruleActivationReceipts: compactRuleReceipts([
+      ...receipts,
+      ...Array.from(settlements.values(), settleRuleSourceReceipt),
+      input.operationId,
+      ...(input.additionalReceipts ?? []),
+      ...(input.consumedSourceIds ?? []).map((id) => `consumed:${id}`),
+    ]),
     updatedAt: nextSheetVersion(existing),
   };
 }

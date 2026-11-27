@@ -1,4 +1,5 @@
 import {
+  compactRuleReceipts,
   applyHealthStateDamage,
   healHealthStateDamage,
   type W20UserCharacterSheet,
@@ -146,13 +147,11 @@ export function applyRuleSheetMutation(
       ),
       ...mutation.effects,
     ],
-    ruleActivationReceipts: [
-      ...new Set([
-        ...(sheet.ruleActivationReceipts ?? []),
-        mutation.operationId,
-        ...mutation.consumedSourceIds.map((id) => `consumed:${id}`),
-      ]),
-    ],
+    ruleActivationReceipts: compactRuleReceipts([
+      ...(sheet.ruleActivationReceipts ?? []),
+      mutation.operationId,
+      ...mutation.consumedSourceIds.map((id) => `consumed:${id}`),
+    ]),
     updatedAt: Math.max(Date.now(), sheet.updatedAt + 1),
   };
 }

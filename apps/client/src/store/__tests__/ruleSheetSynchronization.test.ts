@@ -148,6 +148,30 @@ describe('bound sheet synchronization', () => {
     expect(useCharacterSheetStore.getState().saveStatus).toBe('saved');
   });
 
+  it('accepts a newer sheet whose compacted ledger dropped receipts held locally', () => {
+    const before = remoteSheet();
+    before.ruleActivationReceipts = ['operation-1', 'operation-2', 'consumed:talen'];
+    useCharacterSheetStore.getState().receiveRuleSheets([before]);
+    const compacted = structuredClone(before);
+    compacted.updatedAt = 200;
+    compacted.gnosis = { ...before.gnosis, temporary: 0 };
+    compacted.ruleActivationReceipts = ['receipts-compacted:2', 'consumed:talen', 'operation-3'];
+    useCharacterSheetStore.getState().receiveRuleSheets([compacted]);
+    expect(useCharacterSheetStore.getState().sheetsById.sheet).toMatchObject({
+      gnosis: { temporary: 0 },
+      ruleActivationReceipts: compacted.ruleActivationReceipts,
+    });
+    // A late copy from before the compaction is still recognized as stale.
+    const late = structuredClone(before);
+    late.updatedAt = 300;
+    late.ruleActivationReceipts = [...before.ruleActivationReceipts, 'operation-3'];
+    useCharacterSheetStore.getState().receiveRuleSheets([late]);
+    expect(useCharacterSheetStore.getState().sheetsById.sheet).toMatchObject({
+      gnosis: { temporary: 0 },
+      ruleActivationReceipts: compacted.ruleActivationReceipts,
+    });
+  });
+
   it('preserves an edit made before the first room snapshot', () => {
     const before = remoteSheet();
     useCharacterSheetStore.setState({ sheetsById: { sheet: before } });

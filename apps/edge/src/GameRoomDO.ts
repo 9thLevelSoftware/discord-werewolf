@@ -37,6 +37,7 @@ import {
   getCharacterModifierSources,
   getSourceModifierRule,
   applyRuleValue,
+  hasUnacknowledgedRuleReceipts,
   ruleTraits,
   type AppliedRuleModifier,
   type W20UserCharacterSheet,
@@ -1348,7 +1349,7 @@ export class GameRoomDO extends DurableObject<WorkerEnv> {
       }
       const existing = rules.sheets[submitted.id];
       let sheet = structuredClone(submitted);
-      const pendingLocalReceipts = existing && stored && (existing.sheet.ruleActivationReceipts ?? []).some((receipt) => !(stored.ruleActivationReceipts ?? []).includes(receipt));
+      const pendingLocalReceipts = existing && stored && hasUnacknowledgedRuleReceipts(existing.sheet.ruleActivationReceipts, stored.ruleActivationReceipts);
       const base = pendingLocalReceipts ? existing!.sheet : stored && (!existing || stored.updatedAt > existing.sheet.updatedAt) ? stored : existing?.sheet ?? stored;
       const hasUnacknowledgedChanges = base?.ruleActivationReceipts?.some((receipt) => !(submitted.ruleActivationReceipts ?? []).includes(receipt));
       if (base && (hasUnacknowledgedChanges || (existing && submitted.updatedAt <= existing.sheet.updatedAt))) {
